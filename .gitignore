@@ -1,0 +1,14 @@
+.idea/
+.venv/
+graphify-out/
+
+# Reproducible external datasets and generated model artifacts.
+data/raw/
+data/processed/
+embeddings/
+artifacts/
+data/raw/solubility/
+
+__pycache__/
+*.py[cod]
+*.egg-info/

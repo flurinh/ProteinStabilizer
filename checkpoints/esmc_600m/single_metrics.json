@@ -1,0 +1,180 @@
+{
+  "best_epoch": 7,
+  "elapsed_seconds": 4.397160922002513,
+  "embedding_provenance": {
+    "checkpoint_path": "/data/fast/cache/huggingface/hub/models--EvolutionaryScale--esmc-600m-2024-12/blobs/8ef856e1a237ee3f995442df997a962e70057faadecf38fc0c8561bd3c2f4324",
+    "checkpoint_sha256": "8ef856e1a237ee3f995442df997a962e70057faadecf38fc0c8561bd3c2f4324",
+    "embedding_dimension": 1152,
+    "inference_dtype": "bfloat16",
+    "model_name": "esmc_600m",
+    "package_version": "3.2.1",
+    "residue_policy": "final-layer-contextual-residue-bos-offset-v1",
+    "storage_dtype": "float16"
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "train_huber": 0.24870563175450497,
+      "validation": {
+        "mae": 0.47085697991115266,
+        "n": 12373,
+        "pearson": 0.7439291104153246,
+        "rmse": 0.6328313658879977,
+        "spearman": 0.7043798042716616
+      }
+    },
+    {
+      "epoch": 2,
+      "train_huber": 0.1299022486087249,
+      "validation": {
+        "mae": 0.48596355723843404,
+        "n": 12373,
+        "pearson": 0.7342756751384286,
+        "rmse": 0.6650866922765074,
+        "spearman": 0.704544026084827
+      }
+    },
+    {
+      "epoch": 3,
+      "train_huber": 0.087828084422996,
+      "validation": {
+        "mae": 0.47719290901019695,
+        "n": 12373,
+        "pearson": 0.7359128127662588,
+        "rmse": 0.6544202366440844,
+        "spearman": 0.7035856434871661
+      }
+    },
+    {
+      "epoch": 4,
+      "train_huber": 0.06474268673844816,
+      "validation": {
+        "mae": 0.47394409264023135,
+        "n": 12373,
+        "pearson": 0.7395790728953624,
+        "rmse": 0.6511871576127339,
+        "spearman": 0.707559785276313
+      }
+    },
+    {
+      "epoch": 5,
+      "train_huber": 0.05100074501425401,
+      "validation": {
+        "mae": 0.4811803175214492,
+        "n": 12373,
+        "pearson": 0.7336260710016401,
+        "rmse": 0.6597354673235305,
+        "spearman": 0.7040774912129042
+      }
+    },
+    {
+      "epoch": 6,
+      "train_huber": 0.04152487273722757,
+      "validation": {
+        "mae": 0.4744197413524444,
+        "n": 12373,
+        "pearson": 0.7362425283718551,
+        "rmse": 0.6515475220100875,
+        "spearman": 0.7026679941220794
+      }
+    },
+    {
+      "epoch": 7,
+      "train_huber": 0.035126010613798185,
+      "validation": {
+        "mae": 0.4726109745019365,
+        "n": 12373,
+        "pearson": 0.7430527158504834,
+        "rmse": 0.648661761637263,
+        "spearman": 0.7116882514886282
+      }
+    },
+    {
+      "epoch": 8,
+      "train_huber": 0.030761528671057792,
+      "validation": {
+        "mae": 0.4753741962050242,
+        "n": 12373,
+        "pearson": 0.7338978062803571,
+        "rmse": 0.6567120288393837,
+        "spearman": 0.7053878667474337
+      }
+    },
+    {
+      "epoch": 9,
+      "train_huber": 0.0274286469253663,
+      "validation": {
+        "mae": 0.47411473958497136,
+        "n": 12373,
+        "pearson": 0.7421953008916414,
+        "rmse": 0.6509514661750733,
+        "spearman": 0.7089633060169518
+      }
+    },
+    {
+      "epoch": 10,
+      "train_huber": 0.02514766627919172,
+      "validation": {
+        "mae": 0.4758843512709811,
+        "n": 12373,
+        "pearson": 0.7406942590182096,
+        "rmse": 0.6535689761237039,
+        "spearman": 0.707780139098162
+      }
+    },
+    {
+      "epoch": 11,
+      "train_huber": 0.023249323842066284,
+      "validation": {
+        "mae": 0.4836261293644926,
+        "n": 12373,
+        "pearson": 0.7411159295983764,
+        "rmse": 0.6629863769154787,
+        "spearman": 0.7080891139429646
+      }
+    },
+    {
+      "epoch": 12,
+      "train_huber": 0.021408164383662213,
+      "validation": {
+        "mae": 0.4749826664462714,
+        "n": 12373,
+        "pearson": 0.7447521926985149,
+        "rmse": 0.6522710906705533,
+        "spearman": 0.7111811047810719
+      }
+    },
+    {
+      "epoch": 13,
+      "train_huber": 0.02034429274261932,
+      "validation": {
+        "mae": 0.4774666693159921,
+        "n": 12373,
+        "pearson": 0.7429575208802195,
+        "rmse": 0.6581098375012825,
+        "spearman": 0.7115271260542679
+      }
+    }
+  ],
+  "schema": "protein-stabilizer.single-training.v1",
+  "seed": 20260715,
+  "test": {
+    "mae": 0.5823240270503095,
+    "n": 19645,
+    "pearson": 0.7624028062722848,
+    "rmse": 0.785697893184504,
+    "spearman": 0.7538640665355292
+  },
+  "test_rows": 19645,
+  "test_source_sha256": "0590913568b324fcf8f06928436390f8e4a64703750bdf3584827b779cf51259",
+  "train_rows": 104315,
+  "train_source_sha256": "49b37c78998451d77cb3579a2f139e891d11406151c2965b4d4157a73c7ce847",
+  "validation": {
+    "mae": 0.4726109745019365,
+    "n": 12373,
+    "pearson": 0.7430527158504834,
+    "rmse": 0.648661761637263,
+    "spearman": 0.7116882514886282
+  },
+  "validation_rows": 12373
+}
