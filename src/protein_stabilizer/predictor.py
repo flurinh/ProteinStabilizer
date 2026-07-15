@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 from typing import Sequence
 
-import csv
 import joblib
 import numpy as np
 import torch
@@ -18,11 +18,12 @@ from .data import (
     normalize_sequence,
 )
 from .embeddings import ESMCEmbedder, token_batches
+from .models import SingleMutationEnsemble
 from .training import (
     gpcr_dtm_adapter_features,
     load_auxiliary_checkpoint,
     load_multi_checkpoint,
-    load_single_checkpoint,
+    load_scoring_checkpoint,
     membrane_adapter_features,
 )
 
@@ -180,13 +181,20 @@ def predict_mutations(
 
     torch_device = torch.device(device if torch.cuda.is_available() else "cpu")
     checkpoint_dir = Path(checkpoint_dir)
-    single_head = load_single_checkpoint(
-        checkpoint_dir / "single_head.pt", torch_device
-    )
+    single_head = load_scoring_checkpoint(checkpoint_dir, torch_device)
     single_tensor = torch.from_numpy(single_delta).to(torch_device)
     with torch.inference_mode():
         constituent = single_head(single_tensor).float().cpu().numpy()
         latent = single_head.latent(single_tensor).float().cpu().numpy()
+        member_std = (
+            single_head.member_predictions(single_tensor)
+            .std(dim=0, unbiased=False)
+            .float()
+            .cpu()
+            .numpy()
+            if isinstance(single_head, SingleMutationEnsemble)
+            else None
+        )
     named_features, auxiliary = _single_calibration_features(
         latent, constituent, single_delta, checkpoint_dir, torch_device
     )
@@ -201,6 +209,12 @@ def predict_mutations(
         "additive_ddg": float(constituent.sum()),
         "model_provenance": embedder.provenance.canonical_json(),
     }
+    if member_std is not None:
+        result["ensemble_size"] = len(single_head.members)
+        result["constituent_single_ddg_std"] = {
+            str(mutation): float(value)
+            for mutation, value in zip(parsed, member_std, strict=True)
+        }
     if "membrane_ddg" in auxiliary:
         result["membrane_constituent_single_ddg"] = {
             str(mutation): float(value)
@@ -213,6 +227,8 @@ def predict_mutations(
         predicted_ddg = float(auxiliary.get("membrane_ddg", constituent)[0])
         result["predicted_ddg"] = predicted_ddg
         result["pretrained_ddg"] = float(constituent[0])
+        if member_std is not None:
+            result["pretrained_ddg_std"] = float(member_std[0])
         if auxiliary:
             if "protherm_ddg" in auxiliary:
                 result["protherm_calibrated_ddg"] = float(
@@ -239,6 +255,7 @@ def predict_mutations(
                 "protein-stabilizer.gpcr-ridge.v2",
                 "protein-stabilizer.gpcr-ridge.v3",
                 "protein-stabilizer.gpcr-ridge.v4",
+                "protein-stabilizer.gpcr-ridge.v5",
             }:
                 raise RuntimeError("GPCR calibration schema mismatch")
             feature_set = calibration.get("feature_set", "latent_base")
@@ -253,11 +270,14 @@ def predict_mutations(
     single_batch = torch.from_numpy(single_delta[None]).to(torch_device)
     joint_batch = torch.from_numpy(joint_delta[None]).to(torch_device)
     with torch.inference_mode():
-        total, additive, epistasis = multi_head(single_batch, joint_batch)
+        _, training_additive, epistasis = multi_head(single_batch, joint_batch)
+    ensemble_additive = float(constituent.sum())
+    corrected = ensemble_additive + float(epistasis.item())
     result.update(
         {
-            "predicted_ddg": float(total.item()),
-            "model_additive_ddg": float(additive.item()),
+            "predicted_ddg": corrected,
+            "model_additive_ddg": ensemble_additive,
+            "epistasis_training_additive_ddg": float(training_additive.item()),
             "epistasis_ddg": float(epistasis.item()),
             "extrapolation_warning": (
                 "epistasis head was trained on double mutants"
@@ -332,11 +352,20 @@ def screen_single_mutants(
 
     torch_device = torch.device(device if torch.cuda.is_available() else "cpu")
     checkpoint_dir = Path(checkpoint_dir)
-    model = load_single_checkpoint(checkpoint_dir / "single_head.pt", torch_device)
+    model = load_scoring_checkpoint(checkpoint_dir, torch_device)
     delta_tensor = torch.from_numpy(deltas).to(torch_device)
     with torch.inference_mode():
         ddg = model(delta_tensor).float().cpu().numpy()
         latent = model.latent(delta_tensor).float().cpu().numpy()
+        member_std = (
+            model.member_predictions(delta_tensor)
+            .std(dim=0, unbiased=False)
+            .float()
+            .cpu()
+            .numpy()
+            if isinstance(model, SingleMutationEnsemble)
+            else None
+        )
     named_features, auxiliary = _single_calibration_features(
         latent, ddg, deltas, checkpoint_dir, torch_device
     )
@@ -350,6 +379,7 @@ def screen_single_mutants(
             "protein-stabilizer.gpcr-ridge.v2",
             "protein-stabilizer.gpcr-ridge.v3",
             "protein-stabilizer.gpcr-ridge.v4",
+            "protein-stabilizer.gpcr-ridge.v5",
         }:
             raise RuntimeError("GPCR calibration schema mismatch")
         feature_set = calibration.get("feature_set", "latent_base")
@@ -394,6 +424,8 @@ def screen_single_mutants(
             "general_stability_percentile": float(general_percentile[index]),
             "consensus_rank_score": float(consensus[index]),
         }
+        if member_std is not None:
+            row["pretrained_ddg_std"] = float(member_std[index])
         if gpcr_score is not None:
             row["gpcr_stability_rank_score"] = float(gpcr_score[index])
             row["gpcr_stability_percentile"] = float(gpcr_percentile[index])
@@ -441,4 +473,7 @@ def screen_single_mutants(
         "output_csv": str(output_csv) if output_csv is not None else None,
         "top_candidates": rows[: max(1, top)],
         "model_provenance": embedder.provenance.canonical_json(),
+        "scoring_ensemble_size": (
+            len(model.members) if isinstance(model, SingleMutationEnsemble) else 1
+        ),
     }

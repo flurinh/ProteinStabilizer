@@ -1,6 +1,6 @@
 {
   "best_epoch": 1,
-  "elapsed_seconds": 7.507094066007994,
+  "elapsed_seconds": 6.630826935986988,
   "history": [
     {
       "epoch": 1,
@@ -69,7 +69,7 @@
       }
     }
   ],
-  "schema": "protein-stabilizer.epistasis-training.v1",
+  "schema": "protein-stabilizer.epistasis-training.v2",
   "seed": 20260715,
   "test": {
     "mae": 0.9066326330418869,
@@ -84,6 +84,20 @@
     "pearson": 0.5177740812560107,
     "rmse": 1.5088318501893176,
     "spearman": 0.560002362079159
+  },
+  "test_deployed": {
+    "mae": 0.8506744396479492,
+    "n": 18574,
+    "pearson": 0.5109227375820826,
+    "rmse": 1.1444764847659339,
+    "spearman": 0.5453906430201783
+  },
+  "test_deployed_additive_baseline": {
+    "mae": 1.1351263752073426,
+    "n": 18574,
+    "pearson": 0.561559791673889,
+    "rmse": 1.4405563237117263,
+    "spearman": 0.60102239977499
   },
   "test_true_epistasis": {
     "mae": 0.6283655990758747,
@@ -106,6 +120,20 @@
     "pearson": 0.7186219284284014,
     "rmse": 1.4030776511636607,
     "spearman": 0.7331138409177622
+  },
+  "validation_deployed": {
+    "mae": 0.5846612630147767,
+    "n": 10282,
+    "pearson": 0.7867955155978223,
+    "rmse": 0.7882116746270236,
+    "spearman": 0.8038110544365015
+  },
+  "validation_deployed_additive_baseline": {
+    "mae": 1.0154163388956297,
+    "n": 10282,
+    "pearson": 0.733158947887984,
+    "rmse": 1.3957348058789183,
+    "spearman": 0.7547905895885767
   },
   "validation_true_epistasis": {
     "mae": 0.5130920608195235,

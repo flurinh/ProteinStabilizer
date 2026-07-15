@@ -45,6 +45,37 @@ class SingleMutationHead(nn.Module):
         return asdict(self.config)
 
 
+class SingleMutationEnsemble(nn.Module):
+    """Average predictions while retaining the primary member's latent space."""
+
+    def __init__(self, members: list[SingleMutationHead]) -> None:
+        super().__init__()
+        if not members:
+            raise ValueError("single-mutation ensemble requires at least one member")
+        config = members[0].config
+        if any(member.config != config for member in members[1:]):
+            raise ValueError("single-mutation ensemble member configurations differ")
+        self.members = nn.ModuleList(members)
+        self.config = config
+
+    def latent(self, delta: torch.Tensor) -> torch.Tensor:
+        # Independently trained latent coordinates are not aligned, so their
+        # element-wise mean has no stable meaning. Keep the primary member's
+        # coordinate system for backward-compatible downstream calibrations.
+        return self.members[0].latent(delta)
+
+    def member_predictions(self, delta: torch.Tensor) -> torch.Tensor:
+        """Return one prediction row per independently trained member."""
+
+        return torch.stack([member(delta) for member in self.members])
+
+    def forward(self, delta: torch.Tensor) -> torch.Tensor:
+        return self.member_predictions(delta).mean(dim=0)
+
+    def config_dict(self) -> dict[str, object]:
+        return asdict(self.config)
+
+
 @dataclass(frozen=True)
 class EpistasisConfig:
     embedding_dim: int = 1152

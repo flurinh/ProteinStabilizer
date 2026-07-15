@@ -27,6 +27,7 @@ from protein_stabilizer.models import (
     EpistasisConfig,
     MultiMutationHead,
     SingleHeadConfig,
+    SingleMutationEnsemble,
     SingleMutationHead,
 )
 from protein_stabilizer.training import (
@@ -112,6 +113,21 @@ def test_multi_mutation_head_is_permutation_invariant() -> None:
     torch.testing.assert_close(prediction, permuted[0])
     torch.testing.assert_close(additive, permuted[1])
     torch.testing.assert_close(epistasis, permuted[2])
+
+
+def test_single_mutation_ensemble_averages_predictions_and_latents() -> None:
+    config = SingleHeadConfig(
+        embedding_dim=8, hidden_dim=12, latent_dim=6, dropout=0.0
+    )
+    torch.manual_seed(17)
+    members = [SingleMutationHead(config), SingleMutationHead(config)]
+    ensemble = SingleMutationEnsemble(members).eval()
+    delta = torch.randn(5, 8)
+    expected_prediction = torch.stack([member(delta) for member in members]).mean(0)
+    expected_latent = members[0].latent(delta)
+    assert ensemble.member_predictions(delta).shape == (2, 5)
+    torch.testing.assert_close(ensemble(delta), expected_prediction)
+    torch.testing.assert_close(ensemble.latent(delta), expected_latent)
 
 
 def test_gpcr_split_holds_out_complete_sites(tmp_path: Path) -> None:

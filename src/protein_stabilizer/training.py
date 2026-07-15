@@ -27,6 +27,7 @@ from .models import (
     EpistasisConfig,
     MultiMutationHead,
     SingleHeadConfig,
+    SingleMutationEnsemble,
     SingleMutationHead,
 )
 
@@ -97,9 +98,11 @@ def train_single_head(
     batch_size: int = 1024,
     learning_rate: float = 1e-3,
     weight_decay: float = 1e-4,
+    ensemble_size: int = 5,
     device: str = "cuda",
 ) -> dict[str, object]:
-    set_reproducible_seed(seed)
+    if ensemble_size < 1:
+        raise ValueError("single-head ensemble size must be positive")
     torch_device = torch.device(device if torch.cuda.is_available() else "cpu")
     with h5py.File(Path(feature_dir) / "single_train.h5", "r") as handle:
         delta = np.asarray(handle["delta"], dtype=np.float16)
@@ -115,107 +118,145 @@ def train_single_head(
     train_indices = np.flatnonzero(split == "train")
     val_indices = np.flatnonzero(split == "val")
     config = SingleHeadConfig(embedding_dim=delta.shape[1])
-    model = SingleMutationHead(config).to(torch_device)
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=learning_rate, weight_decay=weight_decay
-    )
-    loss_function = torch.nn.HuberLoss(delta=1.0)
-    rng = np.random.default_rng(seed)
-    best_state: dict[str, torch.Tensor] | None = None
-    best_spearman = -math.inf
-    best_epoch = 0
-    history: list[dict[str, object]] = []
-    stale = 0
     started = time.monotonic()
-
-    for epoch in range(1, epochs + 1):
-        model.train()
-        shuffled = rng.permutation(train_indices)
-        total_loss = 0.0
-        seen = 0
-        for start in range(0, len(shuffled), batch_size):
-            indices = shuffled[start : start + batch_size]
-            x = torch.from_numpy(delta[indices].astype(np.float32)).to(torch_device)
-            y = torch.from_numpy(target[indices]).to(torch_device)
-            optimizer.zero_grad(set_to_none=True)
-            prediction = model(x)
-            loss = loss_function(prediction, y)
-            loss.backward()
-            optimizer.step()
-            total_loss += float(loss.detach()) * len(indices)
-            seen += len(indices)
-        validation_prediction = _torch_predictions(
+    member_payloads: list[dict[str, object]] = []
+    member_metrics: list[dict[str, object]] = []
+    val_predictions: list[np.ndarray] = []
+    test_predictions: list[np.ndarray] = []
+    for member_index in range(ensemble_size):
+        member_seed = seed + member_index
+        set_reproducible_seed(member_seed)
+        model = SingleMutationHead(config).to(torch_device)
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=learning_rate, weight_decay=weight_decay
+        )
+        loss_function = torch.nn.HuberLoss(delta=1.0)
+        rng = np.random.default_rng(member_seed)
+        best_state: dict[str, torch.Tensor] | None = None
+        best_spearman = -math.inf
+        best_epoch = 0
+        history: list[dict[str, object]] = []
+        stale = 0
+        for epoch in range(1, epochs + 1):
+            model.train()
+            shuffled = rng.permutation(train_indices)
+            total_loss = 0.0
+            seen = 0
+            for start in range(0, len(shuffled), batch_size):
+                indices = shuffled[start : start + batch_size]
+                x = torch.from_numpy(delta[indices].astype(np.float32)).to(torch_device)
+                y = torch.from_numpy(target[indices]).to(torch_device)
+                optimizer.zero_grad(set_to_none=True)
+                prediction = model(x)
+                loss = loss_function(prediction, y)
+                loss.backward()
+                optimizer.step()
+                total_loss += float(loss.detach()) * len(indices)
+                seen += len(indices)
+            validation_prediction = _torch_predictions(
+                model,
+                (delta[val_indices],),
+                lambda x: model(x),
+                batch_size=batch_size,
+                device=torch_device,
+            )
+            validation = regression_metrics(target[val_indices], validation_prediction)
+            score = validation["spearman"]
+            history.append(
+                {
+                    "epoch": epoch,
+                    "train_huber": total_loss / seen,
+                    "validation": validation,
+                }
+            )
+            print(
+                f"single member={member_index + 1}/{ensemble_size} "
+                f"epoch={epoch:02d} train_huber={total_loss / seen:.4f} "
+                f"val_rmse={validation['rmse']:.4f} val_spearman={score:.4f}",
+                flush=True,
+            )
+            if np.isfinite(score) and score > best_spearman + 1e-5:
+                best_spearman = score
+                best_epoch = epoch
+                best_state = copy.deepcopy(model.state_dict())
+                stale = 0
+            else:
+                stale += 1
+                if stale >= patience:
+                    break
+        if best_state is None:
+            raise RuntimeError(
+                f"single-mutant ensemble member {member_index} produced no valid model"
+            )
+        model.load_state_dict(best_state)
+        val_prediction = _torch_predictions(
             model,
             (delta[val_indices],),
             lambda x: model(x),
             batch_size=batch_size,
             device=torch_device,
         )
-        validation = regression_metrics(target[val_indices], validation_prediction)
-        score = validation["spearman"]
-        history.append(
+        test_prediction = _torch_predictions(
+            model,
+            (test_delta,),
+            lambda x: model(x),
+            batch_size=batch_size,
+            device=torch_device,
+        )
+        val_predictions.append(val_prediction)
+        test_predictions.append(test_prediction)
+        member_metrics.append(
             {
-                "epoch": epoch,
-                "train_huber": total_loss / seen,
-                "validation": validation,
+                "member": member_index,
+                "seed": member_seed,
+                "best_epoch": best_epoch,
+                "validation": regression_metrics(target[val_indices], val_prediction),
+                "test": regression_metrics(test_target, test_prediction),
+                "history": history,
             }
         )
-        print(
-            f"single epoch={epoch:02d} train_huber={total_loss / seen:.4f} "
-            f"val_rmse={validation['rmse']:.4f} val_spearman={score:.4f}",
-            flush=True,
+        member_payloads.append(
+            {
+                "config": asdict(config),
+                "state_dict": copy.deepcopy(model.cpu().state_dict()),
+            }
         )
-        if np.isfinite(score) and score > best_spearman + 1e-5:
-            best_spearman = score
-            best_epoch = epoch
-            best_state = copy.deepcopy(model.state_dict())
-            stale = 0
-        else:
-            stale += 1
-            if stale >= patience:
-                break
-    if best_state is None:
-        raise RuntimeError("single-mutant training produced no valid validation model")
-    model.load_state_dict(best_state)
-    val_prediction = _torch_predictions(
-        model,
-        (delta[val_indices],),
-        lambda x: model(x),
-        batch_size=batch_size,
-        device=torch_device,
-    )
-    test_prediction = _torch_predictions(
-        model,
-        (test_delta,),
-        lambda x: model(x),
-        batch_size=batch_size,
-        device=torch_device,
-    )
+    val_prediction = np.mean(val_predictions, axis=0)
+    test_prediction = np.mean(test_predictions, axis=0)
     metrics = {
-        "schema": "protein-stabilizer.single-training.v1",
+        "schema": "protein-stabilizer.single-ensemble-training.v1",
         "seed": seed,
-        "best_epoch": best_epoch,
+        "ensemble_size": ensemble_size,
         "elapsed_seconds": time.monotonic() - started,
         "train_rows": int(len(train_indices)),
         "validation_rows": int(len(val_indices)),
         "test_rows": int(len(test_target)),
         "validation": regression_metrics(target[val_indices], val_prediction),
         "test": regression_metrics(test_target, test_prediction),
-        "history": history,
+        "members": member_metrics,
         "embedding_provenance": embedding_provenance,
         "train_source_sha256": train_source_sha256,
         "test_source_sha256": test_source_sha256,
     }
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    primary = member_payloads[0]
     torch.save(
         {
             "schema": "protein-stabilizer.single-head.v1",
-            "config": asdict(config),
-            "state_dict": model.cpu().state_dict(),
-            "metrics": metrics,
+            "config": primary["config"],
+            "state_dict": primary["state_dict"],
+            "metrics": member_metrics[0],
         },
         checkpoint_dir / "single_head.pt",
+    )
+    torch.save(
+        {
+            "schema": "protein-stabilizer.single-ensemble.v1",
+            "members": member_payloads,
+            "metrics": metrics,
+        },
+        checkpoint_dir / "single_ensemble.pt",
     )
     _save_json(checkpoint_dir / "single_metrics.json", metrics)
     return metrics
@@ -230,8 +271,32 @@ def load_single_checkpoint(path: Path, device: str | torch.device = "cpu") -> Si
     return model.to(device).eval()
 
 
+def load_single_ensemble_checkpoint(
+    path: Path, device: str | torch.device = "cpu"
+) -> SingleMutationEnsemble:
+    payload = torch.load(path, map_location=device, weights_only=False)
+    if payload.get("schema") != "protein-stabilizer.single-ensemble.v1":
+        raise RuntimeError("single-ensemble checkpoint schema mismatch")
+    members: list[SingleMutationHead] = []
+    for member_payload in payload["members"]:
+        member = SingleMutationHead(SingleHeadConfig(**member_payload["config"]))
+        member.load_state_dict(member_payload["state_dict"])
+        members.append(member)
+    return SingleMutationEnsemble(members).to(device).eval()
+
+
+def load_scoring_checkpoint(
+    checkpoint_dir: Path, device: str | torch.device = "cpu"
+) -> SingleMutationHead | SingleMutationEnsemble:
+    checkpoint_dir = Path(checkpoint_dir)
+    ensemble_path = checkpoint_dir / "single_ensemble.pt"
+    if ensemble_path.exists():
+        return load_single_ensemble_checkpoint(ensemble_path, device)
+    return load_single_checkpoint(checkpoint_dir / "single_head.pt", device)
+
+
 def _base_representation(
-    model: SingleMutationHead,
+    model: SingleMutationHead | SingleMutationEnsemble,
     delta: np.ndarray,
     *,
     batch_size: int,
@@ -546,7 +611,7 @@ def train_membrane_ddg_adapter(
     checkpoint_dir = Path(checkpoint_dir)
     torch_device = torch.device(device if torch.cuda.is_available() else "cpu")
     data = _load_transfer_features(feature_dir / "mcsm_membrane.h5")
-    base_model = load_single_checkpoint(checkpoint_dir / "single_head.pt", torch_device)
+    base_model = load_scoring_checkpoint(checkpoint_dir, torch_device)
     _, latent, base_ddg = _base_representation(
         base_model,
         data["delta"],
@@ -775,7 +840,7 @@ def train_gpcr_dtm_adapter(
     checkpoint_dir = Path(checkpoint_dir)
     torch_device = torch.device(device if torch.cuda.is_available() else "cpu")
     data = _load_transfer_features(feature_dir / "gpcr_tm.h5")
-    base_model = load_single_checkpoint(checkpoint_dir / "single_head.pt", torch_device)
+    base_model = load_scoring_checkpoint(checkpoint_dir, torch_device)
     _, latent, base_ddg = _base_representation(
         base_model,
         data["delta"],
@@ -1179,8 +1244,25 @@ def train_epistasis_head(
 
     val_prediction, val_additive, val_epistasis = predictions(val_single, val_joint)
     test_prediction, test_additive, test_epistasis = predictions(test_single, test_joint)
+    scoring_head = load_scoring_checkpoint(checkpoint_dir, torch_device)
+
+    def deployed_additive(deltas: np.ndarray) -> np.ndarray:
+        return _torch_predictions(
+            scoring_head,
+            (deltas,),
+            lambda values: scoring_head(
+                values.reshape(-1, values.shape[-1])
+            ).reshape(values.shape[:2]).sum(dim=1),
+            batch_size=batch_size,
+            device=torch_device,
+        )
+
+    val_deployed_additive = deployed_additive(val_single)
+    test_deployed_additive = deployed_additive(test_single)
+    val_deployed = val_deployed_additive + val_epistasis
+    test_deployed = test_deployed_additive + test_epistasis
     metrics = {
-        "schema": "protein-stabilizer.epistasis-training.v1",
+        "schema": "protein-stabilizer.epistasis-training.v2",
         "seed": seed,
         "best_epoch": best_epoch,
         "elapsed_seconds": time.monotonic() - started,
@@ -1194,6 +1276,14 @@ def train_epistasis_head(
         "test_additive_baseline": regression_metrics(test_target, test_additive),
         "test_true_epistasis": regression_metrics(
             test_true_epi[test_has_epi], test_epistasis[test_has_epi]
+        ),
+        "validation_deployed": regression_metrics(val_target, val_deployed),
+        "validation_deployed_additive_baseline": regression_metrics(
+            val_target, val_deployed_additive
+        ),
+        "test_deployed": regression_metrics(test_target, test_deployed),
+        "test_deployed_additive_baseline": regression_metrics(
+            test_target, test_deployed_additive
         ),
         "history": history,
     }
@@ -1282,7 +1372,7 @@ def train_gpcr_calibration(
         site = np.asarray(handle["site_id"].asstr()[:])
         split_seed = int(handle.attrs["split_seed"])
         source_sha256 = str(handle.attrs["source_sha256"])
-    model = load_single_checkpoint(checkpoint_dir / "single_head.pt", torch_device)
+    model = load_scoring_checkpoint(checkpoint_dir, torch_device)
     model.eval()
     representation, latent, base_ddg = _base_representation(
         model,
@@ -1416,7 +1506,14 @@ def train_gpcr_calibration(
 
     development_indices = np.concatenate([train_indices, val_indices])
     candidates: list[dict[str, object]] = []
-    for feature_name, features in feature_sets.items():
+    # The benchmark has only three receptors. Selecting among high-dimensional
+    # latent spaces on 26 validation rows is unstable and does not survive the
+    # leave-one-receptor-out audit. Calibrate only the four independently
+    # trained thermodynamic scores; all still derive from the same ESM-C deltas.
+    calibration_feature_sets = {
+        "thermodynamic_scores": feature_sets["thermodynamic_scores"]
+    }
+    for feature_name, features in calibration_feature_sets.items():
         centered_features, centered_target = _center_within_assay(
             features, target, assay, train_indices
         )
@@ -1584,7 +1681,7 @@ def train_gpcr_calibration(
     gpcr_weight = 0.10 if receptor_macro > receptor_baseline_macro else 0.0
     general_weight = 1.0 - gpcr_weight
     metrics = {
-        "schema": "protein-stabilizer.gpcr-calibration.v4",
+        "schema": "protein-stabilizer.gpcr-calibration.v5",
         "split_seed": split_seed,
         "source_sha256": source_sha256,
         "train_rows": int(len(train_indices)),
@@ -1594,8 +1691,8 @@ def train_gpcr_calibration(
         "validation_sites": int(len(set(site[val_indices]))),
         "test_sites": int(len(set(site[test_indices]))),
         "selection": (
-            "site-held-out validation; within 0.01 macro Spearman choose the "
-            "lowest effective dimension"
+            "thermodynamic-score calibration only; site-held-out validation; "
+            "within 0.01 macro Spearman choose the lowest effective dimension"
         ),
         "selected_feature_set": best_feature_set,
         "selected_alpha": best_alpha,
@@ -1690,7 +1787,7 @@ def train_gpcr_calibration(
     feature_order["thermodynamic_scores"] = thermodynamic_order
     joblib.dump(
         {
-            "schema": "protein-stabilizer.gpcr-ridge.v4",
+            "schema": "protein-stabilizer.gpcr-ridge.v5",
             "pipeline": selected,
             "feature_set": best_feature_set,
             "feature_order": feature_order[best_feature_set],

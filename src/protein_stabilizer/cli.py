@@ -97,6 +97,7 @@ def command_train(args: argparse.Namespace) -> dict[str, object]:
         args.checkpoints,
         seed=args.seed,
         epochs=args.single_epochs,
+        ensemble_size=args.ensemble_size,
         device=args.device,
     )
     multi = train_epistasis_head(
@@ -182,6 +183,7 @@ def _common_pipeline_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-batch-size", type=int, default=128)
     parser.add_argument("--chunk-size", type=int, default=4096)
     parser.add_argument("--single-epochs", type=int, default=30)
+    parser.add_argument("--ensemble-size", type=int, default=5)
     parser.add_argument("--multi-epochs", type=int, default=25)
 
 

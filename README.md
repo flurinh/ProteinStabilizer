@@ -14,14 +14,17 @@ For one substitution at residue `i`:
 
 ```text
 delta_i = ESM-C(mutant)[i] - ESM-C(WT)[i]
-predicted ddG = SingleMutationHead(delta_i)
+predicted ddG = mean_k SingleMutationHead_k(delta_i)
 ```
 
 Negative predicted ddG is stabilizing. The base thermodynamic head was trained
-on the published Megascale/cDNA single-mutant split. A nonlinear copy is then
-adapted on experimental ProTherm ddG. A second copy is trained on MPTherm-Pred
-delta-Tm, for which positive values are stabilizing. The ddG and delta-Tm labels
-are never pooled into one regression target.
+on the published Megascale/cDNA single-mutant split. Production scoring averages
+five independently initialized heads trained on the same protein-disjoint split;
+this adds no embedding work and reduces seed variance. The first member remains
+the initialization for a nonlinear copy adapted on experimental ProTherm ddG.
+A second copy is trained on MPTherm-Pred delta-Tm, for which positive values are
+stabilizing. The ddG and delta-Tm labels are never pooled into one regression
+target.
 
 For a set of substitutions, the model embeds the WT, every constituent single
 mutant, and the complete joint mutant. For each mutation it constructs:
@@ -102,13 +105,15 @@ The `run` command:
 1. collects every required WT, single, joint-double, transfer, and GPCR sequence;
 2. stores final-layer ESM-C residue vectors in a resumable HDF5 cache;
 3. materializes row-aligned delta features and provenance manifests;
-4. trains the single, epistasis, and target-specific transfer heads;
+4. trains the five-member single ensemble, epistasis, and transfer heads;
 5. selects the GPCR calibration on the mutation-site-held-out validation split; and
 6. evaluates each held-out test split after model selection.
 
 Generated embeddings and features stay under `embeddings/` and `artifacts/`.
 The compact trained heads and their metric records are in
-`checkpoints/esmc_600m/`.
+`checkpoints/esmc_600m/`. `single_ensemble.pt` is the production scorer;
+`single_head.pt` retains its first member for transfer-head initialization and
+backward compatibility.
 
 ## Measured performance
 
@@ -116,12 +121,12 @@ The current deterministic run used seed `20260715`:
 
 | Evaluation | Spearman | Pearson | MAE | RMSE |
 | --- | ---: | ---: | ---: | ---: |
-| Single-mutant protein holdout | 0.754 | 0.762 | 0.582 | 0.786 |
-| Double-mutant learned estimate | 0.492 | 0.452 | 0.907 | 1.220 |
-| Double-mutant additive baseline | 0.560 | 0.518 | 1.192 | 1.509 |
+| Single-mutant protein holdout | 0.777 | 0.782 | 0.556 | 0.755 |
+| Double-mutant learned estimate | 0.545 | 0.511 | 0.851 | 1.144 |
+| Double-mutant additive baseline | 0.601 | 0.562 | 1.135 | 1.441 |
 | ProTherm experimental ddG holdout | 0.409 | 0.292 | 1.168 | 1.993 |
 | MPTherm delta-Tm holdout | 0.222 | 0.208 | 3.652 | 4.826 |
-| Alpha-helical membrane ddG test, frozen ESM-C baseline | 0.107 | 0.144 | 0.973 | 1.223 |
+| Alpha-helical membrane ddG test, frozen ESM-C ensemble | 0.095 | 0.174 | 0.961 | 1.208 |
 | Alpha-helical membrane ddG test, rejected adapter | -0.025 | 0.063 | 1.014 | 1.276 |
 | GPCR-tm delta-Tm test, MPTherm head | 0.371 | 0.340 | 3.588 | 4.435 |
 | GPCR-tm delta-Tm test, rejected GPCR adapter | -0.042 | -0.044 | 3.737 | 4.623 |
@@ -130,11 +135,11 @@ The epistasis model improves absolute error but the additive score ranks the
 double-mutant test set better. Both values are returned at inference.
 
 On the 26-row, mutation-site-held-out GPCR workbook test, the calibration
-achieves macro within-assay Spearman `0.641` and MAE `24.31` percentage points.
+achieves macro within-assay Spearman `0.601` and MAE `24.34` percentage points.
 That number does not estimate performance on a new receptor. In the more
 application-relevant leave-one-receptor-out diagnostic, macro within-assay
-Spearman falls to `0.146` (uncalibrated baseline `-0.021`), with receptor/assay
-values ranging from `-0.065` to `0.512`. Each fold also retrains the MPTherm
+Spearman falls to `0.171` (uncalibrated baseline `0.025`), with receptor/assay
+values ranging from `-0.121` to `0.515`. Each fold also retrains the MPTherm
 head after excluding every row from the held-out receptor. The GPCR score is
 therefore limited to a 10% screening prior.
 
@@ -169,7 +174,9 @@ When GPCR calibration is available, screening uses a thermodynamic-first safety
 blend: 90% general-stability percentile and 10% GPCR fine-tune percentile. Raw
 ddG, GPCR score, percentiles, and the consensus rank are all retained in the
 CSV. The assay-specific score is deliberately prevented from overriding a
-strongly destabilizing thermodynamic prediction.
+strongly destabilizing thermodynamic prediction. `pretrained_ddg_std` records
+disagreement across the five heads as an uncertainty flag; it is useful for
+triage but is not a calibrated confidence interval.
 
 ## Limitations
 
@@ -181,9 +188,9 @@ strongly destabilizing thermodynamic prediction.
 - The MPTherm head reaches only Spearman `0.371` on the small leak-free GPCR-tm
   test. Its delta-Tm output is an auxiliary ranking signal, not a calibrated
   universal GPCR stability measurement.
-- GPCR site-held-out macro Spearman `0.641` measures residual-binding thermal
+- GPCR site-held-out macro Spearman `0.601` measures residual-binding thermal
   assays, not thermodynamic GPCR ddG accuracy. New-receptor macro Spearman is
-  only `0.146`; high-accuracy GPCR ddG prediction has not been demonstrated.
+  only `0.171`; high-accuracy GPCR ddG prediction has not been demonstrated.
 - GPCR assays can disagree for the same mutation and ligand state.
 - More than two mutations are supported architecturally but extrapolate beyond
   epistasis training.
