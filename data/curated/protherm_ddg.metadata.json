@@ -1,0 +1,34 @@
+{
+  "cropped_rows": 255,
+  "embedding_window_length": 1022,
+  "missing_ddg_or_sequence_rows": 163,
+  "normalized_rows": 4504,
+  "output": "data/curated/protherm_ddg.csv",
+  "output_sha256": "82e588b1e97c49553ac236ad9d97a353e2a1526ea4a2a08e0f7aab5e9b297ccd",
+  "proteins": 182,
+  "raw_fireprotdb_rows": 412411,
+  "raw_protherm_rows": 6972,
+  "rejected_sequence_inconsistent_rows": 0,
+  "replicate_policy": "median target; sqrt(count)/(1+spread) weight clipped to [0.25,2]",
+  "schema": "protein-stabilizer.protherm-ddg.v1",
+  "sign_convention": "negative ddG is stabilizing",
+  "source_files": [
+    {
+      "path": "data/raw/fireprotdb2/mutation_ddg_test.parquet",
+      "sha256": "d776b34f375bdd9e31f83c6954853f31e32a453f8eed2462b3d19d34b25570fb"
+    },
+    {
+      "path": "data/raw/fireprotdb2/mutation_ddg_train.parquet",
+      "sha256": "90553e511bfe8a8853a1cea8f06e1f6e73661aad1019cea6e63a215c075ecc1c"
+    },
+    {
+      "path": "data/raw/fireprotdb2/mutation_ddg_validation.parquet",
+      "sha256": "845481ce7651595931964ba118bf03766da0daa6ed6571345002d2ebed0e3d47"
+    }
+  ],
+  "split_rows": {
+    "test": 376,
+    "train": 3755,
+    "validation": 373
+  }
+}

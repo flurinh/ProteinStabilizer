@@ -2,7 +2,9 @@
 
 ProteinStabilizer ranks amino-acid substitutions for stability, with a
 GPCR-specific calibration layer. It uses a frozen ESM-C 600M encoder and trains
-only compact heads over contextual residue-embedding differences.
+only compact heads over contextual residue-embedding differences. The current
+pipeline is intentionally optimized for application and screening, rather than
+for introducing a new protein-stability architecture.
 
 Solubility is deliberately not part of the current model.
 
@@ -15,8 +17,11 @@ delta_i = ESM-C(mutant)[i] - ESM-C(WT)[i]
 predicted ddG = SingleMutationHead(delta_i)
 ```
 
-Negative predicted ddG is stabilizing. The thermodynamic head was trained on
-the published Megascale/cDNA single-mutant split.
+Negative predicted ddG is stabilizing. The base thermodynamic head was trained
+on the published Megascale/cDNA single-mutant split. A nonlinear copy is then
+adapted on experimental ProTherm ddG. A second copy is trained on MPTherm-Pred
+delta-Tm, for which positive values are stabilizing. The ddG and delta-Tm labels
+are never pooled into one regression target.
 
 For a set of substitutions, the model embeds the WT, every constituent single
 mutant, and the complete joint mutant. For each mutation it constructs:
@@ -31,8 +36,10 @@ operation is permutation invariant and accepts any mutation count, although
 the epistasis head has only been trained and evaluated on double mutants.
 
 The final GPCR layer is a low-data ranking calibration trained on the supplied
-NTSR1, A2A, and beta-1 adrenergic receptor measurements. Because those endpoints
-are residual binding after heating rather than thermodynamic ddG, the GPCR
+NTSR1, A2A, and beta-1 adrenergic receptor measurements. It combines four
+mutation-delta scores (base ddG, delta norm, ProTherm-adapted ddG, and
+MPTherm-adapted delta-Tm) through a two-component ridge head. Because the GPCR
+endpoints are residual binding after heating rather than thermodynamic ddG, the
 output is explicitly a ranking score, not kcal/mol or a stability percentage.
 
 ## Data and splits
@@ -42,6 +49,7 @@ Download and normalize the data:
 ```bash
 python scripts/download_data.py
 python scripts/prepare_gpcr_benchmark.py
+python scripts/download_transfer_data.py
 ```
 
 The pipeline uses:
@@ -51,10 +59,17 @@ The pipeline uses:
 | cDNA/Megascale singles | Single-head training | 116 source proteins, with a protein-held-out validation subset |
 | cDNA/Megascale single test | External evaluation | 19 held-out proteins; 19,645 mutations |
 | Megascale-D | Epistasis training | Published 90/17/20-protein train/validation/test split |
+| ProTherm via FireProtDB 2.0 | Experimental ddG transfer | 148/18/18-protein upstream train/validation/test split; 4,504 replicate-aggregated mutations |
+| MPTherm-Pred | Membrane-domain delta-Tm auxiliary task | Derived protein-disjoint 634/137/136-row train/validation/test split; 7 GPCR evaluation-site rows quarantined |
 | GPCR workbook | Application calibration | Entire `(protein, mutation site)` groups; assay-balanced 60/20/20 split |
 
 The compact ThermoMPNN-D Zenodo release is checksum verified. The downloader
 excludes the 6.6 GB Rosetta sweep because it is not needed by this model.
+The transfer downloader also pins SHA-256 checksums. It extracts only ProTherm
+records from a FireProtDB 2.0 mirror, rejects missing/inconsistent sequences,
+aggregates replicate experiments by median, and downweights disagreements.
+MPTherm-Pred UniProt sequences are cached locally. Proteins longer than 1,022
+residues use a mutation-centered window so ESM-C attention remains bounded.
 
 ## Environment and training
 
@@ -76,11 +91,11 @@ checked-in heads. The looser `pyproject.toml` bounds are for development.
 
 The `run` command:
 
-1. collects every required WT, single, joint-double, and GPCR sequence;
+1. collects every required WT, single, joint-double, transfer, and GPCR sequence;
 2. stores final-layer ESM-C residue vectors in a resumable HDF5 cache;
 3. materializes row-aligned delta features and provenance manifests;
-4. trains the single and epistasis heads;
-5. selects the GPCR calibration on the grouped validation split; and
+4. trains the single, epistasis, and target-specific transfer heads;
+5. selects the GPCR calibration on the mutation-site-held-out validation split; and
 6. evaluates each held-out test split after model selection.
 
 Generated embeddings and features stay under `embeddings/` and `artifacts/`.
@@ -96,14 +111,18 @@ The current deterministic run used seed `20260715`:
 | Single-mutant protein holdout | 0.754 | 0.762 | 0.582 | 0.786 |
 | Double-mutant learned estimate | 0.492 | 0.452 | 0.907 | 1.220 |
 | Double-mutant additive baseline | 0.560 | 0.518 | 1.192 | 1.509 |
+| ProTherm experimental ddG holdout | 0.409 | 0.292 | 1.168 | 1.993 |
+| MPTherm delta-Tm holdout | 0.219 | 0.205 | 3.751 | 4.885 |
 
 The epistasis model improves absolute error but the additive score ranks the
 double-mutant test set better. Both values are returned at inference.
 
-On the assay-balanced GPCR holdout, the fine-tuned model achieved macro
-within-assay Spearman `0.370`, compared with `-0.237` for the uncalibrated
-pretrained score. This result covers only 19 held-out mutation sites and is
-heterogeneous by receptor/assay, so it should be used as a secondary prior.
+On the assay-balanced GPCR holdout, the transfer model achieved macro
+within-assay Spearman `0.601`, compared with `0.370` for the previous
+single-source calibration and `-0.237` for the uncalibrated pretrained score.
+Its MAE was `24.29` stability-percentage points. This result covers only 19
+held-out mutation sites and is heterogeneous by receptor/assay, so it should be
+used as a screening prior rather than as a calibrated measurement.
 
 ## Prediction
 
@@ -132,24 +151,44 @@ the ESM-C token budget:
   --output artifacts/target_gpcr_screen.csv
 ```
 
-When GPCR calibration is available, screening uses a conservative consensus:
-75% general-stability percentile and 25% GPCR fine-tune percentile. Raw ddG,
-GPCR score, percentiles, and the consensus rank are all retained in the CSV.
+When GPCR calibration is available, screening uses a thermodynamic-first safety
+blend: 75% general-stability percentile and 25% GPCR fine-tune percentile. Raw
+ddG, GPCR score, percentiles, and the consensus rank are all retained in the
+CSV. The assay-specific score is deliberately prevented from overriding a
+strongly destabilizing thermodynamic prediction.
 
 ## Limitations
 
 - The encoder is sequence-only; membrane topology and structure are not yet
   model inputs.
-- The general training proteins are mostly short soluble domains, so GPCR use
-  is an extrapolation partially corrected by a very small benchmark.
+- ProTherm is heterogeneous and replicate measurements can disagree; the
+  normalization records replicate count and spread for every mutation.
+- The standalone MPTherm head is weak on its membrane-only protein holdout
+  (Spearman `-0.060`). Its delta-Tm output is retained only as one auxiliary
+  feature selected by the GPCR benchmark, not as a reliable universal
+  membrane-protein delta-Tm predictor.
+- GPCR macro Spearman `0.601` measures ranking for residual-binding thermal
+  assays, not thermodynamic GPCR ddG accuracy. This is why saturation screening
+  keeps the general ddG model as the dominant score.
 - GPCR assays can disagree for the same mutation and ligand state.
 - More than two mutations are supported architecturally but extrapolate beyond
   epistasis training.
 - Predictions are candidates for experimental screening, not evidence that a
   receptor will express, remain functional, or crystallize.
 
+## ESM-C 6B migration
+
+The feature and checkpoint schemas infer the embedding dimension, so the heads
+do not assume 1,152 dimensions internally. Moving to ESM-C 6B still requires a
+separate embedding cache and complete retraining; 600M and 6B vectors or heads
+must never share a cache. The installed open-source ESM package currently
+validates the local 600M backend, so a 6B run should be added as a distinct
+backend once the 6B checkpoint/API and license are available.
+
 ## Sources
 
 - ThermoMPNN-D curated data: https://doi.org/10.5281/zenodo.13345274
 - Megascale stability measurements: https://doi.org/10.1038/s41586-023-06328-6
 - ESM-C implementation: https://github.com/evolutionaryscale/esm
+- FireProtDB 2.0: https://loschmidt.chemi.muni.cz/fireprotdb/
+- MPTherm-Pred dataset: https://web.iitm.ac.in/bioinfo2/mpthermpred/dataset_details.html

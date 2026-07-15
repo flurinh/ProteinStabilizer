@@ -15,6 +15,7 @@ from protein_stabilizer.data import (
     merge_embedding_requests,
     reconstruct_double,
     sequence_hash,
+    transfer_rows,
 )
 from protein_stabilizer.cli import _parse_positions
 from protein_stabilizer.embeddings import (
@@ -28,6 +29,7 @@ from protein_stabilizer.models import (
     SingleHeadConfig,
     SingleMutationHead,
 )
+from protein_stabilizer.transfer_data import mutation_window
 
 
 def test_mutation_application_and_double_reconstruction() -> None:
@@ -139,3 +141,40 @@ def test_position_expression_parser() -> None:
     assert _parse_positions(None) is None
     with pytest.raises(ValueError, match="range"):
         _parse_positions("5-2")
+
+
+def test_long_transfer_sequence_is_cropped_and_remapped() -> None:
+    sequence = "A" * 1200 + "C" + "D" * 1200
+    window, mutation, start = mutation_window(
+        sequence, Mutation.parse("C1201W"), max_length=100
+    )
+    assert len(window) == 100
+    assert start == 1151
+    assert mutation == Mutation.parse("C51W")
+    assert apply_mutations(window, [mutation])[50] == "W"
+
+
+def test_transfer_reader_preserves_source_mutation_numbering(tmp_path: Path) -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "protein_id": "P1",
+                "mutation": "C1201W",
+                "position": 1201,
+                "embedding_mutation": "C51W",
+                "embedding_position": 51,
+                "wt_sequence": "A" * 50 + "C" + "D" * 49,
+                "mutant_sequence": "A" * 50 + "W" + "D" * 49,
+                "target": -1.5,
+                "target_kind": "ddg",
+                "split": "train",
+            }
+        ]
+    )
+    path = tmp_path / "transfer.csv"
+    frame.to_csv(path, index=False)
+    row = next(transfer_rows(path))
+    assert row["mutation"] == "C1201W"
+    assert row["source_position"] == 1201
+    assert row["embedding_mutation"] == "C51W"
+    assert row["position"] == 51

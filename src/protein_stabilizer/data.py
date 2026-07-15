@@ -132,6 +132,14 @@ class DatasetPaths:
     def gpcr(self) -> Path:
         return self.root / "data/curated/gpcr_finetune.csv"
 
+    @property
+    def protherm(self) -> Path:
+        return self.root / "data/curated/protherm_ddg.csv"
+
+    @property
+    def mptherm(self) -> Path:
+        return self.root / "data/curated/mptherm_dtm.csv"
+
     def single(self, split: str) -> Path:
         names = {"train": "cdna1_train.csv", "test": "cdna1_test.csv"}
         return self.megascale / names[split]
@@ -210,6 +218,50 @@ def gpcr_rows(path: Path, *, include_wt: bool = False) -> Iterator[dict[str, obj
         }
 
 
+def transfer_rows(path: Path) -> Iterator[dict[str, object]]:
+    """Read normalized single-mutant transfer data without mixing target types."""
+
+    frame = pd.read_csv(path)
+    required = {
+        "protein_id",
+        "mutation",
+        "wt_sequence",
+        "mutant_sequence",
+        "position",
+        "target",
+        "target_kind",
+        "split",
+    }
+    if not required.issubset(frame.columns):
+        raise ValueError(f"{path} is missing columns {sorted(required - set(frame.columns))}")
+    target_kinds = set(frame["target_kind"].astype(str))
+    if len(target_kinds) != 1:
+        raise ValueError(f"{path} mixes target types: {sorted(target_kinds)}")
+    for row in frame.to_dict("records"):
+        source_mutation = Mutation.parse(str(row["mutation"]))
+        mutation = Mutation.parse(str(row.get("embedding_mutation", row["mutation"])))
+        wt = normalize_sequence(str(row["wt_sequence"]))
+        mutant = normalize_sequence(str(row["mutant_sequence"]))
+        if apply_mutations(wt, [mutation]) != mutant:
+            raise ValueError(f"transfer sequence mismatch for {row['protein_id']} {mutation}")
+        value = dict(row)
+        value.update(
+            {
+                "protein_id": str(row["protein_id"]),
+                "mutation": str(source_mutation),
+                "embedding_mutation": str(mutation),
+                "wt_sequence": wt,
+                "mutant_sequence": mutant,
+                "position": mutation.position,
+                "source_position": source_mutation.position,
+                "target": float(row["target"]),
+                "split": str(row["split"]),
+                "target_kind": str(row["target_kind"]),
+            }
+        )
+        yield value
+
+
 def all_embedding_requests(paths: DatasetPaths) -> list[EmbeddingRequest]:
     requests: list[EmbeddingRequest] = []
     for split in ("train", "test"):
@@ -236,6 +288,17 @@ def all_embedding_requests(paths: DatasetPaths) -> list[EmbeddingRequest]:
                 EmbeddingRequest(str(row["mutant_sequence"]), (position,)),
             ]
         )
+    for source in (paths.protherm, paths.mptherm):
+        if not source.is_file():
+            continue
+        for row in transfer_rows(source):
+            position = int(row["position"])
+            requests.extend(
+                [
+                    EmbeddingRequest(str(row["wt_sequence"]), (position,)),
+                    EmbeddingRequest(str(row["mutant_sequence"]), (position,)),
+                ]
+            )
     return merge_embedding_requests(requests)
 
 

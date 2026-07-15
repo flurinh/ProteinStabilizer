@@ -10,7 +10,9 @@ requires-python = ">=3.10"
 dependencies = [
   "h5py>=3.10",
   "numpy>=1.26",
+  "openpyxl>=3.1",
   "pandas>=2.1",
+  "pyarrow>=23.0",
   "scikit-learn>=1.4",
   "scipy>=1.12",
   "torch>=2.2",

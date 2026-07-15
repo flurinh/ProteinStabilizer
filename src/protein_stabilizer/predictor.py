@@ -18,7 +18,58 @@ from .data import (
     normalize_sequence,
 )
 from .embeddings import ESMCEmbedder, token_batches
-from .training import load_multi_checkpoint, load_single_checkpoint
+from .training import (
+    load_auxiliary_checkpoint,
+    load_multi_checkpoint,
+    load_single_checkpoint,
+)
+
+
+def _single_calibration_features(
+    latent: np.ndarray,
+    ddg: np.ndarray,
+    deltas: np.ndarray,
+    checkpoint_dir: Path,
+    device: torch.device,
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    norm = np.linalg.norm(deltas.astype(np.float32), axis=1)
+    representation = np.concatenate(
+        [latent, ddg[:, None], norm[:, None]], axis=1
+    ).astype(np.float32)
+    named = {
+        "latent_base": representation,
+    }
+    auxiliary: dict[str, np.ndarray] = {}
+    protherm_path = checkpoint_dir / "protherm_ddg_head.pt"
+    mptherm_path = checkpoint_dir / "mptherm_dtm_head.pt"
+    if protherm_path.exists() and mptherm_path.exists():
+        tensor = torch.from_numpy(deltas.astype(np.float32)).to(device)
+        protherm_model = load_auxiliary_checkpoint(protherm_path, device)
+        mptherm_model = load_auxiliary_checkpoint(mptherm_path, device)
+        with torch.inference_mode():
+            protherm = protherm_model(tensor).float().cpu().numpy()
+            mptherm = mptherm_model(tensor).float().cpu().numpy()
+        auxiliary = {
+            "protherm_ddg": protherm,
+            "mptherm_delta_tm": mptherm,
+        }
+        named.update(
+            {
+                "latent_protherm": np.concatenate(
+                    [representation, protherm[:, None]], axis=1
+                ),
+                "latent_mptherm": np.concatenate(
+                    [representation, mptherm[:, None]], axis=1
+                ),
+                "latent_both": np.concatenate(
+                    [representation, protherm[:, None], mptherm[:, None]], axis=1
+                ),
+                "thermodynamic_scores": np.stack(
+                    [ddg, norm, protherm, mptherm], axis=1
+                ),
+            }
+        )
+    return named, auxiliary
 
 
 def predict_mutations(
@@ -76,23 +127,30 @@ def predict_mutations(
     if len(parsed) == 1:
         predicted_ddg = float(constituent[0])
         result["predicted_ddg"] = predicted_ddg
+        with torch.inference_mode():
+            latent = single_head.latent(single_tensor).float().cpu().numpy()
+        named_features, auxiliary = _single_calibration_features(
+            latent, constituent, single_delta, checkpoint_dir, torch_device
+        )
+        if auxiliary:
+            result["protherm_calibrated_ddg"] = float(auxiliary["protherm_ddg"][0])
+            result["mptherm_predicted_delta_tm"] = float(
+                auxiliary["mptherm_delta_tm"][0]
+            )
         calibration_path = checkpoint_dir / "gpcr_calibration.joblib"
         if calibration_path.exists():
             calibration = joblib.load(calibration_path)
-            if calibration.get("schema") != "protein-stabilizer.gpcr-ridge.v1":
+            schema = calibration.get("schema")
+            if schema not in {
+                "protein-stabilizer.gpcr-ridge.v1",
+                "protein-stabilizer.gpcr-ridge.v2",
+            }:
                 raise RuntimeError("GPCR calibration schema mismatch")
-            with torch.inference_mode():
-                latent = single_head.latent(single_tensor).float().cpu().numpy()
-            features = np.concatenate(
-                [
-                    latent,
-                    np.asarray([[predicted_ddg]], dtype=np.float32),
-                    np.linalg.norm(single_delta, axis=1, keepdims=True),
-                ],
-                axis=1,
-            )
+            feature_set = calibration.get("feature_set", "latent_base")
+            if feature_set not in named_features:
+                raise RuntimeError(f"missing inference features for {feature_set}")
             result["gpcr_stability_rank_score"] = float(
-                calibration["pipeline"].predict(features)[0]
+                calibration["pipeline"].predict(named_features[feature_set])[0]
             )
         return result
 
@@ -184,19 +242,23 @@ def screen_single_mutants(
     with torch.inference_mode():
         ddg = model(delta_tensor).float().cpu().numpy()
         latent = model.latent(delta_tensor).float().cpu().numpy()
+    named_features, auxiliary = _single_calibration_features(
+        latent, ddg, deltas, checkpoint_dir, torch_device
+    )
     calibration_path = checkpoint_dir / "gpcr_calibration.joblib"
     gpcr_score: np.ndarray | None = None
     if calibration_path.exists():
         calibration = joblib.load(calibration_path)
-        features = np.concatenate(
-            [
-                latent,
-                ddg[:, None],
-                np.linalg.norm(deltas, axis=1, keepdims=True),
-            ],
-            axis=1,
-        )
-        gpcr_score = calibration["pipeline"].predict(features)
+        schema = calibration.get("schema")
+        if schema not in {
+            "protein-stabilizer.gpcr-ridge.v1",
+            "protein-stabilizer.gpcr-ridge.v2",
+        }:
+            raise RuntimeError("GPCR calibration schema mismatch")
+        feature_set = calibration.get("feature_set", "latent_base")
+        if feature_set not in named_features:
+            raise RuntimeError(f"missing inference features for {feature_set}")
+        gpcr_score = calibration["pipeline"].predict(named_features[feature_set])
 
     def percentile(values: np.ndarray) -> np.ndarray:
         if len(values) == 1:
@@ -208,11 +270,18 @@ def screen_single_mutants(
 
     general_percentile = percentile(-ddg)
     gpcr_percentile = percentile(gpcr_score) if gpcr_score is not None else None
-    consensus = (
-        0.75 * general_percentile + 0.25 * gpcr_percentile
-        if gpcr_percentile is not None
-        else general_percentile
-    )
+    if gpcr_percentile is not None:
+        weights = calibration.get(
+            "screening_weights",
+            {"general_stability": 0.75, "gpcr_calibration": 0.25},
+        )
+        general_weight = float(weights["general_stability"])
+        gpcr_weight = float(weights["gpcr_calibration"])
+        consensus = general_weight * general_percentile + gpcr_weight * gpcr_percentile
+    else:
+        general_weight = 1.0
+        gpcr_weight = 0.0
+        consensus = general_percentile
 
     rows: list[dict[str, object]] = []
     for index, mutation in enumerate(mutations):
@@ -229,6 +298,13 @@ def screen_single_mutants(
         if gpcr_score is not None:
             row["gpcr_stability_rank_score"] = float(gpcr_score[index])
             row["gpcr_stability_percentile"] = float(gpcr_percentile[index])
+        if auxiliary:
+            row["protherm_calibrated_ddg"] = float(
+                auxiliary["protherm_ddg"][index]
+            )
+            row["mptherm_predicted_delta_tm"] = float(
+                auxiliary["mptherm_delta_tm"][index]
+            )
         rows.append(row)
     sort_key = "consensus_rank_score"
     rows.sort(key=lambda row: float(row[sort_key]), reverse=True)
@@ -247,7 +323,8 @@ def screen_single_mutants(
         "candidate_count": len(rows),
         "ranking_key": sort_key,
         "ranking_policy": (
-            "0.75 general-stability percentile + 0.25 GPCR fine-tune percentile"
+            f"{general_weight:.2f} general-stability percentile + "
+            f"{gpcr_weight:.2f} GPCR fine-tune percentile"
             if gpcr_score is not None
             else "general-stability percentile"
         ),

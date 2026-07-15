@@ -17,6 +17,7 @@ from .data import (
     gpcr_site_splits,
     sequence_hash,
     single_rows,
+    transfer_rows,
 )
 from .embeddings import ResidueEmbeddingReader, file_sha256
 
@@ -286,6 +287,80 @@ def _write_gpcr_features(
     }
 
 
+def _write_transfer_features(
+    source: Path,
+    target: Path,
+    cache: ResidueEmbeddingReader,
+    *,
+    kind: str,
+    chunk_size: int,
+) -> dict[str, object]:
+    rows = list(transfer_rows(source))
+    target_kinds = {str(row["target_kind"]) for row in rows}
+    if len(target_kinds) != 1:
+        raise ValueError(f"{source} mixes transfer target types")
+
+    def write(handle: h5py.File) -> None:
+        handle.attrs["schema"] = FEATURE_SCHEMA
+        handle.attrs["kind"] = kind
+        handle.attrs["target_kind"] = next(iter(target_kinds))
+        handle.attrs["source"] = str(source)
+        handle.attrs["source_sha256"] = file_sha256(source)
+        handle.attrs["embedding_provenance"] = json.dumps(
+            cache.provenance, sort_keys=True, separators=(",", ":")
+        )
+        count = len(rows)
+        delta = handle.create_dataset(
+            "delta",
+            shape=(count, cache.dimension),
+            dtype="f2",
+            chunks=(min(chunk_size, count), cache.dimension),
+        )
+        for start in range(0, count, chunk_size):
+            batch = rows[start : start + chunk_size]
+            wt_keys = [
+                (sequence_hash(str(row["wt_sequence"])), int(row["position"]))
+                for row in batch
+            ]
+            mutant_keys = [
+                (sequence_hash(str(row["mutant_sequence"])), int(row["position"]))
+                for row in batch
+            ]
+            values = cache.vectors(mutant_keys).astype(np.float32)
+            values -= cache.vectors(wt_keys).astype(np.float32)
+            delta[start : start + len(batch)] = values.astype(np.float16)
+        handle.create_dataset(
+            "target", data=np.asarray([row["target"] for row in rows], dtype=np.float32)
+        )
+        handle.create_dataset(
+            "sample_weight",
+            data=np.asarray(
+                [float(row.get("sample_weight", 1.0)) for row in rows], dtype=np.float32
+            ),
+        )
+        handle.create_dataset(
+            "position", data=np.asarray([row["position"] for row in rows], dtype=np.int32)
+        )
+        _string_dataset(handle, "protein_id", [str(row["protein_id"]) for row in rows])
+        _string_dataset(handle, "mutation", [str(row["mutation"]) for row in rows])
+        _string_dataset(handle, "split", [str(row["split"]) for row in rows])
+        _string_dataset(
+            handle, "topology", [str(row.get("topology", "unknown")) for row in rows]
+        )
+
+    _atomic_h5(target, write)
+    split_counts = pd.Series([str(row["split"]) for row in rows]).value_counts().to_dict()
+    return {
+        "path": str(target),
+        "kind": kind,
+        "target_kind": next(iter(target_kinds)),
+        "rows": len(rows),
+        "proteins": len({str(row["protein_id"]) for row in rows}),
+        "split_counts": {str(key): int(value) for key, value in split_counts.items()},
+        "source_sha256": file_sha256(source),
+    }
+
+
 def build_feature_files(
     root: Path,
     cache_path: Path,
@@ -350,6 +425,24 @@ def build_feature_files(
                 output_dir / "gpcr.h5",
                 cache,
                 seed=seed,
+                chunk_size=chunk_size,
+            )
+        )
+        records.append(
+            _write_transfer_features(
+                paths.protherm,
+                output_dir / "protherm.h5",
+                cache,
+                kind="protherm_ddg",
+                chunk_size=chunk_size,
+            )
+        )
+        records.append(
+            _write_transfer_features(
+                paths.mptherm,
+                output_dir / "mptherm.h5",
+                cache,
+                kind="mptherm_dtm",
                 chunk_size=chunk_size,
             )
         )

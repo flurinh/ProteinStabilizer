@@ -15,6 +15,7 @@ from .training import (
     train_epistasis_head,
     train_gpcr_calibration,
     train_single_head,
+    train_transfer_heads,
 )
 
 
@@ -46,12 +47,15 @@ def _require_data(root: Path) -> None:
         paths.single("test"),
         *(paths.double(split) for split in ("train", "val", "test")),
         paths.gpcr,
+        paths.protherm,
+        paths.mptherm,
     ]
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         raise FileNotFoundError(
             "required prepared datasets are missing; run scripts/download_data.py and "
-            f"scripts/prepare_gpcr_benchmark.py first: {missing}"
+            "scripts/prepare_gpcr_benchmark.py and scripts/download_transfer_data.py "
+            f"first: {missing}"
         )
 
 
@@ -100,10 +104,16 @@ def command_train(args: argparse.Namespace) -> dict[str, object]:
         epochs=args.multi_epochs,
         device=args.device,
     )
+    transfer = train_transfer_heads(
+        args.features,
+        args.checkpoints,
+        seed=args.seed,
+        device=args.device,
+    )
     gpcr = train_gpcr_calibration(
         args.features, args.checkpoints, device=args.device
     )
-    return {"single": single, "multi": multi, "gpcr": gpcr}
+    return {"single": single, "multi": multi, "transfer": transfer, "gpcr": gpcr}
 
 
 def command_run(args: argparse.Namespace) -> dict[str, object]:
