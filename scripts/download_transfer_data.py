@@ -9,12 +9,37 @@ import shutil
 import urllib.request
 from pathlib import Path
 
-from protein_stabilizer.transfer_data import prepare_mptherm, prepare_protherm
+from protein_stabilizer.transfer_data import (
+    prepare_gpcr_tm,
+    prepare_mcsm_membrane,
+    prepare_mptherm,
+    prepare_protherm,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 FILES = {
+    ROOT / "data/raw/gpcr_tm/data_set_file_used_web_server.csv": (
+        "https://biosig.lab.uq.edu.au/gpcr_tm/static/datasets/"
+        "data_set_file_used_web_server.csv",
+        "01b73db22d991bd406f4285ffed1d6e4c4311fe33e7b412110f836ebc9fc93fc",
+    ),
+    ROOT / "data/raw/mcsm_membrane/mcsm_membrane_stability_train.csv": (
+        "https://biosig.lab.uq.edu.au/mcsm_membrane/static/datasets/"
+        "mcsm_membrane_stability_train.csv",
+        "d9e468315d18efe1e735087faec27821247defc71e76aa980446c03dc0305acf",
+    ),
+    ROOT / "data/raw/mcsm_membrane/mcsm_membrane_stability_blind.csv": (
+        "https://biosig.lab.uq.edu.au/mcsm_membrane/static/datasets/"
+        "mcsm_membrane_stability_blind.csv",
+        "e43d7e2a1af03eb77982977de3e65552d0d33170d0f03121a3a531501db39157",
+    ),
+    ROOT / "data/raw/mcsm_membrane/pdb_stability.tar.gz": (
+        "https://biosig.lab.uq.edu.au/mcsm_membrane/static/datasets/"
+        "pdb_stability.tar.gz",
+        "13eb6538ec3a52e8fc16d3806a6922c78e4091d27764954edb5ccf5014f00cbc",
+    ),
     ROOT / "data/raw/mpthermpred/Tm_dataset.tab": (
         "https://web.iitm.ac.in/bioinfo2/mpthermpred/Tm_dataset.tab",
         "9419ce4b0c848384b634c6481b1d7f140b3ed43d942e855a2be270e1727ae4cb",
@@ -71,11 +96,36 @@ def main() -> None:
     mptherm = prepare_mptherm(
         ROOT / "data/raw/mpthermpred/Tm_dataset.tab",
         curated / "gpcr_finetune.csv",
+        ROOT / "data/raw/gpcr_tm/data_set_file_used_web_server.csv",
         ROOT / "data/raw/uniprot",
         curated / "mptherm_dtm.csv",
         curated / "mptherm_dtm.metadata.json",
     )
-    print(json.dumps({"protherm": protherm, "mptherm": mptherm}, indent=2))
+    mcsm_membrane = prepare_mcsm_membrane(
+        ROOT / "data/raw/mcsm_membrane/mcsm_membrane_stability_train.csv",
+        ROOT / "data/raw/mcsm_membrane/mcsm_membrane_stability_blind.csv",
+        ROOT / "data/raw/mcsm_membrane/pdb_stability.tar.gz",
+        curated / "mcsm_membrane_ddg.csv",
+        curated / "mcsm_membrane_ddg.metadata.json",
+    )
+    gpcr_tm = prepare_gpcr_tm(
+        ROOT / "data/raw/gpcr_tm/data_set_file_used_web_server.csv",
+        curated / "gpcr_finetune.csv",
+        ROOT / "data/raw/uniprot",
+        curated / "gpcr_tm_dtm.csv",
+        curated / "gpcr_tm_dtm.metadata.json",
+    )
+    print(
+        json.dumps(
+            {
+                "protherm": protherm,
+                "mptherm": mptherm,
+                "mcsm_membrane": mcsm_membrane,
+                "gpcr_tm": gpcr_tm,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

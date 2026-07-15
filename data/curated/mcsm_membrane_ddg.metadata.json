@@ -1,0 +1,39 @@
+{
+  "application_training_policy": "source four-protein development split; unseen alpha-helical 1AFO/2K73 evaluation",
+  "experimental_rows": 223,
+  "output": "data/curated/mcsm_membrane_ddg.csv",
+  "output_sha256": "08261e444c4138e8b66bff33813d278dd419cf404ddb615cf377e21bed2478c2",
+  "protein_rows": {
+    "1AFO": 12,
+    "1PY6": 67,
+    "1QD6": 31,
+    "1QJP": 12,
+    "2K73": 12,
+    "2XOV": 70,
+    "3GP6": 19
+  },
+  "rows": 404,
+  "schema": "protein-stabilizer.mcsm-membrane-ddg.v1",
+  "source_files": [
+    {
+      "path": "data/raw/mcsm_membrane/mcsm_membrane_stability_train.csv",
+      "sha256": "d9e468315d18efe1e735087faec27821247defc71e76aa980446c03dc0305acf"
+    },
+    {
+      "path": "data/raw/mcsm_membrane/mcsm_membrane_stability_blind.csv",
+      "sha256": "e43d7e2a1af03eb77982977de3e65552d0d33170d0f03121a3a531501db39157"
+    }
+  ],
+  "source_sign_convention": "positive DG(WT)-DG(mutant) is stabilizing",
+  "structure_archive": {
+    "path": "data/raw/mcsm_membrane/pdb_stability.tar.gz",
+    "sha256": "13eb6538ec3a52e8fc16d3806a6922c78e4091d27764954edb5ccf5014f00cbc"
+  },
+  "synthetic_reverse_rows": 181,
+  "target_sign_convention": "negative project ddG is stabilizing",
+  "test_policy": "experimental forward mutations only; synthetic reverse rows excluded",
+  "topology_rows": {
+    "alpha_helical": 161,
+    "beta_barrel": 62
+  }
+}

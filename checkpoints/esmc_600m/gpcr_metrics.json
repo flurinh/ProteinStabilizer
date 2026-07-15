@@ -1,53 +1,153 @@
 {
-  "schema": "protein-stabilizer.gpcr-calibration.v2",
+  "leave_one_receptor_out": {
+    "by_assay": {
+      "a2a_agonist_readout": {
+        "mae": 24.42630283920853,
+        "n": 27,
+        "pearson": -0.09264628712621265,
+        "rmse": 30.287872342959293,
+        "spearman": 0.01436871137557533
+      },
+      "a2a_antagonist_readout": {
+        "mae": 15.351414007299086,
+        "n": 17,
+        "pearson": -0.2490491959816916,
+        "rmse": 20.75338806572188,
+        "spearman": -0.06519109574114591
+      },
+      "b1ar_apo_antagonist_readout": {
+        "mae": 19.640304497310094,
+        "n": 21,
+        "pearson": 0.4235863826880574,
+        "rmse": 26.39778016103155,
+        "spearman": 0.5122410446271598
+      },
+      "ntr_agonist_bound": {
+        "mae": 19.08705137056463,
+        "n": 34,
+        "pearson": 0.16704813975941943,
+        "rmse": 23.075477589972607,
+        "spearman": 0.09400795852409101
+      },
+      "ntr_apo": {
+        "mae": 16.391279522110434,
+        "n": 34,
+        "pearson": 0.25914545586946175,
+        "rmse": 24.314109080266313,
+        "spearman": 0.1742986422784932
+      }
+    },
+    "macro_within_assay_spearman": 0.14594505221283469,
+    "overall": {
+      "mae": 19.091683154715632,
+      "n": 133,
+      "pearson": 0.44702549569155486,
+      "rmse": 25.269742326942126,
+      "spearman": 0.521347160355552
+    }
+  },
+  "leave_one_receptor_out_note": "post-selection diagnostic using the site-held-out-selected model configuration; each fold retrains the MPTherm head after excluding every row for the held-out receptor",
+  "leave_one_receptor_out_pretrained_baseline": {
+    "by_assay": {
+      "a2a_agonist_readout": {
+        "mae": 38.455509529069616,
+        "n": 27,
+        "pearson": 0.09919194897098597,
+        "rmse": 42.20595668691363,
+        "spearman": -0.08590655099014188
+      },
+      "a2a_antagonist_readout": {
+        "mae": 29.798320958500398,
+        "n": 17,
+        "pearson": 0.02562294062489829,
+        "rmse": 32.56255998172533,
+        "spearman": 0.050430847648810985
+      },
+      "b1ar_apo_antagonist_readout": {
+        "mae": 26.971054629733164,
+        "n": 21,
+        "pearson": -0.05703215280560827,
+        "rmse": 32.87915877288582,
+        "spearman": -0.06199095444532506
+      },
+      "ntr_agonist_bound": {
+        "mae": 19.012782780782263,
+        "n": 34,
+        "pearson": 0.0029857223680372622,
+        "rmse": 23.72881885799818,
+        "spearman": 0.04539896533602444
+      },
+      "ntr_apo": {
+        "mae": 19.707475373631013,
+        "n": 34,
+        "pearson": -0.01885730602876175,
+        "rmse": 27.226857149376794,
+        "spearman": -0.053359847504556246
+      }
+    },
+    "macro_within_assay_spearman": -0.021085507991037554,
+    "overall": {
+      "mae": 25.77256494777319,
+      "n": 133,
+      "pearson": 0.05506679673410035,
+      "rmse": 31.643183743909756,
+      "spearman": 0.04965751742339758
+    }
+  },
+  "leave_one_receptor_out_upstream_rows_excluded": {
+    "AA2AR_HUMAN": 26,
+    "ADRB1_MELGA": 52,
+    "NTSR1_RAT": 37
+  },
+  "schema": "protein-stabilizer.gpcr-calibration.v4",
   "selected_alpha": 100.0,
-  "selected_components": 2,
+  "selected_components": null,
   "selected_feature_set": "thermodynamic_scores",
   "selected_validation": {
     "by_assay": {
       "a2a_agonist_readout": {
-        "mae": 31.054255771636964,
+        "mae": 31.15742425918579,
         "n": 5,
-        "pearson": -0.6393843027481898,
-        "rmse": 40.428873897007996,
+        "pearson": -0.6759606112602408,
+        "rmse": 40.50799585053157,
         "spearman": 0.0
       },
       "a2a_antagonist_readout": {
-        "mae": 34.50910886128744,
+        "mae": 34.682816664377846,
         "n": 3,
-        "pearson": -0.9994917224541482,
-        "rmse": 37.101998697538185,
+        "pearson": -0.9999353978670328,
+        "rmse": 37.255685788050336,
         "spearman": -1.0
       },
       "b1ar_apo_antagonist_readout": {
-        "mae": 16.877297282218933,
+        "mae": 17.100884079933167,
         "n": 4,
-        "pearson": 0.9829354789525556,
-        "rmse": 21.054740361838686,
+        "pearson": 0.9689281006386967,
+        "rmse": 21.21697176330688,
         "spearman": 1.0
       },
       "ntr_agonist_bound": {
-        "mae": 17.218306405203684,
+        "mae": 17.28158038003104,
         "n": 7,
-        "pearson": 0.5180993284550625,
-        "rmse": 18.376472500827543,
+        "pearson": 0.5076031544892063,
+        "rmse": 18.401801709297175,
         "spearman": 0.41443123283995714
       },
       "ntr_apo": {
-        "mae": 6.079920632498605,
+        "mae": 6.055136816842215,
         "n": 7,
-        "pearson": 0.4101923021639565,
-        "rmse": 6.3320953173060746,
+        "pearson": 0.42185159692661905,
+        "rmse": 6.310951638369805,
         "spearman": 0.42857142857142866
       }
     },
     "macro_within_assay_spearman": 0.16860053228227717,
     "overall": {
-      "mae": 18.822899378263035,
+      "mae": 18.907543384111843,
       "n": 26,
-      "pearson": -0.0986644046152303,
-      "rmse": 25.358873216097546,
-      "spearman": -0.03617350041262957
+      "pearson": -0.12637943951870115,
+      "rmse": 25.43337260227352,
+      "spearman": -0.08383337299419838
     }
   },
   "selection": "site-held-out validation; within 0.01 macro Spearman choose the lowest effective dimension",
@@ -553,8 +653,8 @@
       "components": 4,
       "effective_dimension": 4,
       "feature_set": "latent_mptherm",
-      "validation_overall_spearman": 0.010800618606614515,
-      "validation_score": 0.1041855328791482
+      "validation_overall_spearman": 0.0056574668891790315,
+      "validation_score": 0.04418553287914821
     },
     {
       "alpha": 100.0,
@@ -569,8 +669,8 @@
       "components": 4,
       "effective_dimension": 4,
       "feature_set": "latent_mptherm",
-      "validation_overall_spearman": 0.013200756074751074,
-      "validation_score": 0.04418553287914821
+      "validation_overall_spearman": 0.0056574668891790315,
+      "validation_score": 0.02269231889186945
     },
     {
       "alpha": 0.1,
@@ -737,24 +837,24 @@
       "components": 4,
       "effective_dimension": 4,
       "feature_set": "latent_both",
-      "validation_overall_spearman": 0.002228699077555376,
-      "validation_score": 0.05827731948874052
+      "validation_overall_spearman": 0.0056574668891790315,
+      "validation_score": 0.04418553287914821
     },
     {
       "alpha": 1.0,
       "components": 4,
       "effective_dimension": 4,
       "feature_set": "latent_both",
-      "validation_overall_spearman": 0.002228699077555376,
-      "validation_score": 0.05827731948874052
+      "validation_overall_spearman": 0.0056574668891790315,
+      "validation_score": 0.04418553287914821
     },
     {
       "alpha": 10.0,
       "components": 4,
       "effective_dimension": 4,
       "feature_set": "latent_both",
-      "validation_overall_spearman": 0.002228699077555376,
-      "validation_score": 0.05827731948874052
+      "validation_overall_spearman": 0.008400481138477956,
+      "validation_score": 0.04418553287914821
     },
     {
       "alpha": 100.0,
@@ -793,7 +893,7 @@
       "components": 8,
       "effective_dimension": 8,
       "feature_set": "latent_both",
-      "validation_overall_spearman": -0.10166296561464137,
+      "validation_overall_spearman": -0.07594720702746396,
       "validation_score": 0.17418553287914823
     },
     {
@@ -801,7 +901,7 @@
       "components": 8,
       "effective_dimension": 8,
       "feature_set": "latent_both",
-      "validation_overall_spearman": -0.062232135780969346,
+      "validation_overall_spearman": -0.05537460015772203,
       "validation_score": 0.17418553287914823
     },
     {
@@ -809,7 +909,7 @@
       "components": 8,
       "effective_dimension": 8,
       "feature_set": "latent_both",
-      "validation_overall_spearman": 0.06908967140421667,
+      "validation_overall_spearman": 0.050231448440286555,
       "validation_score": -0.16016482396527343
     },
     {
@@ -857,7 +957,7 @@
       "components": null,
       "effective_dimension": 4,
       "feature_set": "thermodynamic_scores",
-      "validation_overall_spearman": -0.06531802681143063,
+      "validation_overall_spearman": -0.06737528749840484,
       "validation_score": 0.13804785296475974
     },
     {
@@ -865,7 +965,7 @@
       "components": null,
       "effective_dimension": 4,
       "feature_set": "thermodynamic_scores",
-      "validation_overall_spearman": -0.06531802681143063,
+      "validation_overall_spearman": -0.06737528749840484,
       "validation_score": 0.13804785296475974
     },
     {
@@ -873,7 +973,7 @@
       "components": null,
       "effective_dimension": 4,
       "feature_set": "thermodynamic_scores",
-      "validation_overall_spearman": -0.07388994634048979,
+      "validation_overall_spearman": -0.07594720702746396,
       "validation_score": 0.14860053228227715
     },
     {
@@ -881,8 +981,8 @@
       "components": null,
       "effective_dimension": 4,
       "feature_set": "thermodynamic_scores",
-      "validation_overall_spearman": -0.08520488011884784,
-      "validation_score": 0.14860053228227715
+      "validation_overall_spearman": -0.08383337299419838,
+      "validation_score": 0.16860053228227717
     },
     {
       "alpha": 1000.0,
@@ -913,7 +1013,7 @@
       "components": 2,
       "effective_dimension": 2,
       "feature_set": "thermodynamic_scores",
-      "validation_overall_spearman": -0.026230073758920964,
+      "validation_overall_spearman": -0.014229386418238172,
       "validation_score": 0.14860053228227715
     },
     {
@@ -921,15 +1021,15 @@
       "components": 2,
       "effective_dimension": 2,
       "feature_set": "thermodynamic_scores",
-      "validation_overall_spearman": -0.03617350041262957,
-      "validation_score": 0.16860053228227717
+      "validation_overall_spearman": -0.037545007537279025,
+      "validation_score": 0.14860053228227715
     },
     {
       "alpha": 1000.0,
       "components": 2,
       "effective_dimension": 2,
       "feature_set": "thermodynamic_scores",
-      "validation_overall_spearman": -0.058117614407020964,
+      "validation_overall_spearman": -0.05948912153167042,
       "validation_score": 0.150581783028366
     },
     {
@@ -937,7 +1037,7 @@
       "components": 4,
       "effective_dimension": 4,
       "feature_set": "thermodynamic_scores",
-      "validation_overall_spearman": -0.06531802681143063,
+      "validation_overall_spearman": -0.06737528749840484,
       "validation_score": 0.13804785296475974
     },
     {
@@ -945,7 +1045,7 @@
       "components": 4,
       "effective_dimension": 4,
       "feature_set": "thermodynamic_scores",
-      "validation_overall_spearman": -0.06531802681143063,
+      "validation_overall_spearman": -0.06737528749840484,
       "validation_score": 0.13804785296475974
     },
     {
@@ -953,7 +1053,7 @@
       "components": 4,
       "effective_dimension": 4,
       "feature_set": "thermodynamic_scores",
-      "validation_overall_spearman": -0.07388994634048979,
+      "validation_overall_spearman": -0.07594720702746396,
       "validation_score": 0.14860053228227715
     },
     {
@@ -961,8 +1061,8 @@
       "components": 4,
       "effective_dimension": 4,
       "feature_set": "thermodynamic_scores",
-      "validation_overall_spearman": -0.08520488011884784,
-      "validation_score": 0.14860053228227715
+      "validation_overall_spearman": -0.08383337299419838,
+      "validation_score": 0.16860053228227717
     },
     {
       "alpha": 1000.0,
@@ -978,48 +1078,48 @@
   "test": {
     "by_assay": {
       "a2a_agonist_readout": {
-        "mae": 30.626138973236085,
+        "mae": 30.67998285293579,
         "n": 5,
-        "pearson": 0.5480984669248213,
-        "rmse": 32.5575432508636,
+        "pearson": 0.533894886094339,
+        "rmse": 32.619728732798244,
         "spearman": 0.6
       },
       "a2a_antagonist_readout": {
-        "mae": 19.33115593592326,
+        "mae": 19.357007026672363,
         "n": 3,
-        "pearson": 0.894844932688738,
-        "rmse": 19.35446319215214,
+        "pearson": 0.8908621782617853,
+        "rmse": 19.380785355645006,
         "spearman": 1.0
       },
       "b1ar_apo_antagonist_readout": {
-        "mae": 19.049126267433167,
+        "mae": 19.09273386001587,
         "n": 4,
-        "pearson": 0.9950051867179335,
-        "rmse": 30.69308467120042,
-        "spearman": 0.7999999999999999
+        "pearson": 0.9941948960474537,
+        "rmse": 30.673738049344895,
+        "spearman": 1.0
       },
       "ntr_agonist_bound": {
-        "mae": 24.339316299983434,
+        "mae": 24.342583383832658,
         "n": 7,
-        "pearson": -0.09981568399255472,
-        "rmse": 25.509765629837904,
+        "pearson": -0.11891581081255836,
+        "rmse": 25.516574395255574,
         "spearman": -0.03571428571428572
       },
       "ntr_apo": {
-        "mae": 24.841275555746897,
+        "mae": 24.84281608036586,
         "n": 7,
-        "pearson": 0.5774474967512795,
-        "rmse": 39.6901846765036,
+        "pearson": 0.5970852157997961,
+        "rmse": 39.68133939003143,
         "spearman": 0.642857142857143
       }
     },
-    "macro_within_assay_spearman": 0.6014285714285714,
+    "macro_within_assay_spearman": 0.6414285714285715,
     "overall": {
-      "mae": 24.291723489761353,
+      "mae": 24.313064116698044,
       "n": 26,
-      "pearson": 0.2202610993681125,
-      "rmse": 31.48530056939382,
-      "spearman": 0.21535035436816974
+      "pearson": 0.2240500018623253,
+      "rmse": 31.49512826324774,
+      "spearman": 0.19547713153069343
     }
   },
   "test_pretrained_baseline": {

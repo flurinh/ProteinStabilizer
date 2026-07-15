@@ -19,9 +19,11 @@ from .data import (
 )
 from .embeddings import ESMCEmbedder, token_batches
 from .training import (
+    gpcr_dtm_adapter_features,
     load_auxiliary_checkpoint,
     load_multi_checkpoint,
     load_single_checkpoint,
+    membrane_adapter_features,
 )
 
 
@@ -64,11 +66,82 @@ def _single_calibration_features(
                 "latent_both": np.concatenate(
                     [representation, protherm[:, None], mptherm[:, None]], axis=1
                 ),
-                "thermodynamic_scores": np.stack(
-                    [ddg, norm, protherm, mptherm], axis=1
-                ),
             }
         )
+        gpcr_dtm_path = checkpoint_dir / "gpcr_dtm.joblib"
+        if gpcr_dtm_path.exists():
+            gpcr_dtm_payload = joblib.load(gpcr_dtm_path)
+            if (
+                gpcr_dtm_payload.get("schema")
+                != "protein-stabilizer.gpcr-dtm-ridge.v1"
+            ):
+                raise RuntimeError("GPCR delta-Tm checkpoint schema mismatch")
+            gpcr_features = gpcr_dtm_adapter_features(
+                str(gpcr_dtm_payload["feature_kind"]),
+                deltas,
+                latent,
+                ddg,
+                mptherm,
+            )
+            gpcr_dtm = gpcr_dtm_payload["model"].predict(gpcr_features)
+            auxiliary["gpcr_delta_tm"] = gpcr_dtm
+            named.update(
+                {
+                    "latent_gpcr_dtm": np.concatenate(
+                        [representation, gpcr_dtm[:, None]], axis=1
+                    ),
+                    "latent_gpcr_thermo": np.concatenate(
+                        [
+                            representation,
+                            protherm[:, None],
+                            mptherm[:, None],
+                            gpcr_dtm[:, None],
+                        ],
+                        axis=1,
+                    ),
+                }
+            )
+    membrane_path = checkpoint_dir / "membrane_ddg.joblib"
+    if membrane_path.exists():
+        membrane_payload = joblib.load(membrane_path)
+        if membrane_payload.get("schema") != "protein-stabilizer.membrane-ddg-ridge.v1":
+            raise RuntimeError("membrane ddG checkpoint schema mismatch")
+        membrane_features = membrane_adapter_features(
+            str(membrane_payload["feature_kind"]), deltas, latent, ddg
+        )
+        membrane = membrane_payload["model"].predict(membrane_features)
+        auxiliary["membrane_ddg"] = membrane
+        named["latent_membrane"] = np.concatenate(
+            [representation, membrane[:, None]], axis=1
+        )
+        if "protherm_ddg" in auxiliary and "mptherm_delta_tm" in auxiliary:
+            protherm = auxiliary["protherm_ddg"]
+            mptherm = auxiliary["mptherm_delta_tm"]
+            all_columns = [
+                representation,
+                protherm[:, None],
+                mptherm[:, None],
+            ]
+            score_columns = [ddg, norm, protherm, mptherm]
+            if "gpcr_delta_tm" in auxiliary:
+                all_columns.append(auxiliary["gpcr_delta_tm"][:, None])
+                score_columns.append(auxiliary["gpcr_delta_tm"])
+            all_columns.append(membrane[:, None])
+            score_columns.append(membrane)
+            named["latent_all"] = np.concatenate(
+                all_columns, axis=1
+            )
+            named["thermodynamic_scores"] = np.stack(score_columns, axis=1)
+    elif "protherm_ddg" in auxiliary and "mptherm_delta_tm" in auxiliary:
+        score_columns = [
+            ddg,
+            norm,
+            auxiliary["protherm_ddg"],
+            auxiliary["mptherm_delta_tm"],
+        ]
+        if "gpcr_delta_tm" in auxiliary:
+            score_columns.append(auxiliary["gpcr_delta_tm"])
+        named["thermodynamic_scores"] = np.stack(score_columns, axis=1)
     return named, auxiliary
 
 
@@ -113,6 +186,10 @@ def predict_mutations(
     single_tensor = torch.from_numpy(single_delta).to(torch_device)
     with torch.inference_mode():
         constituent = single_head(single_tensor).float().cpu().numpy()
+        latent = single_head.latent(single_tensor).float().cpu().numpy()
+    named_features, auxiliary = _single_calibration_features(
+        latent, constituent, single_delta, checkpoint_dir, torch_device
+    )
     result: dict[str, object] = {
         "mutations": [str(mutation) for mutation in parsed],
         "mutation_count": len(parsed),
@@ -124,19 +201,35 @@ def predict_mutations(
         "additive_ddg": float(constituent.sum()),
         "model_provenance": embedder.provenance.canonical_json(),
     }
-    if len(parsed) == 1:
-        predicted_ddg = float(constituent[0])
-        result["predicted_ddg"] = predicted_ddg
-        with torch.inference_mode():
-            latent = single_head.latent(single_tensor).float().cpu().numpy()
-        named_features, auxiliary = _single_calibration_features(
-            latent, constituent, single_delta, checkpoint_dir, torch_device
-        )
-        if auxiliary:
-            result["protherm_calibrated_ddg"] = float(auxiliary["protherm_ddg"][0])
-            result["mptherm_predicted_delta_tm"] = float(
-                auxiliary["mptherm_delta_tm"][0]
+    if "membrane_ddg" in auxiliary:
+        result["membrane_constituent_single_ddg"] = {
+            str(mutation): float(value)
+            for mutation, value in zip(
+                parsed, auxiliary["membrane_ddg"], strict=True
             )
+        }
+        result["membrane_additive_ddg"] = float(auxiliary["membrane_ddg"].sum())
+    if len(parsed) == 1:
+        predicted_ddg = float(auxiliary.get("membrane_ddg", constituent)[0])
+        result["predicted_ddg"] = predicted_ddg
+        result["pretrained_ddg"] = float(constituent[0])
+        if auxiliary:
+            if "protherm_ddg" in auxiliary:
+                result["protherm_calibrated_ddg"] = float(
+                    auxiliary["protherm_ddg"][0]
+                )
+            if "mptherm_delta_tm" in auxiliary:
+                result["mptherm_predicted_delta_tm"] = float(
+                    auxiliary["mptherm_delta_tm"][0]
+                )
+            if "gpcr_delta_tm" in auxiliary:
+                result["gpcr_predicted_delta_tm"] = float(
+                    auxiliary["gpcr_delta_tm"][0]
+                )
+            if "membrane_ddg" in auxiliary:
+                result["membrane_calibrated_ddg"] = float(
+                    auxiliary["membrane_ddg"][0]
+                )
         calibration_path = checkpoint_dir / "gpcr_calibration.joblib"
         if calibration_path.exists():
             calibration = joblib.load(calibration_path)
@@ -144,6 +237,8 @@ def predict_mutations(
             if schema not in {
                 "protein-stabilizer.gpcr-ridge.v1",
                 "protein-stabilizer.gpcr-ridge.v2",
+                "protein-stabilizer.gpcr-ridge.v3",
+                "protein-stabilizer.gpcr-ridge.v4",
             }:
                 raise RuntimeError("GPCR calibration schema mismatch")
             feature_set = calibration.get("feature_set", "latent_base")
@@ -253,6 +348,8 @@ def screen_single_mutants(
         if schema not in {
             "protein-stabilizer.gpcr-ridge.v1",
             "protein-stabilizer.gpcr-ridge.v2",
+            "protein-stabilizer.gpcr-ridge.v3",
+            "protein-stabilizer.gpcr-ridge.v4",
         }:
             raise RuntimeError("GPCR calibration schema mismatch")
         feature_set = calibration.get("feature_set", "latent_base")
@@ -268,7 +365,8 @@ def screen_single_mutants(
         ranks[order] = np.arange(len(values), dtype=np.float32)
         return ranks / (len(values) - 1)
 
-    general_percentile = percentile(-ddg)
+    final_ddg = auxiliary.get("membrane_ddg", ddg)
+    general_percentile = percentile(-final_ddg)
     gpcr_percentile = percentile(gpcr_score) if gpcr_score is not None else None
     if gpcr_percentile is not None:
         weights = calibration.get(
@@ -290,8 +388,9 @@ def screen_single_mutants(
             "position": mutation.position,
             "wt_aa": mutation.wt,
             "mutant_aa": mutation.mutant,
-            "predicted_ddg": float(ddg[index]),
-            "predicted_stabilizing": bool(ddg[index] < 0),
+            "predicted_ddg": float(final_ddg[index]),
+            "pretrained_ddg": float(ddg[index]),
+            "predicted_stabilizing": bool(final_ddg[index] < 0),
             "general_stability_percentile": float(general_percentile[index]),
             "consensus_rank_score": float(consensus[index]),
         }
@@ -299,12 +398,22 @@ def screen_single_mutants(
             row["gpcr_stability_rank_score"] = float(gpcr_score[index])
             row["gpcr_stability_percentile"] = float(gpcr_percentile[index])
         if auxiliary:
-            row["protherm_calibrated_ddg"] = float(
-                auxiliary["protherm_ddg"][index]
-            )
-            row["mptherm_predicted_delta_tm"] = float(
-                auxiliary["mptherm_delta_tm"][index]
-            )
+            if "protherm_ddg" in auxiliary:
+                row["protherm_calibrated_ddg"] = float(
+                    auxiliary["protherm_ddg"][index]
+                )
+            if "mptherm_delta_tm" in auxiliary:
+                row["mptherm_predicted_delta_tm"] = float(
+                    auxiliary["mptherm_delta_tm"][index]
+                )
+            if "gpcr_delta_tm" in auxiliary:
+                row["gpcr_predicted_delta_tm"] = float(
+                    auxiliary["gpcr_delta_tm"][index]
+                )
+            if "membrane_ddg" in auxiliary:
+                row["membrane_calibrated_ddg"] = float(
+                    auxiliary["membrane_ddg"][index]
+                )
         rows.append(row)
     sort_key = "consensus_rank_score"
     rows.sort(key=lambda row: float(row[sort_key]), reverse=True)

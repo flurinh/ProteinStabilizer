@@ -4,12 +4,13 @@
     "A0A140NCX4": "invalid sequence: sequence must contain only the 20 canonical amino acids"
   },
   "embedding_window_length": 1022,
-  "gpcr_quarantine_policy": "exclude any site assigned to GPCR validation or test",
+  "gpcr_quarantine_policy": "exclude user-benchmark validation/test sites and official GPCR-tm test sites",
+  "gpcr_tm_test_quarantined_rows": 14,
   "normalized_rows": 914,
   "output": "data/curated/mptherm_dtm.csv",
-  "output_sha256": "e4c83737743b08459ef1e34b234900a8ad39b9fadf2f9c173396769f8047b84f",
+  "output_sha256": "c9d9abca310f46194b252776f23a4287541f9acd0ed6fd3287d6e99936182426",
   "proteins": 87,
-  "quarantined_rows": 7,
+  "quarantined_rows": 21,
   "rejection_reasons": {
     "missing_uniprot_sequence": 6,
     "mutation_sequence_mismatch": 9
@@ -20,13 +21,14 @@
   "source_rows": 929,
   "source_sha256": "9419ce4b0c848384b634c6481b1d7f140b3ed43d942e855a2be270e1727ae4cb",
   "split_rows": {
-    "quarantine": 7,
-    "test": 136,
-    "train": 634,
-    "val": 137
+    "quarantine": 21,
+    "test": 124,
+    "train": 633,
+    "val": 136
   },
   "topology_rows": {
     "Aqueous": 498,
     "Membrane": 416
-  }
+  },
+  "user_benchmark_quarantined_rows": 7
 }

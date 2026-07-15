@@ -29,7 +29,11 @@ from protein_stabilizer.models import (
     SingleHeadConfig,
     SingleMutationHead,
 )
-from protein_stabilizer.transfer_data import mutation_window
+from protein_stabilizer.training import (
+    gpcr_dtm_adapter_features,
+    membrane_adapter_features,
+)
+from protein_stabilizer.transfer_data import _pdb_chain_sequence, mutation_window
 
 
 def test_mutation_application_and_double_reconstruction() -> None:
@@ -178,3 +182,44 @@ def test_transfer_reader_preserves_source_mutation_numbering(tmp_path: Path) -> 
     assert row["source_position"] == 1201
     assert row["embedding_mutation"] == "C51W"
     assert row["position"] == 51
+
+
+def test_pdb_numbering_is_remapped_to_embedding_sequence() -> None:
+    def atom(serial: int, residue: str, number: int) -> str:
+        return (
+            f"ATOM  {serial:5d}  CA  {residue:>3s} A{number:4d}    "
+            "   0.000   0.000   0.000  1.00  0.00           C  "
+        )
+
+    payload = "\n".join(
+        [atom(1, "ALA", 5), atom(2, "CYS", 6), atom(3, "ASP", 7)]
+    ).encode("ascii")
+    sequence, remapped = _pdb_chain_sequence(payload, "A", Mutation.parse("C6W"))
+    assert sequence == "ACD"
+    assert remapped == Mutation.parse("C2W")
+
+
+def test_membrane_adapter_feature_schemas() -> None:
+    delta = np.arange(12, dtype=np.float32).reshape(3, 4)
+    latent = np.arange(6, dtype=np.float32).reshape(3, 2)
+    ddg = np.asarray([1.0, 2.0, 3.0], dtype=np.float32)
+    assert membrane_adapter_features("raw_delta", delta, latent, ddg).shape == (3, 4)
+    assert membrane_adapter_features("base_latent", delta, latent, ddg).shape == (3, 2)
+    combined = membrane_adapter_features("base_latent_ddg", delta, latent, ddg)
+    assert combined.shape == (3, 3)
+    np.testing.assert_array_equal(combined[:, -1], ddg)
+
+
+def test_gpcr_dtm_adapter_feature_schemas() -> None:
+    delta = np.arange(12, dtype=np.float32).reshape(3, 4)
+    latent = np.arange(6, dtype=np.float32).reshape(3, 2)
+    ddg = np.asarray([1.0, 2.0, 3.0], dtype=np.float32)
+    dtm = np.asarray([4.0, 5.0, 6.0], dtype=np.float32)
+    score = gpcr_dtm_adapter_features("mptherm_dtm", delta, latent, ddg, dtm)
+    assert score.shape == (3, 1)
+    np.testing.assert_array_equal(score[:, 0], dtm)
+    combined = gpcr_dtm_adapter_features(
+        "base_latent_mptherm", delta, latent, ddg, dtm
+    )
+    assert combined.shape == (3, 3)
+    np.testing.assert_array_equal(combined[:, -1], dtm)

@@ -38,9 +38,13 @@ the epistasis head has only been trained and evaluated on double mutants.
 The final GPCR layer is a low-data ranking calibration trained on the supplied
 NTSR1, A2A, and beta-1 adrenergic receptor measurements. It combines four
 mutation-delta scores (base ddG, delta norm, ProTherm-adapted ddG, and
-MPTherm-adapted delta-Tm) through a two-component ridge head. Because the GPCR
-endpoints are residual binding after heating rather than thermodynamic ddG, the
-output is explicitly a ranking score, not kcal/mol or a stability percentage.
+MPTherm-adapted delta-Tm) through a ridge head. Because the GPCR endpoints are
+residual binding after heating rather than thermodynamic ddG, the output is
+explicitly a ranking score, not kcal/mol or a stability percentage.
+
+Two additional membrane-specific transfer experiments are retained as audited
+candidates but fail their deployment gates: an mCSM-membrane equilibrium-ddG
+adapter and a GPCR-tm delta-Tm adapter. Neither replaces the production score.
 
 ## Data and splits
 
@@ -60,7 +64,9 @@ The pipeline uses:
 | cDNA/Megascale single test | External evaluation | 19 held-out proteins; 19,645 mutations |
 | Megascale-D | Epistasis training | Published 90/17/20-protein train/validation/test split |
 | ProTherm via FireProtDB 2.0 | Experimental ddG transfer | 148/18/18-protein upstream train/validation/test split; 4,504 replicate-aggregated mutations |
-| MPTherm-Pred | Membrane-domain delta-Tm auxiliary task | Derived protein-disjoint 634/137/136-row train/validation/test split; 7 GPCR evaluation-site rows quarantined |
+| MPTherm-Pred | Membrane-domain delta-Tm auxiliary task | Derived protein-disjoint 633/136/124-row train/validation/test split; 21 rows quarantined from GPCR evaluations |
+| mCSM-membrane | Membrane equilibrium-ddG transfer audit | Four-protein development split; 24 forward mutations from unseen alpha-helical proteins 1AFO and 2K73 are test-only |
+| GPCR-tm | GPCR delta-Tm transfer audit | 82 development rows after removing substitutions at official test sites; 12-row official test |
 | GPCR workbook | Application calibration | Entire `(protein, mutation site)` groups; assay-balanced 60/20/20 split |
 
 The compact ThermoMPNN-D Zenodo release is checksum verified. The downloader
@@ -68,8 +74,10 @@ excludes the 6.6 GB Rosetta sweep because it is not needed by this model.
 The transfer downloader also pins SHA-256 checksums. It extracts only ProTherm
 records from a FireProtDB 2.0 mirror, rejects missing/inconsistent sequences,
 aggregates replicate experiments by median, and downweights disagreements.
-MPTherm-Pred UniProt sequences are cached locally. Proteins longer than 1,022
-residues use a mutation-centered window so ESM-C attention remains bounded.
+MPTherm-Pred and GPCR-tm UniProt sequences are cached locally. Proteins longer
+than 1,022 residues use a mutation-centered window so ESM-C attention remains
+bounded. Synthetic reverse rows in mCSM-membrane are marked, downweighted as
+paired observations, and excluded from the forward-mutation test.
 
 ## Environment and training
 
@@ -112,17 +120,23 @@ The current deterministic run used seed `20260715`:
 | Double-mutant learned estimate | 0.492 | 0.452 | 0.907 | 1.220 |
 | Double-mutant additive baseline | 0.560 | 0.518 | 1.192 | 1.509 |
 | ProTherm experimental ddG holdout | 0.409 | 0.292 | 1.168 | 1.993 |
-| MPTherm delta-Tm holdout | 0.219 | 0.205 | 3.751 | 4.885 |
+| MPTherm delta-Tm holdout | 0.222 | 0.208 | 3.652 | 4.826 |
+| Alpha-helical membrane ddG test, frozen ESM-C baseline | 0.107 | 0.144 | 0.973 | 1.223 |
+| Alpha-helical membrane ddG test, rejected adapter | -0.025 | 0.063 | 1.014 | 1.276 |
+| GPCR-tm delta-Tm test, MPTherm head | 0.371 | 0.340 | 3.588 | 4.435 |
+| GPCR-tm delta-Tm test, rejected GPCR adapter | -0.042 | -0.044 | 3.737 | 4.623 |
 
 The epistasis model improves absolute error but the additive score ranks the
 double-mutant test set better. Both values are returned at inference.
 
-On the assay-balanced GPCR holdout, the transfer model achieved macro
-within-assay Spearman `0.601`, compared with `0.370` for the previous
-single-source calibration and `-0.237` for the uncalibrated pretrained score.
-Its MAE was `24.29` stability-percentage points. This result covers only 19
-held-out mutation sites and is heterogeneous by receptor/assay, so it should be
-used as a screening prior rather than as a calibrated measurement.
+On the 26-row, mutation-site-held-out GPCR workbook test, the calibration
+achieves macro within-assay Spearman `0.641` and MAE `24.31` percentage points.
+That number does not estimate performance on a new receptor. In the more
+application-relevant leave-one-receptor-out diagnostic, macro within-assay
+Spearman falls to `0.146` (uncalibrated baseline `-0.021`), with receptor/assay
+values ranging from `-0.065` to `0.512`. Each fold also retrains the MPTherm
+head after excluding every row from the held-out receptor. The GPCR score is
+therefore limited to a 10% screening prior.
 
 ## Prediction
 
@@ -152,24 +166,24 @@ the ESM-C token budget:
 ```
 
 When GPCR calibration is available, screening uses a thermodynamic-first safety
-blend: 75% general-stability percentile and 25% GPCR fine-tune percentile. Raw
+blend: 90% general-stability percentile and 10% GPCR fine-tune percentile. Raw
 ddG, GPCR score, percentiles, and the consensus rank are all retained in the
 CSV. The assay-specific score is deliberately prevented from overriding a
 strongly destabilizing thermodynamic prediction.
 
 ## Limitations
 
-- The encoder is sequence-only; membrane topology and structure are not yet
-  model inputs.
+- The encoder is sequence-only; membrane topology and structure are not model
+  inputs. A membrane-only ddG adapter was tested and rejected because it was
+  worse than the frozen ESM-C baseline on two unseen alpha-helical proteins.
 - ProTherm is heterogeneous and replicate measurements can disagree; the
   normalization records replicate count and spread for every mutation.
-- The standalone MPTherm head is weak on its membrane-only protein holdout
-  (Spearman `-0.060`). Its delta-Tm output is retained only as one auxiliary
-  feature selected by the GPCR benchmark, not as a reliable universal
-  membrane-protein delta-Tm predictor.
-- GPCR macro Spearman `0.601` measures ranking for residual-binding thermal
-  assays, not thermodynamic GPCR ddG accuracy. This is why saturation screening
-  keeps the general ddG model as the dominant score.
+- The MPTherm head reaches only Spearman `0.371` on the small leak-free GPCR-tm
+  test. Its delta-Tm output is an auxiliary ranking signal, not a calibrated
+  universal GPCR stability measurement.
+- GPCR site-held-out macro Spearman `0.641` measures residual-binding thermal
+  assays, not thermodynamic GPCR ddG accuracy. New-receptor macro Spearman is
+  only `0.146`; high-accuracy GPCR ddG prediction has not been demonstrated.
 - GPCR assays can disagree for the same mutation and ligand state.
 - More than two mutations are supported architecturally but extrapolate beyond
   epistasis training.
@@ -192,3 +206,5 @@ backend once the 6B checkpoint/API and license are available.
 - ESM-C implementation: https://github.com/evolutionaryscale/esm
 - FireProtDB 2.0: https://loschmidt.chemi.muni.cz/fireprotdb/
 - MPTherm-Pred dataset: https://web.iitm.ac.in/bioinfo2/mpthermpred/dataset_details.html
+- mCSM-membrane dataset: https://biosig.lab.uq.edu.au/mcsm_membrane/data
+- GPCR-tm dataset: https://biosig.lab.uq.edu.au/gpcr_tm/data

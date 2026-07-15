@@ -49,6 +49,8 @@ def _require_data(root: Path) -> None:
         paths.gpcr,
         paths.protherm,
         paths.mptherm,
+        paths.mcsm_membrane,
+        paths.gpcr_tm,
     ]
     missing = [str(path) for path in required if not path.is_file()]
     if missing:

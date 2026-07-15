@@ -9,6 +9,7 @@ import random
 import time
 from dataclasses import asdict
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Callable, Iterable
 
 import h5py
@@ -259,7 +260,7 @@ def _base_representation(
 
 def _load_transfer_features(path: Path) -> dict[str, np.ndarray]:
     with h5py.File(path, "r") as handle:
-        return {
+        result = {
             "delta": np.asarray(handle["delta"], dtype=np.float16),
             "target": np.asarray(handle["target"], dtype=np.float32),
             "sample_weight": np.asarray(handle["sample_weight"], dtype=np.float32),
@@ -267,6 +268,33 @@ def _load_transfer_features(path: Path) -> dict[str, np.ndarray]:
             "protein_id": np.asarray(handle["protein_id"].asstr()[:]),
             "topology": np.asarray(handle["topology"].asstr()[:]),
         }
+        count = len(result["target"])
+        result["is_reverse"] = (
+            np.asarray(handle["is_reverse"], dtype=bool)
+            if "is_reverse" in handle
+            else np.zeros(count, dtype=bool)
+        )
+        result["source_split"] = (
+            np.asarray(handle["source_split"].asstr()[:])
+            if "source_split" in handle
+            else result["split"].copy()
+        )
+        result["pdb_id"] = (
+            np.asarray(handle["pdb_id"].asstr()[:])
+            if "pdb_id" in handle
+            else result["protein_id"].copy()
+        )
+        result["official_test_site_overlap"] = (
+            np.asarray(handle["official_test_site_overlap"], dtype=bool)
+            if "official_test_site_overlap" in handle
+            else np.zeros(count, dtype=bool)
+        )
+        result["gpcr_overlap_split"] = (
+            np.asarray(handle["gpcr_overlap_split"].asstr()[:])
+            if "gpcr_overlap_split" in handle
+            else np.full(count, "none", dtype=object)
+        )
+        return result
 
 
 def _ridge_pipeline(components: int | None, alpha: float, seed: int) -> Pipeline:
@@ -444,6 +472,514 @@ def load_auxiliary_checkpoint(
     return model.to(device).eval()
 
 
+def membrane_adapter_features(
+    feature_kind: str,
+    delta: np.ndarray,
+    latent: np.ndarray,
+    base_ddg: np.ndarray,
+) -> np.ndarray:
+    """Build the frozen-encoder inputs understood by membrane adapter files."""
+
+    if feature_kind == "raw_delta":
+        return delta.astype(np.float32)
+    if feature_kind == "base_latent":
+        return latent.astype(np.float32)
+    if feature_kind == "base_latent_ddg":
+        return np.concatenate(
+            [latent.astype(np.float32), base_ddg.astype(np.float32)[:, None]], axis=1
+        )
+    raise ValueError(f"unknown membrane adapter feature kind {feature_kind!r}")
+
+
+def _metrics_by_protein(
+    target: np.ndarray,
+    prediction: np.ndarray,
+    protein_id: np.ndarray,
+) -> dict[str, object]:
+    by_protein = {
+        str(name): regression_metrics(target[protein_id == name], prediction[protein_id == name])
+        for name in sorted(set(protein_id.tolist()))
+    }
+    finite = [
+        float(value["spearman"])
+        for value in by_protein.values()
+        if np.isfinite(value["spearman"])
+    ]
+    return {
+        "overall": regression_metrics(target, prediction),
+        "macro_protein_spearman": float(np.mean(finite)) if finite else math.nan,
+        "by_protein": by_protein,
+    }
+
+
+def _fit_membrane_ridge(
+    features: np.ndarray,
+    target: np.ndarray,
+    weights: np.ndarray,
+    indices: np.ndarray,
+    *,
+    alpha: float,
+    feature_kind: str,
+) -> Ridge:
+    model = Ridge(alpha=alpha, fit_intercept=feature_kind != "raw_delta")
+    model.fit(features[indices], target[indices], sample_weight=weights[indices])
+    return model
+
+
+def train_membrane_ddg_adapter(
+    feature_dir: Path,
+    checkpoint_dir: Path,
+    *,
+    seed: int = 20260715,
+    device: str = "cuda",
+    batch_size: int = 512,
+) -> dict[str, object]:
+    """Train a compact alpha-helical membrane ΔΔG transfer head.
+
+    Model selection uses the source publication's four-protein training split
+    with leave-one-protein-out validation. DsbB and glycophorin A forward
+    measurements remain untouched until the selected model is evaluated.
+    """
+
+    set_reproducible_seed(seed)
+    feature_dir = Path(feature_dir)
+    checkpoint_dir = Path(checkpoint_dir)
+    torch_device = torch.device(device if torch.cuda.is_available() else "cpu")
+    data = _load_transfer_features(feature_dir / "mcsm_membrane.h5")
+    base_model = load_single_checkpoint(checkpoint_dir / "single_head.pt", torch_device)
+    _, latent, base_ddg = _base_representation(
+        base_model,
+        data["delta"],
+        batch_size=batch_size,
+        device=torch_device,
+    )
+    feature_arrays = {
+        name: membrane_adapter_features(name, data["delta"], latent, base_ddg)
+        for name in ("raw_delta", "base_latent", "base_latent_ddg")
+    }
+    development = np.flatnonzero(data["source_split"] == "train")
+    test = np.flatnonzero(
+        (data["topology"] == "alpha_helical")
+        & (data["split"] == "test")
+        & ~data["is_reverse"]
+    )
+    development_proteins = sorted(set(data["protein_id"][development].tolist()))
+    test_proteins = sorted(set(data["protein_id"][test].tolist()))
+    if development_proteins != ["1PY6", "1QD6", "2XOV", "3GP6"]:
+        raise RuntimeError(f"unexpected membrane development proteins {development_proteins}")
+    if test_proteins != ["1AFO", "2K73"]:
+        raise RuntimeError(f"unexpected membrane test proteins {test_proteins}")
+
+    candidates: list[dict[str, object]] = []
+    for feature_kind, features in feature_arrays.items():
+        for alpha in (0.01, 0.1, 1.0, 10.0, 100.0, 1000.0):
+            fold_metrics: dict[str, dict[str, float]] = {}
+            for held_out in development_proteins:
+                fit_indices = development[data["protein_id"][development] != held_out]
+                validation_indices = development[
+                    (data["protein_id"][development] == held_out)
+                    & ~data["is_reverse"][development]
+                ]
+                model = _fit_membrane_ridge(
+                    features,
+                    data["target"],
+                    data["sample_weight"],
+                    fit_indices,
+                    alpha=alpha,
+                    feature_kind=feature_kind,
+                )
+                prediction = model.predict(features[validation_indices])
+                fold_metrics[held_out] = regression_metrics(
+                    data["target"][validation_indices], prediction
+                )
+            finite = [
+                float(value["spearman"])
+                for value in fold_metrics.values()
+                if np.isfinite(value["spearman"])
+            ]
+            candidates.append(
+                {
+                    "feature_kind": feature_kind,
+                    "feature_dimension": int(features.shape[1]),
+                    "alpha": alpha,
+                    "macro_protein_spearman": (
+                        float(np.mean(finite)) if finite else math.nan
+                    ),
+                    "macro_protein_rmse": float(
+                        np.mean([float(value["rmse"]) for value in fold_metrics.values()])
+                    ),
+                    "folds": fold_metrics,
+                }
+            )
+    finite_candidates = [
+        value
+        for value in candidates
+        if np.isfinite(float(value["macro_protein_spearman"]))
+    ]
+    if not finite_candidates:
+        raise RuntimeError("membrane adapter validation produced no finite rank metric")
+    best_score = max(float(value["macro_protein_spearman"]) for value in finite_candidates)
+    eligible = [
+        value
+        for value in finite_candidates
+        if float(value["macro_protein_spearman"]) >= best_score - 0.01
+    ]
+    chosen = min(
+        eligible,
+        key=lambda value: (
+            int(value["feature_dimension"]),
+            float(value["macro_protein_rmse"]),
+            -float(value["alpha"]),
+        ),
+    )
+    feature_kind = str(chosen["feature_kind"])
+    alpha = float(chosen["alpha"])
+    features = feature_arrays[feature_kind]
+    evaluation_model = _fit_membrane_ridge(
+        features,
+        data["target"],
+        data["sample_weight"],
+        development,
+        alpha=alpha,
+        feature_kind=feature_kind,
+    )
+    test_prediction = evaluation_model.predict(features[test])
+    protherm_model = load_auxiliary_checkpoint(
+        checkpoint_dir / "protherm_ddg_head.pt", torch_device
+    )
+    protherm_prediction = _torch_predictions(
+        protherm_model,
+        (data["delta"][test],),
+        lambda x: protherm_model(x),
+        batch_size=batch_size,
+        device=torch_device,
+    )
+    metrics = {
+        "schema": "protein-stabilizer.membrane-ddg-training.v1",
+        "seed": seed,
+        "selection": (
+            "leave-one-protein-out on the source four-protein training split; "
+            "within 0.01 macro Spearman "
+            "choose the lowest-dimensional representation"
+        ),
+        "selected_feature_kind": feature_kind,
+        "selected_alpha": alpha,
+        "development_rows": int(len(development)),
+        "development_experimental_rows": int((~data["is_reverse"][development]).sum()),
+        "test_rows": int(len(test)),
+        "test_policy": "unseen 1AFO/2K73 experimental forward mutations only",
+        "validation_candidates": candidates,
+        "test": _metrics_by_protein(
+            data["target"][test], test_prediction, data["protein_id"][test]
+        ),
+        "test_pretrained_baseline": _metrics_by_protein(
+            data["target"][test], base_ddg[test], data["protein_id"][test]
+        ),
+        "test_protherm_baseline": _metrics_by_protein(
+            data["target"][test], protherm_prediction, data["protein_id"][test]
+        ),
+        "sign_convention": "negative project ddG is stabilizing",
+    }
+    test_macro = float(metrics["test"]["macro_protein_spearman"])
+    baseline_macro = float(metrics["test_pretrained_baseline"]["macro_protein_spearman"])
+    test_rmse = float(metrics["test"]["overall"]["rmse"])
+    baseline_rmse = float(metrics["test_pretrained_baseline"]["overall"]["rmse"])
+    passes_gate = test_macro > baseline_macro and test_rmse <= 1.05 * baseline_rmse
+    metrics["deployment_gate"] = {
+        "passed": passes_gate,
+        "policy": (
+            "must improve untouched macro protein Spearman and remain within "
+            "5% of pretrained RMSE"
+        ),
+        "decision": (
+            "eligible as default membrane score"
+            if passes_gate
+            else "rejected; retain pretrained ESM-C score as default"
+        ),
+    }
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    joblib.dump(
+        {
+            "schema": "protein-stabilizer.membrane-ddg-ridge.v1",
+            "role": "held-out-evaluation",
+            "model": evaluation_model,
+            "feature_kind": feature_kind,
+            "metrics": metrics,
+        },
+        checkpoint_dir / "membrane_ddg_eval.joblib",
+    )
+
+    deployment = np.flatnonzero(data["topology"] == "alpha_helical")
+    deployment_model = _fit_membrane_ridge(
+        features,
+        data["target"],
+        data["sample_weight"],
+        deployment,
+        alpha=alpha,
+        feature_kind=feature_kind,
+    )
+    deployment_payload = {
+        "schema": "protein-stabilizer.membrane-ddg-ridge.v1",
+        "role": "application-refit-candidate",
+        "model": deployment_model,
+        "feature_kind": feature_kind,
+        "training_proteins": sorted(set(data["protein_id"][deployment].tolist())),
+        "training_rows": int(len(deployment)),
+        "deployment_gate": metrics["deployment_gate"],
+        "metrics": metrics,
+    }
+    joblib.dump(deployment_payload, checkpoint_dir / "membrane_ddg_candidate.joblib")
+    default_path = checkpoint_dir / "membrane_ddg.joblib"
+    if passes_gate:
+        deployment_payload["role"] = "application-refit"
+        joblib.dump(deployment_payload, default_path)
+    else:
+        default_path.unlink(missing_ok=True)
+    _save_json(checkpoint_dir / "membrane_ddg_metrics.json", metrics)
+    return metrics
+
+
+def gpcr_dtm_adapter_features(
+    feature_kind: str,
+    delta: np.ndarray,
+    latent: np.ndarray,
+    base_ddg: np.ndarray,
+    mptherm_dtm: np.ndarray,
+) -> np.ndarray:
+    """Build inputs understood by the compact GPCR delta-Tm adapter."""
+
+    if feature_kind in {"raw_delta", "base_latent", "base_latent_ddg"}:
+        return membrane_adapter_features(feature_kind, delta, latent, base_ddg)
+    if feature_kind == "mptherm_dtm":
+        return mptherm_dtm.astype(np.float32)[:, None]
+    if feature_kind == "base_latent_mptherm":
+        return np.concatenate(
+            [latent.astype(np.float32), mptherm_dtm.astype(np.float32)[:, None]],
+            axis=1,
+        )
+    raise ValueError(f"unknown GPCR delta-Tm feature kind {feature_kind!r}")
+
+
+def train_gpcr_dtm_adapter(
+    feature_dir: Path,
+    checkpoint_dir: Path,
+    *,
+    seed: int = 20260715,
+    device: str = "cuda",
+    batch_size: int = 512,
+) -> dict[str, object]:
+    """Fit and gate a small GPCR-specific delta-Tm transfer model."""
+
+    set_reproducible_seed(seed)
+    feature_dir = Path(feature_dir)
+    checkpoint_dir = Path(checkpoint_dir)
+    torch_device = torch.device(device if torch.cuda.is_available() else "cpu")
+    data = _load_transfer_features(feature_dir / "gpcr_tm.h5")
+    base_model = load_single_checkpoint(checkpoint_dir / "single_head.pt", torch_device)
+    _, latent, base_ddg = _base_representation(
+        base_model,
+        data["delta"],
+        batch_size=batch_size,
+        device=torch_device,
+    )
+    mptherm_model = load_auxiliary_checkpoint(
+        checkpoint_dir / "mptherm_dtm_head.pt", torch_device
+    )
+    mptherm_dtm = _torch_predictions(
+        mptherm_model,
+        (data["delta"],),
+        lambda x: mptherm_model(x),
+        batch_size=batch_size,
+        device=torch_device,
+    )
+    feature_arrays = {
+        name: gpcr_dtm_adapter_features(
+            name, data["delta"], latent, base_ddg, mptherm_dtm
+        )
+        for name in (
+            "raw_delta",
+            "base_latent",
+            "base_latent_ddg",
+        )
+    }
+    development = np.flatnonzero(
+        (data["source_split"] == "train")
+        & ~data["official_test_site_overlap"]
+    )
+    test = np.flatnonzero(data["source_split"] == "test")
+    if len(development) != 82 or len(test) != 12:
+        raise RuntimeError(
+            f"unexpected GPCR-tm evaluation split sizes {len(development)}/{len(test)}"
+        )
+    development_proteins = sorted(set(data["protein_id"][development].tolist()))
+
+    candidates: list[dict[str, object]] = []
+    for feature_kind, features in feature_arrays.items():
+        for alpha in (0.01, 0.1, 1.0, 10.0, 100.0, 1000.0):
+            oof_prediction = np.full(len(development), np.nan, dtype=np.float32)
+            fold_metrics: dict[str, dict[str, float]] = {}
+            for held_out in development_proteins:
+                fit_indices = development[data["protein_id"][development] != held_out]
+                validation_indices = development[
+                    data["protein_id"][development] == held_out
+                ]
+                model = _fit_membrane_ridge(
+                    features,
+                    data["target"],
+                    data["sample_weight"],
+                    fit_indices,
+                    alpha=alpha,
+                    feature_kind=feature_kind,
+                )
+                prediction = model.predict(features[validation_indices])
+                oof_prediction[
+                    np.flatnonzero(data["protein_id"][development] == held_out)
+                ] = prediction
+                fold_metrics[held_out] = regression_metrics(
+                    data["target"][validation_indices], prediction
+                )
+            oof = _metrics_by_protein(
+                data["target"][development],
+                oof_prediction,
+                data["protein_id"][development],
+            )
+            candidates.append(
+                {
+                    "feature_kind": feature_kind,
+                    "feature_dimension": int(features.shape[1]),
+                    "alpha": alpha,
+                    "oof": oof,
+                    "folds": fold_metrics,
+                }
+            )
+    finite_candidates = [
+        value
+        for value in candidates
+        if np.isfinite(float(value["oof"]["macro_protein_spearman"]))
+    ]
+    if not finite_candidates:
+        raise RuntimeError("GPCR delta-Tm adapter produced no finite validation metric")
+    best_score = max(
+        float(value["oof"]["macro_protein_spearman"])
+        for value in finite_candidates
+    )
+    eligible = [
+        value
+        for value in finite_candidates
+        if float(value["oof"]["macro_protein_spearman"]) >= best_score - 0.01
+    ]
+    chosen = min(
+        eligible,
+        key=lambda value: (
+            int(value["feature_dimension"]),
+            float(value["oof"]["overall"]["rmse"]),
+            -float(value["alpha"]),
+        ),
+    )
+    feature_kind = str(chosen["feature_kind"])
+    alpha = float(chosen["alpha"])
+    features = feature_arrays[feature_kind]
+    evaluation_model = _fit_membrane_ridge(
+        features,
+        data["target"],
+        data["sample_weight"],
+        development,
+        alpha=alpha,
+        feature_kind=feature_kind,
+    )
+    test_prediction = evaluation_model.predict(features[test])
+    metrics = {
+        "schema": "protein-stabilizer.gpcr-dtm-training.v1",
+        "seed": seed,
+        "selection": (
+            "leave-one-protein-out on official training rows after removing "
+            "official-test sites; within 0.01 macro Spearman choose the "
+            "lowest-dimensional representation; MPTherm-derived features are "
+            "excluded because its source overlaps GPCR-tm training rows"
+        ),
+        "selected_feature_kind": feature_kind,
+        "selected_alpha": alpha,
+        "development_rows": int(len(development)),
+        "development_proteins": development_proteins,
+        "test_rows": int(len(test)),
+        "test_policy": "official GPCR-tm test rows; no training substitutions at test sites",
+        "validation_candidates": candidates,
+        "test": _metrics_by_protein(
+            data["target"][test], test_prediction, data["protein_id"][test]
+        ),
+        "test_mptherm_baseline": _metrics_by_protein(
+            data["target"][test], mptherm_dtm[test], data["protein_id"][test]
+        ),
+        "test_pretrained_baseline": _metrics_by_protein(
+            data["target"][test], -base_ddg[test], data["protein_id"][test]
+        ),
+        "sign_convention": "positive delta-Tm is stabilizing",
+    }
+    test_spearman = float(metrics["test"]["overall"]["spearman"])
+    baseline_spearman = float(
+        metrics["test_mptherm_baseline"]["overall"]["spearman"]
+    )
+    test_rmse = float(metrics["test"]["overall"]["rmse"])
+    baseline_rmse = float(metrics["test_mptherm_baseline"]["overall"]["rmse"])
+    passes_gate = (
+        test_spearman > baseline_spearman and test_rmse <= 1.10 * baseline_rmse
+    )
+    metrics["deployment_gate"] = {
+        "passed": passes_gate,
+        "policy": (
+            "must improve official-test Spearman over the MPTherm head and remain "
+            "within 10% of its RMSE"
+        ),
+        "decision": (
+            "eligible as GPCR delta-Tm feature"
+            if passes_gate
+            else "rejected; retain the MPTherm delta-Tm feature"
+        ),
+    }
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    joblib.dump(
+        {
+            "schema": "protein-stabilizer.gpcr-dtm-ridge.v1",
+            "role": "held-out-evaluation",
+            "model": evaluation_model,
+            "feature_kind": feature_kind,
+            "metrics": metrics,
+        },
+        checkpoint_dir / "gpcr_dtm_eval.joblib",
+    )
+    application = np.flatnonzero(
+        ~np.isin(data["gpcr_overlap_split"], ["val", "test"])
+    )
+    application_model = _fit_membrane_ridge(
+        features,
+        data["target"],
+        data["sample_weight"],
+        application,
+        alpha=alpha,
+        feature_kind=feature_kind,
+    )
+    application_payload = {
+        "schema": "protein-stabilizer.gpcr-dtm-ridge.v1",
+        "role": "application-refit-candidate",
+        "model": application_model,
+        "feature_kind": feature_kind,
+        "training_proteins": sorted(set(data["protein_id"][application].tolist())),
+        "training_rows": int(len(application)),
+        "benchmark_excluded_rows": int(len(data["target"]) - len(application)),
+        "deployment_gate": metrics["deployment_gate"],
+        "metrics": metrics,
+    }
+    joblib.dump(application_payload, checkpoint_dir / "gpcr_dtm_candidate.joblib")
+    default_path = checkpoint_dir / "gpcr_dtm.joblib"
+    if passes_gate:
+        application_payload["role"] = "application-refit"
+        joblib.dump(application_payload, default_path)
+    else:
+        default_path.unlink(missing_ok=True)
+    _save_json(checkpoint_dir / "gpcr_dtm_metrics.json", metrics)
+    return metrics
+
+
 def train_transfer_heads(
     feature_dir: Path,
     checkpoint_dir: Path,
@@ -451,7 +987,7 @@ def train_transfer_heads(
     seed: int = 20260715,
     device: str = "cuda",
 ) -> dict[str, object]:
-    """Fine-tune separate nonlinear heads for ProTherm ddG and MPTherm delta-Tm."""
+    """Train thermodynamic transfer heads without mixing endpoint types."""
 
     feature_dir = Path(feature_dir)
     checkpoint_dir = Path(checkpoint_dir)
@@ -461,7 +997,7 @@ def train_transfer_heads(
         "mptherm_dtm": (_load_transfer_features(feature_dir / "mptherm.h5"), "val"),
     }
     metrics: dict[str, object] = {
-        "schema": "protein-stabilizer.transfer-training.v2",
+        "schema": "protein-stabilizer.transfer-training.v4",
         "seed": seed,
     }
     for name, (data, validation_name) in datasets.items():
@@ -480,6 +1016,18 @@ def train_transfer_heads(
                 (data["split"] == "quarantine").sum()
             )
         metrics[name] = auxiliary
+    metrics["mcsm_membrane_ddg"] = train_membrane_ddg_adapter(
+        feature_dir,
+        checkpoint_dir,
+        seed=seed,
+        device=device,
+    )
+    metrics["gpcr_dtm"] = train_gpcr_dtm_adapter(
+        feature_dir,
+        checkpoint_dir,
+        seed=seed,
+        device=device,
+    )
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     _save_json(checkpoint_dir / "transfer_metrics.json", metrics)
     return metrics
@@ -729,12 +1277,14 @@ def train_gpcr_calibration(
         target = np.asarray(handle["target"], dtype=np.float32)
         split = np.asarray(handle["split"].asstr()[:])
         assay = np.asarray(handle["assay_id"].asstr()[:])
+        protein_id = np.asarray(handle["protein_id"].asstr()[:])
+        uniprot_id = np.asarray(handle["uniprot_id"].asstr()[:])
         site = np.asarray(handle["site_id"].asstr()[:])
         split_seed = int(handle.attrs["split_seed"])
         source_sha256 = str(handle.attrs["source_sha256"])
     model = load_single_checkpoint(checkpoint_dir / "single_head.pt", torch_device)
     model.eval()
-    representation, _, base_ddg = _base_representation(
+    representation, latent, base_ddg = _base_representation(
         model,
         delta,
         batch_size=batch_size,
@@ -781,6 +1331,81 @@ def train_gpcr_calibration(
             axis=1,
         ),
     }
+    gpcr_dtm: np.ndarray | None = None
+    gpcr_dtm_path = checkpoint_dir / "gpcr_dtm.joblib"
+    if gpcr_dtm_path.exists():
+        gpcr_dtm_payload = joblib.load(gpcr_dtm_path)
+        if gpcr_dtm_payload.get("schema") != "protein-stabilizer.gpcr-dtm-ridge.v1":
+            raise RuntimeError("GPCR delta-Tm checkpoint schema mismatch")
+        gpcr_dtm_features = gpcr_dtm_adapter_features(
+            str(gpcr_dtm_payload["feature_kind"]),
+            delta,
+            latent,
+            base_ddg,
+            mptherm_dtm,
+        )
+        gpcr_dtm = gpcr_dtm_payload["model"].predict(gpcr_dtm_features)
+        feature_sets.update(
+            {
+                "latent_gpcr_dtm": np.concatenate(
+                    [representation, gpcr_dtm[:, None]], axis=1
+                ),
+                "latent_gpcr_thermo": np.concatenate(
+                    [
+                        representation,
+                        protherm_ddg[:, None],
+                        mptherm_dtm[:, None],
+                        gpcr_dtm[:, None],
+                    ],
+                    axis=1,
+                ),
+                "thermodynamic_scores": np.stack(
+                    [
+                        base_ddg,
+                        representation[:, -1],
+                        protherm_ddg,
+                        mptherm_dtm,
+                        gpcr_dtm,
+                    ],
+                    axis=1,
+                ),
+            }
+        )
+    membrane_ddg: np.ndarray | None = None
+    membrane_path = checkpoint_dir / "membrane_ddg.joblib"
+    if membrane_path.exists():
+        membrane_payload = joblib.load(membrane_path)
+        if membrane_payload.get("schema") != "protein-stabilizer.membrane-ddg-ridge.v1":
+            raise RuntimeError("membrane ddG checkpoint schema mismatch")
+        membrane_features = membrane_adapter_features(
+            str(membrane_payload["feature_kind"]), delta, latent, base_ddg
+        )
+        membrane_ddg = membrane_payload["model"].predict(membrane_features)
+        all_columns = [
+            representation,
+            protherm_ddg[:, None],
+            mptherm_dtm[:, None],
+        ]
+        score_columns = [
+            base_ddg,
+            representation[:, -1],
+            protherm_ddg,
+            mptherm_dtm,
+        ]
+        if gpcr_dtm is not None:
+            all_columns.append(gpcr_dtm[:, None])
+            score_columns.append(gpcr_dtm)
+        all_columns.append(membrane_ddg[:, None])
+        score_columns.append(membrane_ddg)
+        feature_sets.update(
+            {
+                "latent_membrane": np.concatenate(
+                    [representation, membrane_ddg[:, None]], axis=1
+                ),
+                "latent_all": np.concatenate(all_columns, axis=1),
+                "thermodynamic_scores": np.stack(score_columns, axis=1),
+            }
+        )
     train_indices = np.flatnonzero(split == "train")
     val_indices = np.flatnonzero(split == "val")
     test_indices = np.flatnonzero(split == "test")
@@ -861,11 +1486,6 @@ def train_gpcr_calibration(
     best_components = chosen["components"]
     best_alpha = float(chosen["alpha"])
     features = feature_sets[best_feature_set]
-    # The GPCR endpoint is residual binding after heating, not signed ddG. Keep
-    # it secondary during application screening so a high assay score cannot
-    # override a strongly destabilizing thermodynamic prediction.
-    general_weight = 0.75
-    gpcr_weight = 0.25
     selected = _ridge_pipeline(best_components, best_alpha, split_seed)
     selected.set_params(ridge__fit_intercept=False)
     fit_features, fit_target = _center_within_assay(
@@ -874,8 +1494,97 @@ def train_gpcr_calibration(
     selected.fit(fit_features, fit_target)
     test_prediction = selected.predict(features[test_indices])
     base_prediction = -base_ddg[test_indices]
+    receptor_heldout_prediction = np.full(len(target), np.nan, dtype=np.float32)
+    receptor_heldout_exclusions: dict[str, int] = {}
+    mptherm_data = _load_transfer_features(feature_dir / "mptherm.h5")
+    for held_out in sorted(set(protein_id.tolist())):
+        heldout_fit = np.flatnonzero(protein_id != held_out)
+        heldout_test = np.flatnonzero(protein_id == held_out)
+        heldout_accessions = sorted(set(uniprot_id[heldout_test].tolist()))
+        if len(heldout_accessions) != 1:
+            raise RuntimeError(
+                f"GPCR receptor {held_out} maps to {heldout_accessions}"
+            )
+        heldout_accession = heldout_accessions[0]
+        fold_mptherm = {name: value.copy() for name, value in mptherm_data.items()}
+        upstream_heldout = fold_mptherm["protein_id"] == heldout_accession
+        receptor_heldout_exclusions[str(held_out)] = int(upstream_heldout.sum())
+        fold_mptherm["split"][upstream_heldout] = "quarantine"
+        with TemporaryDirectory(prefix="protein-stabilizer-gpcr-holdout-") as temporary:
+            fold_checkpoint = Path(temporary) / "mptherm_head.pt"
+            _train_auxiliary_head(
+                fold_mptherm,
+                checkpoint_dir / "single_head.pt",
+                fold_checkpoint,
+                target_kind="delta_tm",
+                validation_name="val",
+                seed=split_seed,
+                device=torch_device,
+            )
+            fold_mptherm_model = load_auxiliary_checkpoint(
+                fold_checkpoint, torch_device
+            )
+            fold_mptherm_prediction = _torch_predictions(
+                fold_mptherm_model,
+                (delta,),
+                lambda x: fold_mptherm_model(x),
+                batch_size=batch_size,
+                device=torch_device,
+            )
+        heldout_feature_sets = {
+            "latent_base": representation,
+            "latent_protherm": np.concatenate(
+                [representation, protherm_ddg[:, None]], axis=1
+            ),
+            "latent_mptherm": np.concatenate(
+                [representation, fold_mptherm_prediction[:, None]], axis=1
+            ),
+            "latent_both": np.concatenate(
+                [
+                    representation,
+                    protherm_ddg[:, None],
+                    fold_mptherm_prediction[:, None],
+                ],
+                axis=1,
+            ),
+            "thermodynamic_scores": np.stack(
+                [
+                    base_ddg,
+                    representation[:, -1],
+                    protherm_ddg,
+                    fold_mptherm_prediction,
+                ],
+                axis=1,
+            ),
+        }
+        if best_feature_set not in heldout_feature_sets:
+            raise RuntimeError(
+                f"receptor-held-out diagnostic cannot build {best_feature_set}"
+            )
+        heldout_features_full = heldout_feature_sets[best_feature_set]
+        heldout_model = _ridge_pipeline(best_components, best_alpha, split_seed)
+        heldout_model.set_params(ridge__fit_intercept=False)
+        heldout_features, heldout_target = _center_within_assay(
+            heldout_features_full, target, assay, heldout_fit
+        )
+        heldout_model.fit(heldout_features, heldout_target)
+        receptor_heldout_prediction[heldout_test] = heldout_model.predict(
+            heldout_features_full[heldout_test]
+        )
+    receptor_heldout = _gpcr_metrics_by_assay(
+        target, receptor_heldout_prediction, assay
+    )
+    receptor_heldout_baseline = _gpcr_metrics_by_assay(target, -base_ddg, assay)
+    receptor_macro = float(receptor_heldout["macro_within_assay_spearman"])
+    receptor_baseline_macro = float(
+        receptor_heldout_baseline["macro_within_assay_spearman"]
+    )
+    # The endpoint is residual binding after heating, not signed ddG, and the
+    # new-receptor diagnostic is weak. Keep this score as a small ranking prior.
+    gpcr_weight = 0.10 if receptor_macro > receptor_baseline_macro else 0.0
+    general_weight = 1.0 - gpcr_weight
     metrics = {
-        "schema": "protein-stabilizer.gpcr-calibration.v2",
+        "schema": "protein-stabilizer.gpcr-calibration.v4",
         "split_seed": split_seed,
         "source_sha256": source_sha256,
         "train_rows": int(len(train_indices)),
@@ -899,46 +1608,99 @@ def train_gpcr_calibration(
         "test_pretrained_baseline": _gpcr_metrics_by_assay(
             target[test_indices], base_prediction, assay[test_indices]
         ),
+        "leave_one_receptor_out": receptor_heldout,
+        "leave_one_receptor_out_pretrained_baseline": receptor_heldout_baseline,
+        "leave_one_receptor_out_note": (
+            "post-selection diagnostic using the site-held-out-selected model "
+            "configuration; each fold retrains the MPTherm head after excluding "
+            "every row for the held-out receptor"
+        ),
+        "leave_one_receptor_out_upstream_rows_excluded": receptor_heldout_exclusions,
     }
+    if membrane_ddg is not None:
+        metrics["test_membrane_baseline"] = _gpcr_metrics_by_assay(
+            target[test_indices], -membrane_ddg[test_indices], assay[test_indices]
+        )
+    if gpcr_dtm is not None:
+        metrics["test_gpcr_dtm_baseline"] = _gpcr_metrics_by_assay(
+            target[test_indices], gpcr_dtm[test_indices], assay[test_indices]
+        )
+    feature_order = {
+        "latent_base": ["single_latent", "pretrained_ddg", "delta_l2_norm"],
+        "latent_protherm": [
+            "single_latent",
+            "pretrained_ddg",
+            "delta_l2_norm",
+            "protherm_ddg",
+        ],
+        "latent_mptherm": [
+            "single_latent",
+            "pretrained_ddg",
+            "delta_l2_norm",
+            "mptherm_delta_tm",
+        ],
+        "latent_both": [
+            "single_latent",
+            "pretrained_ddg",
+            "delta_l2_norm",
+            "protherm_ddg",
+            "mptherm_delta_tm",
+        ],
+        "latent_gpcr_dtm": [
+            "single_latent",
+            "pretrained_ddg",
+            "delta_l2_norm",
+            "gpcr_delta_tm",
+        ],
+        "latent_gpcr_thermo": [
+            "single_latent",
+            "pretrained_ddg",
+            "delta_l2_norm",
+            "protherm_ddg",
+            "mptherm_delta_tm",
+            "gpcr_delta_tm",
+        ],
+        "latent_membrane": [
+            "single_latent",
+            "pretrained_ddg",
+            "delta_l2_norm",
+            "membrane_ddg",
+        ],
+    }
+    thermodynamic_order = [
+        "pretrained_ddg",
+        "delta_l2_norm",
+        "protherm_ddg",
+        "mptherm_delta_tm",
+    ]
+    latent_all_order = [
+        "single_latent",
+        "pretrained_ddg",
+        "delta_l2_norm",
+        "protherm_ddg",
+        "mptherm_delta_tm",
+    ]
+    if gpcr_dtm is not None:
+        thermodynamic_order.append("gpcr_delta_tm")
+        latent_all_order.append("gpcr_delta_tm")
+    if membrane_ddg is not None:
+        thermodynamic_order.append("membrane_ddg")
+        latent_all_order.append("membrane_ddg")
+        feature_order["latent_all"] = latent_all_order
+    feature_order["thermodynamic_scores"] = thermodynamic_order
     joblib.dump(
         {
-            "schema": "protein-stabilizer.gpcr-ridge.v2",
+            "schema": "protein-stabilizer.gpcr-ridge.v4",
             "pipeline": selected,
             "feature_set": best_feature_set,
-            "feature_order": {
-                "latent_base": ["single_latent", "pretrained_ddg", "delta_l2_norm"],
-                "latent_protherm": [
-                    "single_latent",
-                    "pretrained_ddg",
-                    "delta_l2_norm",
-                    "protherm_ddg",
-                ],
-                "latent_mptherm": [
-                    "single_latent",
-                    "pretrained_ddg",
-                    "delta_l2_norm",
-                    "mptherm_delta_tm",
-                ],
-                "latent_both": [
-                    "single_latent",
-                    "pretrained_ddg",
-                    "delta_l2_norm",
-                    "protherm_ddg",
-                    "mptherm_delta_tm",
-                ],
-                "thermodynamic_scores": [
-                    "pretrained_ddg",
-                    "delta_l2_norm",
-                    "protherm_ddg",
-                    "mptherm_delta_tm",
-                ],
-            }[best_feature_set],
+            "feature_order": feature_order[best_feature_set],
             "screening_weights": {
                 "general_stability": general_weight,
                 "gpcr_calibration": gpcr_weight,
             },
             "screening_policy": (
-                "thermodynamic-first safety blend; GPCR assay score is secondary"
+                "thermodynamic-first blend; weak leave-one-receptor-out evidence "
+                "limits the GPCR residual-binding prior to 10%"
             ),
             "output": "within-assay GPCR mutation stability ranking score",
             "metrics": metrics,

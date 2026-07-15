@@ -272,7 +272,14 @@ def _write_gpcr_features(
             "position",
             data=np.asarray([row["position"] for row in rows], dtype=np.int32),
         )
-        for name in ("protein_id", "assay_id", "mutation", "site_id", "split"):
+        for name in (
+            "protein_id",
+            "uniprot_id",
+            "assay_id",
+            "mutation",
+            "site_id",
+            "split",
+        ):
             _string_dataset(handle, name, [str(row[name]) for row in rows])
 
     _atomic_h5(target, write)
@@ -346,6 +353,30 @@ def _write_transfer_features(
         _string_dataset(handle, "split", [str(row["split"]) for row in rows])
         _string_dataset(
             handle, "topology", [str(row.get("topology", "unknown")) for row in rows]
+        )
+        handle.create_dataset(
+            "is_reverse",
+            data=np.asarray([int(row.get("is_reverse", 0)) for row in rows], dtype=np.uint8),
+        )
+        _string_dataset(
+            handle,
+            "source_split",
+            [str(row.get("source_split", row["split"])) for row in rows],
+        )
+        _string_dataset(
+            handle, "pdb_id", [str(row.get("pdb_id", "")) for row in rows]
+        )
+        handle.create_dataset(
+            "official_test_site_overlap",
+            data=np.asarray(
+                [int(row.get("official_test_site_overlap", 0)) for row in rows],
+                dtype=np.uint8,
+            ),
+        )
+        _string_dataset(
+            handle,
+            "gpcr_overlap_split",
+            [str(row.get("gpcr_overlap_split", "none")) for row in rows],
         )
 
     _atomic_h5(target, write)
@@ -443,6 +474,24 @@ def build_feature_files(
                 output_dir / "mptherm.h5",
                 cache,
                 kind="mptherm_dtm",
+                chunk_size=chunk_size,
+            )
+        )
+        records.append(
+            _write_transfer_features(
+                paths.mcsm_membrane,
+                output_dir / "mcsm_membrane.h5",
+                cache,
+                kind="mcsm_membrane_ddg",
+                chunk_size=chunk_size,
+            )
+        )
+        records.append(
+            _write_transfer_features(
+                paths.gpcr_tm,
+                output_dir / "gpcr_tm.h5",
+                cache,
+                kind="gpcr_tm_dtm",
                 chunk_size=chunk_size,
             )
         )

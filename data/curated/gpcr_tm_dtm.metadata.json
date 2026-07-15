@@ -1,0 +1,20 @@
+{
+  "application_policy": "refit after evaluation; exclude all user-benchmark validation/test sites",
+  "benchmark_application_excluded_rows": 0,
+  "download_errors": {},
+  "evaluation_policy": "official 12-row test; exclude training substitutions at official test sites",
+  "normalized_rows": 97,
+  "official_test_site_overlap_rows": 3,
+  "output": "data/curated/gpcr_tm_dtm.csv",
+  "output_sha256": "3c158828162136c8a61c0e894c99f9651f85333a1d8aa132cb46ac1373d0a4db",
+  "proteins": 11,
+  "rejection_reasons": {},
+  "schema": "protein-stabilizer.gpcr-tm-dtm.v1",
+  "sign_convention": "positive delta-Tm is stabilizing",
+  "source_file": "data/raw/gpcr_tm/data_set_file_used_web_server.csv",
+  "source_sha256": "01b73db22d991bd406f4285ffed1d6e4c4311fe33e7b412110f836ebc9fc93fc",
+  "split_rows": {
+    "test": 12,
+    "train": 85
+  }
+}

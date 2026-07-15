@@ -140,6 +140,14 @@ class DatasetPaths:
     def mptherm(self) -> Path:
         return self.root / "data/curated/mptherm_dtm.csv"
 
+    @property
+    def mcsm_membrane(self) -> Path:
+        return self.root / "data/curated/mcsm_membrane_ddg.csv"
+
+    @property
+    def gpcr_tm(self) -> Path:
+        return self.root / "data/curated/gpcr_tm_dtm.csv"
+
     def single(self, split: str) -> Path:
         names = {"train": "cdna1_train.csv", "test": "cdna1_test.csv"}
         return self.megascale / names[split]
@@ -197,6 +205,7 @@ def gpcr_rows(path: Path, *, include_wt: bool = False) -> Iterator[dict[str, obj
             if include_wt:
                 yield {
                     "protein_id": str(row.protein_id),
+                    "uniprot_id": str(getattr(row, "uniprot_id", row.protein_id)),
                     "assay_id": str(row.assay_id),
                     "mutation": "WT",
                     "wt_sequence": normalize_sequence(row.sequence),
@@ -209,6 +218,7 @@ def gpcr_rows(path: Path, *, include_wt: bool = False) -> Iterator[dict[str, obj
         wt = normalize_sequence(row.sequence)
         yield {
             "protein_id": str(row.protein_id),
+            "uniprot_id": str(getattr(row, "uniprot_id", row.protein_id)),
             "assay_id": str(row.assay_id),
             "mutation": str(mutation),
             "wt_sequence": wt,
@@ -288,7 +298,7 @@ def all_embedding_requests(paths: DatasetPaths) -> list[EmbeddingRequest]:
                 EmbeddingRequest(str(row["mutant_sequence"]), (position,)),
             ]
         )
-    for source in (paths.protherm, paths.mptherm):
+    for source in (paths.protherm, paths.mptherm, paths.mcsm_membrane, paths.gpcr_tm):
         if not source.is_file():
             continue
         for row in transfer_rows(source):
