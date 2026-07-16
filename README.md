@@ -130,6 +130,8 @@ The current deterministic run used seed `20260715`:
 | Alpha-helical membrane ddG test, rejected adapter | -0.025 | 0.063 | 1.014 | 1.276 |
 | GPCR-tm delta-Tm test, MPTherm head | 0.371 | 0.340 | 3.588 | 4.435 |
 | GPCR-tm delta-Tm test, rejected GPCR adapter | -0.042 | -0.044 | 3.737 | 4.623 |
+| GPCR-tm delta-Tm test, official ThermoMPNN | 0.126 | -0.016 | 3.805 | 4.542 |
+| GPCR-tm delta-Tm test, rejected structure/model blend | 0.385 | 0.426 | 3.602 | 4.221 |
 
 The epistasis model improves absolute error but the additive score ranks the
 double-mutant test set better. Both values are returned at inference.
@@ -142,6 +144,12 @@ Spearman falls to `0.171` (uncalibrated baseline `0.025`), with receptor/assay
 values ranging from `-0.121` to `0.515`. Each fold also retrains the MPTherm
 head after excluding every row from the held-out receptor. The GPCR score is
 therefore limited to a 10% screening prior.
+
+Additional GPCR-focused transfer, structure, physicochemical, and uncertainty
+experiments are recorded in
+[`docs/gpcr_model_selection.md`](docs/gpcr_model_selection.md). They were kept
+out of production because their receptor-held-out or within-receptor ranking
+did not improve enough to justify added runtime complexity.
 
 ## Prediction
 
@@ -183,6 +191,9 @@ triage but is not a calibrated confidence interval.
 - The encoder is sequence-only; membrane topology and structure are not model
   inputs. A membrane-only ddG adapter was tested and rejected because it was
   worse than the frozen ESM-C baseline on two unseen alpha-helical proteins.
+  Official ThermoMPNN predictions, local structure descriptors, and a compact
+  structure/model blend were also evaluated on GPCR-tm and did not pass the
+  development plus within-receptor ranking gates.
 - ProTherm is heterogeneous and replicate measurements can disagree; the
   normalization records replicate count and spread for every mutation.
 - The MPTherm head reaches only Spearman `0.371` on the small leak-free GPCR-tm
