@@ -1,0 +1,154 @@
+{
+  "schema": "protein-stabilizer.esmc6b-ddgemb-transfer-audit.v1",
+  "evaluation_policy": {
+    "gpcr_tm_development": "82 official training rows after removing substitutions at official-test sites",
+    "gpcr_tm_test": "12 official test rows; evaluated only after candidate selection",
+    "c5ar": "277-position independent alanine/Leu scan with 34 reported thermostable substitutions",
+    "decision_rule": "retain the 600M production scorer unless an added signal gives a material, consistent gain without an impractical runtime dependency"
+  },
+  "esmc_6b_masked_marginal": {
+    "model": "biohub/ESMC-6B",
+    "model_revision": "45b0fa5d7fb06faefbd5e3b89bdcef35d564e79a",
+    "architecture": {
+      "parameters": 6000000000,
+      "layers": 80,
+      "embedding_dimension": 2560
+    },
+    "software": {
+      "esm_version": "3.3.0",
+      "esm_commit": "67838dc8ac76f4145613e6cb36c5f3d758542f7c",
+      "transformers_version": "4.57.6",
+      "transformers_commit": "ef32577f55da19a4989cd7b22e004dc43a4998cb",
+      "torch_version": "2.9.1+cu128"
+    },
+    "inference": {
+      "device": "NVIDIA GeForce RTX 5090",
+      "dtype": "bfloat16",
+      "attention": "PyTorch scaled-dot-product attention",
+      "batch_size": 8,
+      "rows": 507,
+      "unique_sequences": 14,
+      "unique_sites": 451,
+      "elapsed_seconds": 15.026246547698975,
+      "peak_gpu_bytes": 13019173888,
+      "score": "log P(mutant amino acid | WT sequence with the site masked) - log P(WT amino acid | WT sequence with the site masked)"
+    },
+    "gpcr_tm_development": {
+      "raw_overall_spearman": 0.06473524161776123,
+      "macro_within_receptor_spearman": -0.03603359919196124
+    },
+    "gpcr_tm_official_test": {
+      "raw_overall_spearman": 0.10489510489510491,
+      "macro_within_receptor_spearman": 0.8
+    },
+    "c5ar": {
+      "roc_auc": 0.6977729363350278,
+      "average_precision": 0.31848032691636585,
+      "positives_in_top50": 16
+    },
+    "small_runtime_blend": {
+      "weights": {
+        "mptherm_600m": 0.75,
+        "masked_marginal_600m": 0.2,
+        "masked_marginal_6b": 0.05
+      },
+      "development_pooled_within_receptor_percentile_spearman": 0.11552472362252807,
+      "development_macro_within_receptor_spearman": 0.08658965946924489,
+      "official_test_macro_within_receptor_spearman": 0.8,
+      "c5ar_roc_auc": 0.6833696441539578,
+      "c5ar_average_precision": 0.277308454569393,
+      "c5ar_positives_in_top50": 13
+    },
+    "decision": "not promoted: the standalone C5aR result is encouraging, but receptor-held-out development ranking is negative and a 5% blend gives only a marginal gain over the existing 600M scorer while adding a separate 6B runtime"
+  },
+  "ddgemb_official_predictions": {
+    "method": "official DDGemb batch server",
+    "sign_convention": "positive is stabilizing",
+    "successful_job_ids": [
+      "de8b8105-07a8-47cb-8652-352e417ca2ce",
+      "31752496-7276-4598-8794-2d1aa5487c9f",
+      "71f2e012-d615-4c81-a886-0b51e455b495",
+      "989e6b79-1666-432c-8d79-574bae287a0e",
+      "dae537eb-2317-4441-8d89-3a33180047ef",
+      "ff71be67-78d1-4f33-a23b-fdf35d898d6f",
+      "09071d13-4282-4eb7-9f11-1f2e786092c6",
+      "676b9dca-0bfb-4941-9553-cc31dffc7ad4"
+    ],
+    "coverage": {
+      "gpcr_tm": 97,
+      "c5ar": 277,
+      "workbook": 65
+    },
+    "gpcr_tm_development": {
+      "raw_overall_spearman": -0.0007837459889824801,
+      "macro_within_receptor_spearman": 0.27221767965819543
+    },
+    "gpcr_tm_official_test": {
+      "raw_overall_spearman": -0.3706293706293707,
+      "macro_within_receptor_spearman": -0.6
+    },
+    "c5ar": {
+      "roc_auc": 0.6266037279109175,
+      "average_precision": 0.18488497883310984,
+      "positives_in_top50": 12
+    },
+    "decision": "rejected: the receptor-held-out development association reverses on the official GPCR-tm test, C5aR is weaker than the local masked-marginal score, and the public server is not an acceptable production dependency"
+  },
+  "s2450_transfer": {
+    "sources": {
+      "S2450": {
+        "rows": 2450,
+        "proteins": 115,
+        "tsv_sha256": "1dfc63c6b30797be07174e7f617f031c6bcd701aa62b01769d46d050c0454ae8",
+        "fasta_sha256": "574d44fceb4234b6269effbedd7bc1fe811789faceb9483691b73225da5e165b"
+      },
+      "S669": {
+        "rows": 669,
+        "proteins": 87,
+        "tsv_sha256": "a992842bf8e30d4cc6714dc79cf6e4a9c1a63b57dc0eda8ad9720f7a586de043",
+        "fasta_sha256": "6e9d0e7d3ecb7d7411e5b59048193493d0fd0822075432182fe08e6bb7a4f6cc"
+      },
+      "ptmul_NR": {
+        "rows": 82,
+        "proteins": 13,
+        "tsv_sha256": "c5fa24d36adae7370861c134a3c91f045593f9f3a7497fc43c3c44b4eb5e5f8d",
+        "fasta_sha256": "fe6c054f2d5debfa0c952ca3fe2d056bacdcb47b4282274a8387b7071d71ab44"
+      }
+    },
+    "local_storage": "data/raw/ddgemb/",
+    "embedding_cache": {
+      "path": "embeddings/esmc_600m/ddgemb_benchmarks.h5",
+      "requested_sequences": 3415,
+      "stored_sites": 4912,
+      "request_manifest_sha256": "f4209c5b2a282394ed59a394b60338dad5e505a36dae5e271a36f90330391409"
+    },
+    "target_conversion": "DDGemb datasets use positive values for stabilizing mutations; training targets were negated to match the project's negative-favorable ddG convention",
+    "S669_results": {
+      "existing_protherm_head": {
+        "spearman": 0.5311633091337954,
+        "pearson": 0.5126256500596591,
+        "mae": 0.9889028072357178,
+        "rmse": 1.4130180252934061
+      },
+      "S2450_finetuned_five_fold_ensemble": {
+        "spearman": 0.5410919436298322,
+        "pearson": 0.5230429147031421,
+        "mae": 0.9828365445137024,
+        "rmse": 1.4035591235534903
+      },
+      "S2450_ridge": {
+        "selected_alpha": 1000.0,
+        "spearman": 0.44840286570538473,
+        "pearson": 0.44405331055350583,
+        "mae": 1.1112381219863892,
+        "rmse": 1.5000568220184387
+      }
+    },
+    "gpcr_tm_development": {
+      "finetuned_raw_overall_spearman": 0.01159290942036585,
+      "finetuned_macro_within_receptor_spearman": -0.06233239293526264
+    },
+    "decision": "rejected: fine-tuning gives only a small S669 improvement and the resulting stability score does not transfer to receptor-held-out GPCR development"
+  },
+  "production_decision": "retain the 80% MPTherm / 20% ESM-C 600M masked-marginal ranker; keep 6B and S2450 artifacts as audit evidence, not production dependencies"
+}

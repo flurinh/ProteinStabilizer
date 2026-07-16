@@ -61,11 +61,16 @@ from the primary consensus. Exact metrics and provenance are stored in
 | ProteinGym membrane expression/abundance transfer | Nine membrane assays gave paper-held-out macro Spearman `0.404` for the best compact head. On GPCR-tm development, adding it reduced leave-one-receptor-out macro Spearman from `0.181` to `0.164`; its standalone official-test Spearman was `0.014`. | Reject. Expression, abundance, surface display, and membrane insertion are useful phenotypes but are not interchangeable with GPCR thermal stability. |
 | C5aR experimental Ala/Leu scan | The published scan contributes 34 explicit thermostable substitutions on an otherwise stated exhaustive receptor scan. A delta classifier selected on GPCR-tm development raised leave-one-receptor-out macro Spearman from `0.181` to `0.316`, but official-test Spearman fell to `0.196`, within-receptor macro Spearman fell from `0.800` to `0.600`, and MAE increased from `3.588` to `3.909`. | Reject the single-receptor classifier. Its perfect training separation was overfit and did not transfer consistently. |
 | Muk et al. Figure S2 GPCR TM scan | The vector supplement yielded 854 conservative labels after excluding ten gray shared positions: 82 receptor-specific positives and 772 negatives across A2A, β1AR, NTSR1, and AT1R. A raw-delta head reached leave-one-receptor-out macro AUC `0.524`; an MPTherm-pretrained latent head reached `0.534`. On blind C5aR they recovered only 6 positives in the top 50 (AUC `0.570` and `0.538`), versus 12 and AUC `0.660` for the unchanged MPTherm score. | Reject. The recoverable TM labels are too weak and incomplete to improve new-receptor screening. |
+| ESM-C 6B masked marginal | The public 6B checkpoint scored all 451 unique sites in 15 seconds on an RTX 5090. It improved the independent C5aR scan to AUC `0.698`, average precision `0.318`, and 16 positives in the top 50, while preserving official-test macro Spearman `0.800`. Its receptor-held-out development macro Spearman was `-0.036`, however, and a 5% runtime blend gave only a marginal development gain. | Keep as evidence for a future full 6B retraining, not as a second production runtime. |
+| Official DDGemb predictions | DDGemb reached development macro within-receptor Spearman `0.272`, but reversed to `-0.600` on the official GPCR-tm test. On C5aR it reached AUC `0.627`, average precision `0.185`, and 12 positives in the top 50. | Reject the score and the public-server dependency. |
+| DDGemb S2450 fine-tuning | A five-fold compact delta-head ensemble improved the homology-reduced S669 benchmark from Spearman `0.531` to `0.541` and RMSE `1.413` to `1.404`. Its receptor-held-out GPCR-tm development macro Spearman was `-0.062`. | Keep the downloaded benchmark and embeddings, but do not add another runtime head for a small generic gain that does not transfer to GPCRs. |
 
 ## External-data audit
 
 The exact compact metrics and provenance are also stored in
-[`gpcr_external_data_audit.json`](gpcr_external_data_audit.json).
+[`gpcr_external_data_audit.json`](gpcr_external_data_audit.json). The ESM-C 6B,
+official DDGemb, and S2450/S669 experiments are recorded separately in
+[`esmc6b_ddgemb_transfer_audit.json`](esmc6b_ddgemb_transfer_audit.json).
 
 The external-data experiments used only frozen ESM-C mutant-minus-WT residue
 deltas. ProteinGym contributed 34,425 rows from nine membrane expression,
@@ -132,12 +137,16 @@ consensus, while retaining general ddG and the GPCR workbook score as separate
 diagnostics. For a conservative experimental set, require general-ddG support
 for some candidates and deliberately include a smaller number of high-consensus
 disagreements. Test several diverse substitutions rather than relying on one
-top prediction. The next materially different model upgrade should be ESM-C 6B
-or substantially larger GPCR stability data, not another small adapter selected
-on the present benchmarks.
+top prediction. A zero-shot ESM-C 6B masked score is promising on C5aR but does
+not pass receptor-held-out selection. The next 6B stage should therefore be a
+separate embedding cache and full head retraining, not a second masked-only
+runtime. Otherwise, wait for substantially larger GPCR stability data rather
+than adding another small adapter selected on the present benchmarks.
 
 ## External data sources
 
 - ProteinGym: https://github.com/OATML-Markslab/ProteinGym
 - GPCRdb construct data: https://github.com/protwis/gpcrdb_data
 - GPCR alanine-scan classifier study: https://doi.org/10.1016/j.bpj.2019.10.023
+- DDGemb datasets: https://ddgemb.biocomp.unibo.it/datasets/
+- ESM-C 6B model: https://huggingface.co/biohub/ESMC-6B

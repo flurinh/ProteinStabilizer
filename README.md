@@ -239,9 +239,16 @@ not a calibrated confidence interval.
 The feature and checkpoint schemas infer the embedding dimension, so the heads
 do not assume 1,152 dimensions internally. Moving to ESM-C 6B still requires a
 separate embedding cache and complete retraining; 600M and 6B vectors or heads
-must never share a cache. The installed open-source ESM package currently
-validates the local 600M backend, so a 6B run should be added as a distinct
-backend once the 6B checkpoint/API and license are available.
+must never share a cache.
+
+The public Biohub ESM-C 6B checkpoint was audited as a masked-marginal scorer.
+It improved the independent C5aR scan to AUC `0.698`, average precision `0.318`,
+and 16 positives in the top 50, but its receptor-held-out GPCR-tm development
+macro Spearman was `-0.036`. A 5% 6B blend was too small an improvement to
+justify a separate 6B runtime. The production backend therefore remains 600M;
+the next 6B step is full embedding and head retraining, not mixing 6B scores or
+vectors into the existing cache. Exact provenance is in
+[`docs/esmc6b_ddgemb_transfer_audit.json`](docs/esmc6b_ddgemb_transfer_audit.json).
 
 ## Sources
 
@@ -252,3 +259,5 @@ backend once the 6B checkpoint/API and license are available.
 - MPTherm-Pred dataset: https://web.iitm.ac.in/bioinfo2/mpthermpred/dataset_details.html
 - mCSM-membrane dataset: https://biosig.lab.uq.edu.au/mcsm_membrane/data
 - GPCR-tm dataset: https://biosig.lab.uq.edu.au/gpcr_tm/data
+- DDGemb S2450, S669, and ptMUL-NR datasets: https://ddgemb.biocomp.unibo.it/datasets/
+- Biohub ESM-C 6B checkpoint: https://huggingface.co/biohub/ESMC-6B
