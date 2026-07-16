@@ -325,6 +325,10 @@ is recorded in
 [`docs/esmc6b_ddgemb_transfer_audit.json`](docs/esmc6b_ddgemb_transfer_audit.json);
 the completed full-transfer stage is in
 [`docs/esmc6b_full_transfer_audit.json`](docs/esmc6b_full_transfer_audit.json).
+A separate full-6B re-audit of the reconstructed four-receptor Muk et al.
+thermostability matrix remained at chance under nested receptor holdout and is
+recorded in
+[`docs/esmc6b_muk_thermostability_audit.json`](docs/esmc6b_muk_thermostability_audit.json).
 
 ## Sources
 

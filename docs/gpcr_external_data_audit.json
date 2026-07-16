@@ -77,6 +77,16 @@
         "c5ar_auc": 0.5384,
         "c5ar_positives_in_top50": 6
       },
+      "esmc_6b_reaudit": {
+        "audit": "docs/esmc6b_muk_thermostability_audit.json",
+        "best_fixed_leave_one_receptor_out_macro_auc": 0.522,
+        "best_fixed_leave_one_receptor_out_min_auc": 0.5014,
+        "nested_leave_one_receptor_out_macro_auc": 0.5029,
+        "nested_leave_one_receptor_out_min_auc": 0.4927,
+        "c5ar_consulted": false,
+        "gpcr_tm_official_test_consulted": false,
+        "decision": "rejected before independent gates"
+      },
       "mptherm_baseline_auc_on_c5ar": 0.6605,
       "mptherm_baseline_positives_in_top50": 12,
       "decision": "rejected",

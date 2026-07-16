@@ -1,0 +1,89 @@
+{
+  "schema": "protein-stabilizer.esmc6b-muk-thermostability-audit.v1",
+  "date": "2026-07-16",
+  "objective": "test whether full ESM-C 6B mutant-minus-WT residue embeddings make the conservatively reconstructed Muk et al. GPCR thermostability matrix transferable to an unseen receptor",
+  "source": {
+    "doi": "10.1016/j.bpj.2019.10.023",
+    "supplement_sha256": "e93e12e263d77125108e2e8f16ae10f9c3c68586cff01e7208ef69db6bf9e6d8",
+    "reconstructed_csv_sha256": "9db9307f3e19168c11b5cb591933b67b12c93b1e7be9413fb63fdd885b6e7d9f",
+    "rows": 854,
+    "positives": 82,
+    "negatives": 772,
+    "receptors": [
+      "AA2AR_HUMAN",
+      "ADRB1_MELGA",
+      "AGTR1_HUMAN",
+      "NTSR1_RAT"
+    ],
+    "caveat": "Figure S2 preserves receptor-specific binary TM labels rather than the complete continuous 1,231-mutant measurement table. Ten gray shared generic positions were excluded because receptor attribution is not recoverable."
+  },
+  "encoder": {
+    "model": "biohub/ESMC-6B",
+    "embedding_dimension": 2560,
+    "checkpoint_index_sha256": "6846456e20e6ee2c37461f7bfc21d316d69bdaf165b925691afcb39e583244da",
+    "inference_dtype": "bfloat16",
+    "storage_dtype": "float16",
+    "residue_policy": "final-layer contextual mutant-minus-WT residue delta; biological position 1 maps to token 1 after BOS"
+  },
+  "generated_artifacts": {
+    "request_manifest_sha256": "bf009d79a820fb681204455dc378349b0e4836a32d8c79fbad9744649a7f576d",
+    "embedding_cache": "embeddings/esmc_6b/gpcr_thermostability_tm.h5",
+    "embedding_cache_sha256": "73c76c5f69f09052c9e068fe5abf96433dd1f69083047baa8b30c3564607ed07",
+    "feature_file": "artifacts/features_esmc_6b/gpcr_thermostability_tm.h5",
+    "feature_file_sha256": "b767967ea219da99b696e6105741724b9175202d52f3c52f53b36dae08dc095b"
+  },
+  "evaluation_policy": {
+    "outer_split": "leave one complete receptor out",
+    "inner_selection": "select representation and logistic-regression regularization using only the remaining receptors",
+    "classifier": "standardization, fixed-dimensional PCA, class-balanced logistic regression",
+    "representations": {
+      "raw_delta": "2560 columns, PCA-32",
+      "base_latent": "general stability latent, prediction, and delta norm; 130 columns, PCA-64",
+      "mptherm_latent": "MPTherm latent plus compact thermodynamic scores; 132 columns, PCA-64",
+      "all_latents": "general, ProTherm, and MPTherm latents plus compact scores; 388 columns, PCA-64"
+    },
+    "regularization_grid": [
+      0.1,
+      1.0,
+      10.0
+    ],
+    "independent_gate_policy": "do not consult C5aR or the GPCR-tm official test unless whole-receptor transfer exceeds the prior 600M result"
+  },
+  "best_fixed_configuration": {
+    "representation": "all_latents",
+    "pca_components": 64,
+    "logistic_C": 0.1,
+    "leave_one_receptor_out_macro_auc": 0.5220276904560158,
+    "leave_one_receptor_out_min_auc": 0.5014025245441794,
+    "pooled_auc": 0.5261120940224946,
+    "by_receptor_auc": {
+      "AA2AR_HUMAN": 0.5067340067340067,
+      "ADRB1_MELGA": 0.5014025245441794,
+      "AGTR1_HUMAN": 0.5349593495934959,
+      "NTSR1_RAT": 0.545014880952381
+    }
+  },
+  "nested_selection_result": {
+    "leave_one_receptor_out_macro_auc": 0.5028703460531228,
+    "leave_one_receptor_out_min_auc": 0.4926829268292683,
+    "by_receptor_auc": {
+      "AA2AR_HUMAN": 0.49975949975949974,
+      "ADRB1_MELGA": 0.4948574100046751,
+      "AGTR1_HUMAN": 0.4926829268292683,
+      "NTSR1_RAT": 0.5241815476190477
+    }
+  },
+  "prior_600m_reference": {
+    "raw_delta_macro_auc": 0.5239,
+    "raw_delta_min_auc": 0.4872,
+    "mptherm_latent_macro_auc": 0.5335,
+    "mptherm_latent_min_auc": 0.5111
+  },
+  "decision": {
+    "status": "rejected",
+    "reason": "the best fixed 6B configuration is below the prior 600M macro AUC, and nested selection is effectively chance on unseen receptors",
+    "c5ar_consulted": false,
+    "gpcr_tm_official_test_consulted": false,
+    "production_change": "none"
+  }
+}
