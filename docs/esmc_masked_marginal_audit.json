@@ -1,0 +1,86 @@
+{
+  "schema": "protein-stabilizer.esmc-masked-marginal-audit.v1",
+  "encoder": {
+    "model": "esmc_600m",
+    "package_version": "3.2.1",
+    "checkpoint_sha256": "8ef856e1a237ee3f995442df997a962e70057faadecf38fc0c8561bd3c2f4324",
+    "score": "log P(mutant amino acid | WT sequence with the site masked) - log P(WT amino acid | WT sequence with the site masked)",
+    "runtime": "one masked WT forward row per unique site; all 20 canonical amino-acid log probabilities are read from the same row"
+  },
+  "selection": {
+    "candidate_weights": {
+      "mptherm_delta_tm_percentile": 0.8,
+      "masked_marginal_percentile": 0.2
+    },
+    "ranking_scope": "percentiles are computed within the candidate set for one receptor scan",
+    "gpcr_tm_development": {
+      "rows": 82,
+      "source_sha256": "3c158828162136c8a61c0e894c99f9651f85333a1d8aa132cb46ac1373d0a4db",
+      "mptherm_pooled_within_receptor_percentile_spearman": 0.09292375265885894,
+      "consensus_pooled_within_receptor_percentile_spearman": 0.10332362523631243,
+      "mptherm_macro_within_receptor_spearman": 0.08678990795537819,
+      "consensus_macro_within_receptor_spearman": 0.08629754051667181
+    },
+    "policy": "promote only as a small rank prior: it improves pooled within-receptor-percentile development ranking, changes development macro Spearman by less than 0.001, preserves official-test within-receptor ranking, and improves the independent C5aR scan"
+  },
+  "heldout_evaluations": {
+    "gpcr_tm_official_test": {
+      "rows": 12,
+      "mptherm_raw_overall_spearman": 0.3706293706293707,
+      "masked_marginal_raw_overall_spearman": -0.013986013986013986,
+      "mptherm_macro_within_receptor_spearman": 0.8,
+      "masked_marginal_macro_within_receptor_spearman": 0.6,
+      "consensus_macro_within_receptor_spearman": 0.8,
+      "note": "macro Spearman covers P29274 and P48039, the only test receptors with multiple observations"
+    },
+    "c5ar_alanine_scan": {
+      "uniprot_id": "P21730",
+      "audited_positions": 277,
+      "reported_thermostable_substitutions": 34,
+      "source_supplement_sha256": "e93e12e263d77125108e2e8f16ae10f9c3c68586cff01e7208ef69db6bf9e6d8",
+      "sequence_sha256": "dc48c194272465c04ae4727f3710ca1c75b6ca77006ea1730ed45ea75035d730",
+      "request_manifest_sha256": "2619d749f09cada931bb814030a559c984816a2648203a2ee69cdff0691bab24",
+      "mptherm": {
+        "roc_auc": 0.6604938271604939,
+        "average_precision": 0.2450543652972313,
+        "positives_in_top50": 12
+      },
+      "masked_marginal": {
+        "roc_auc": 0.6927499394819656,
+        "average_precision": 0.26787033120829856,
+        "positives_in_top50": 13
+      },
+      "consensus": {
+        "roc_auc": 0.6780440571290246,
+        "average_precision": 0.25525862817464123,
+        "positives_in_top50": 13
+      }
+    }
+  },
+  "transfer_audits": {
+    "protherm_protein_disjoint_test": {
+      "source_sha256": "82e588b1e97c49553ac236ad9d97a353e2a1526ea4a2a08e0f7aab5e9b297ccd",
+      "existing_transfer_head_spearman": 0.4093170134449091,
+      "compact_masked_feature_candidate_spearman": 0.43878,
+      "compact_masked_feature_candidate_rmse": 1.9364,
+      "decision": "not promoted; the rank gain did not improve RMSE over the frozen base ensemble strongly enough to justify another universal head"
+    },
+    "mptherm_protein_disjoint_test": {
+      "existing_transfer_head_spearman": 0.22169029790928205,
+      "compact_masked_feature_candidate_spearman": 0.1335,
+      "decision": "rejected"
+    },
+    "mcsm_membrane_unseen_protein_test": {
+      "frozen_base_spearman": 0.095,
+      "compact_masked_feature_candidate_spearman": -0.0397,
+      "decision": "rejected"
+    }
+  },
+  "production_decision": {
+    "primary_screening_consensus": "0.80 MPTherm delta-Tm percentile + 0.20 ESM-C masked-marginal percentile",
+    "general_ddg": "reported separately with negative values favorable",
+    "gpcr_workbook_calibration": "reported separately as an assay-specific rank diagnostic",
+    "multiple_mutations": "report both the sum of WT-context constituent log odds and a joint-context masked pseudo-log-likelihood; neither is calibrated as ddG",
+    "limitations": "masked-marginal log odds are sequence-compatibility scores, not kcal/mol, delta-Tm, expression, activity, or crystallizability"
+  }
+}

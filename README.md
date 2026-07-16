@@ -2,9 +2,11 @@
 
 ProteinStabilizer ranks amino-acid substitutions for stability, with a
 GPCR-specific calibration layer. It uses a frozen ESM-C 600M encoder and trains
-only compact heads over contextual residue-embedding differences. The current
-pipeline is intentionally optimized for application and screening, rather than
-for introducing a new protein-stability architecture.
+only compact heads over contextual residue-embedding differences. Saturation
+screening also reads the encoder's masked amino-acid probabilities as a small
+sequence-compatibility prior. The current pipeline is intentionally optimized
+for application and screening, rather than for introducing a new
+protein-stability architecture.
 
 Solubility is deliberately not part of the current model.
 
@@ -26,6 +28,12 @@ A second copy is trained on MPTherm-Pred delta-Tm, for which positive values are
 stabilizing. The ddG and delta-Tm labels are never pooled into one regression
 target.
 
+For a saturation scan, each WT site is also masked once. The log-probability
+difference
+`log P(mutant | masked WT context) - log P(WT | masked WT context)` scores all
+19 substitutions from the same ESM-C pass. It is a rank-only sequence prior,
+not a trained ddG estimate.
+
 For a set of substitutions, the model embeds the WT, every constituent single
 mutant, and the complete joint mutant. For each mutation it constructs:
 
@@ -37,6 +45,10 @@ A DeepSets-style head aggregates these elements by sum, mean, and max. Its
 epistasis correction is added to the constituent single predictions. The
 operation is permutation invariant and accepts any mutation count, although
 the epistasis head has only been trained and evaluated on double mutants.
+Inference also reports additive WT-context masked log odds and a joint-context
+pseudo-log-likelihood score, where each mutated site is masked while the other
+mutations remain present. Their difference is an additional uncalibrated
+interaction diagnostic.
 
 The final GPCR layer is a low-data ranking calibration trained on the supplied
 NTSR1, A2A, and beta-1 adrenergic receptor measurements. It combines four
@@ -44,6 +56,8 @@ mutation-delta scores (base ddG, delta norm, ProTherm-adapted ddG, and
 MPTherm-adapted delta-Tm) through a ridge head. Because the GPCR endpoints are
 residual binding after heating rather than thermodynamic ddG, the output is
 explicitly a ranking score, not kcal/mol or a stability percentage.
+Its new-receptor evidence is weak, so it is reported separately and is not
+included in the primary screening consensus.
 
 Two additional membrane-specific transfer experiments are retained as audited
 candidates but fail their deployment gates: an mCSM-membrane equilibrium-ddG
@@ -143,14 +157,16 @@ application-relevant leave-one-receptor-out diagnostic, macro within-assay
 Spearman falls to `0.171` (uncalibrated baseline `0.025`), with receptor/assay
 values ranging from `-0.121` to `0.515`. Each fold also retrains the MPTherm
 head after excluding every row from the held-out receptor. The GPCR score is
-therefore limited to a 10% screening prior.
+therefore retained only as an assay-specific diagnostic.
 
 Additional GPCR-focused transfer, structure, physicochemical, uncertainty,
 GPCRdb construct, ProteinGym membrane-expression, and direct C5aR alanine-scan
 experiments are recorded in
 [`docs/gpcr_model_selection.md`](docs/gpcr_model_selection.md). They were kept
-out of production because their receptor-held-out or within-receptor ranking
-did not improve enough to justify added runtime complexity.
+out of trained production heads because their receptor-held-out or
+within-receptor ranking did not improve enough to justify added complexity.
+The accepted masked-marginal runtime prior and its audit are recorded in
+[`docs/esmc_masked_marginal_audit.json`](docs/esmc_masked_marginal_audit.json).
 
 ## Prediction
 
@@ -167,7 +183,9 @@ For a double mutant the output contains:
 - each constituent single prediction;
 - the additive ddG;
 - the learned epistasis correction; and
-- the corrected total ddG.
+- the corrected total ddG;
+- additive WT-context masked log odds; and
+- joint-context masked pseudo-log-likelihood and interaction log odds.
 
 Screen all 19 substitutions at selected sites, batching sequences according to
 the ESM-C token budget:
@@ -179,13 +197,14 @@ the ESM-C token budget:
   --output artifacts/target_gpcr_screen.csv
 ```
 
-When GPCR calibration is available, screening uses a thermodynamic-first safety
-blend: 90% general-stability percentile and 10% GPCR fine-tune percentile. Raw
-ddG, GPCR score, percentiles, and the consensus rank are all retained in the
-CSV. The assay-specific score is deliberately prevented from overriding a
-strongly destabilizing thermodynamic prediction. `pretrained_ddg_std` records
-disagreement across the five heads as an uncertainty flag; it is useful for
-triage but is not a calibrated confidence interval.
+The primary scan rank is 80% MPTherm delta-Tm percentile and 20% ESM-C
+masked-marginal percentile. The general ddG estimate and assay-specific GPCR
+score remain separate CSV columns: use `predicted_stabilizing` to require
+agreement with the thermodynamic head when choosing a conservative experimental
+set. The consensus is rank-only and can otherwise promote a candidate that the
+general ddG head calls destabilizing. `pretrained_ddg_std` records disagreement
+across the five heads as an uncertainty flag; it is useful for triage but is
+not a calibrated confidence interval.
 
 ## Limitations
 
@@ -202,6 +221,10 @@ triage but is not a calibrated confidence interval.
 - The MPTherm head reaches only Spearman `0.371` on the small leak-free GPCR-tm
   test. Its delta-Tm output is an auxiliary ranking signal, not a calibrated
   universal GPCR stability measurement.
+- Masked-marginal log odds measure sequence compatibility, not kcal/mol,
+  delta-Tm, expression, activity, or crystallizability. The 20% weight improved
+  the independent C5aR scan while preserving the GPCR-tm within-receptor test
+  rank, but the evidence is still small.
 - GPCR site-held-out macro Spearman `0.601` measures residual-binding thermal
   assays, not thermodynamic GPCR ddG accuracy. New-receptor macro Spearman is
   only `0.171`; high-accuracy GPCR ddG prediction has not been demonstrated.

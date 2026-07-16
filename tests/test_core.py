@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -8,6 +9,7 @@ import pytest
 import torch
 
 from protein_stabilizer.data import (
+    AMINO_ACIDS,
     EmbeddingRequest,
     Mutation,
     apply_mutations,
@@ -19,6 +21,7 @@ from protein_stabilizer.data import (
 )
 from protein_stabilizer.cli import _parse_positions
 from protein_stabilizer.embeddings import (
+    ESMCEmbedder,
     ESMCProvenance,
     ResidueEmbeddingReader,
     ResidueEmbeddingWriter,
@@ -33,6 +36,11 @@ from protein_stabilizer.models import (
 from protein_stabilizer.training import (
     gpcr_dtm_adapter_features,
     membrane_adapter_features,
+)
+from protein_stabilizer.predictor import (
+    _masked_marginal_mutation_scores,
+    _percentile_ranks,
+    _thermostability_consensus,
 )
 from protein_stabilizer.transfer_data import _pdb_chain_sequence, mutation_window
 
@@ -128,6 +136,122 @@ def test_single_mutation_ensemble_averages_predictions_and_latents() -> None:
     assert ensemble.member_predictions(delta).shape == (2, 5)
     torch.testing.assert_close(ensemble(delta), expected_prediction)
     torch.testing.assert_close(ensemble.latent(delta), expected_latent)
+
+
+def test_masked_marginal_scores_follow_canonical_amino_acid_order() -> None:
+    log_probabilities = np.zeros((2, 20), dtype=np.float32)
+    log_probabilities[0, AMINO_ACIDS.index("C")] = 1.25
+    log_probabilities[0, AMINO_ACIDS.index("A")] = -0.75
+    log_probabilities[1, AMINO_ACIDS.index("W")] = 0.5
+    log_probabilities[1, AMINO_ACIDS.index("Y")] = 0.2
+    scores = _masked_marginal_mutation_scores(
+        log_probabilities,
+        [Mutation.parse("A1C"), Mutation.parse("Y2W")],
+    )
+    np.testing.assert_allclose(scores, [2.0, 0.3])
+
+
+def test_esmc_masked_marginals_batch_sites_at_residue_token_offsets() -> None:
+    class FakeTokenizer:
+        mask_token_id = 3
+
+        def __init__(self) -> None:
+            self.amino_acid_ids = {
+                amino_acid: index + 4
+                for index, amino_acid in enumerate(AMINO_ACIDS)
+            }
+
+        def convert_tokens_to_ids(self, token: str) -> int:
+            return self.amino_acid_ids[token]
+
+        def __call__(
+            self,
+            sequences: list[str],
+            *,
+            add_special_tokens: bool,
+            padding: bool,
+            truncation: bool,
+            return_tensors: str,
+        ) -> dict[str, torch.Tensor]:
+            assert add_special_tokens and padding and not truncation
+            assert return_tensors == "pt"
+            rows = [
+                [1, *(self.amino_acid_ids[residue] for residue in sequence), 2]
+                for sequence in sequences
+            ]
+            return {
+                "input_ids": torch.tensor(rows),
+                "attention_mask": torch.ones((len(rows), len(rows[0])), dtype=torch.long),
+            }
+
+    class FakeModel:
+        def __init__(self) -> None:
+            self.tokenizer = FakeTokenizer()
+            self.calls: list[torch.Tensor] = []
+
+        def __call__(self, *, sequence_tokens: torch.Tensor) -> SimpleNamespace:
+            self.calls.append(sequence_tokens.clone())
+            batch, length = sequence_tokens.shape
+            logits = torch.zeros((batch, length, 24), dtype=torch.float32)
+            for row in range(batch):
+                masked_position = int(
+                    torch.nonzero(
+                        sequence_tokens[row] == self.tokenizer.mask_token_id,
+                        as_tuple=False,
+                    ).item()
+                )
+                values = (
+                    torch.arange(len(AMINO_ACIDS), dtype=torch.float32)
+                    * masked_position
+                    / 10
+                )
+                ids = list(self.tokenizer.amino_acid_ids.values())
+                logits[row, masked_position, ids] = values
+            return SimpleNamespace(sequence_logits=logits)
+
+    embedder = object.__new__(ESMCEmbedder)
+    embedder.device = torch.device("cpu")
+    embedder.model = FakeModel()
+    scores = embedder.masked_marginal_log_probabilities(
+        "ACDE",
+        [1, 3, 4],
+        max_tokens=12,
+        max_batch_size=8,
+    )
+    assert scores.shape == (3, len(AMINO_ACIDS))
+    assert len(embedder.model.calls) == 2
+    assert embedder.model.calls[0][0, 1].item() == 3
+    assert embedder.model.calls[0][1, 3].item() == 3
+    assert embedder.model.calls[1][0, 4].item() == 3
+    for row, position in enumerate((1, 3, 4)):
+        logits = torch.zeros(24, dtype=torch.float32)
+        amino_acid_ids = list(
+            embedder.model.tokenizer.amino_acid_ids.values()
+        )
+        logits[amino_acid_ids] = (
+            torch.arange(len(AMINO_ACIDS), dtype=torch.float32) * position / 10
+        )
+        expected = torch.log_softmax(logits, dim=0)[amino_acid_ids]
+        np.testing.assert_allclose(scores[row], expected.numpy(), rtol=1e-6)
+
+
+def test_percentile_ranks_average_ties_without_order_bias() -> None:
+    values = np.asarray([2.0, 1.0, 2.0, 3.0], dtype=np.float32)
+    np.testing.assert_allclose(
+        _percentile_ranks(values),
+        [0.5, 0.0, 0.5, 1.0],
+    )
+
+
+def test_thermostability_consensus_is_eighty_twenty_rank_blend() -> None:
+    mptherm = np.asarray([0.0, 2.0, 1.0], dtype=np.float32)
+    masked = np.asarray([3.0, 1.0, 2.0], dtype=np.float32)
+    expected = 0.8 * _percentile_ranks(mptherm) + 0.2 * _percentile_ranks(
+        masked
+    )
+    np.testing.assert_allclose(
+        _thermostability_consensus(mptherm, masked), expected
+    )
 
 
 def test_gpcr_split_holds_out_complete_sites(tmp_path: Path) -> None:

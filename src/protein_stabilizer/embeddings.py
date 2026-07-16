@@ -13,7 +13,7 @@ import h5py
 import numpy as np
 import torch
 
-from .data import EmbeddingRequest, normalize_sequence, sequence_hash
+from .data import AMINO_ACIDS, EmbeddingRequest, normalize_sequence, sequence_hash
 
 
 CACHE_SCHEMA = "protein-stabilizer.esmc-residue-cache.v1"
@@ -101,6 +101,71 @@ class ESMCEmbedder:
             results.append(selected.float().cpu().numpy().astype(np.float16))
         del output, embeddings, tokens
         return results
+
+    def masked_marginal_log_probabilities(
+        self,
+        sequence: str,
+        positions: Sequence[int],
+        *,
+        max_tokens: int = 8192,
+        max_batch_size: int = 128,
+    ) -> np.ndarray:
+        """Score every canonical amino acid after masking each requested site.
+
+        Rows follow ``positions`` and columns follow ``data.AMINO_ACIDS``.
+        One WT-context forward pass is required per unique position, so all
+        nineteen substitutions at a site share the same probability vector.
+        """
+
+        normalized = normalize_sequence(sequence)
+        selected = tuple(int(position) for position in positions)
+        if len(selected) != len(set(selected)):
+            raise ValueError("masked-marginal positions must be unique")
+        if any(position < 1 or position > len(normalized) for position in selected):
+            raise ValueError("masked-marginal position is outside the sequence")
+        if max_tokens < len(normalized) + 2:
+            raise ValueError("max_tokens is smaller than one tokenized sequence")
+        if max_batch_size < 1:
+            raise ValueError("max_batch_size must be positive")
+        if not selected:
+            return np.empty((0, len(AMINO_ACIDS)), dtype=np.float32)
+
+        tokenizer = self.model.tokenizer
+        amino_acid_ids = [
+            int(tokenizer.convert_tokens_to_ids(amino_acid))
+            for amino_acid in AMINO_ACIDS
+        ]
+        batch_size = min(
+            max_batch_size,
+            max(1, max_tokens // (len(normalized) + 2)),
+        )
+        results: list[np.ndarray] = []
+        for start in range(0, len(selected), batch_size):
+            batch_positions = selected[start : start + batch_size]
+            encoded = tokenizer(
+                [normalized] * len(batch_positions),
+                add_special_tokens=True,
+                padding=True,
+                truncation=False,
+                return_tensors="pt",
+            )
+            tokens = encoded["input_ids"].to(self.device)
+            attention = encoded["attention_mask"]
+            expected_length = len(normalized) + 2
+            if not torch.all(attention.sum(dim=1) == expected_length):
+                raise RuntimeError("ESM-C tokenizer truncated or misaligned a sequence")
+            row_indices = torch.arange(len(batch_positions), device=self.device)
+            token_positions = torch.tensor(batch_positions, device=self.device)
+            tokens[row_indices, token_positions] = tokenizer.mask_token_id
+            with torch.inference_mode():
+                output = self.model(sequence_tokens=tokens)
+                site_logits = output.sequence_logits[row_indices, token_positions]
+                log_probabilities = torch.log_softmax(
+                    site_logits.float(), dim=-1
+                )[:, amino_acid_ids]
+            results.append(log_probabilities.cpu().numpy().astype(np.float32))
+            del output, site_logits, log_probabilities, tokens
+        return np.concatenate(results, axis=0)
 
 
 def request_manifest_sha256(requests: Sequence[EmbeddingRequest]) -> str:

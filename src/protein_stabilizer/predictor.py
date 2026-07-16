@@ -27,6 +27,67 @@ from .training import (
     membrane_adapter_features,
 )
 
+THERMOSTABILITY_SCREENING_WEIGHTS = {
+    "mptherm_delta_tm": 0.80,
+    "masked_marginal": 0.20,
+}
+
+
+def _percentile_ranks(values: np.ndarray) -> np.ndarray:
+    values = np.asarray(values, dtype=np.float64)
+    if values.ndim != 1:
+        raise ValueError("percentile ranks require a one-dimensional array")
+    if not np.all(np.isfinite(values)):
+        raise ValueError("percentile ranks require finite values")
+    if len(values) == 0:
+        return np.empty(0, dtype=np.float32)
+    if len(values) == 1:
+        return np.ones(1, dtype=np.float32)
+    order = np.argsort(values, kind="stable")
+    ordered = values[order]
+    ranks = np.empty(len(values), dtype=np.float64)
+    start = 0
+    while start < len(values):
+        end = start + 1
+        while end < len(values) and ordered[end] == ordered[start]:
+            end += 1
+        ranks[order[start:end]] = (start + end - 1) / 2
+        start = end
+    return (ranks / (len(values) - 1)).astype(np.float32)
+
+
+def _masked_marginal_mutation_scores(
+    log_probabilities: np.ndarray,
+    mutations: Sequence[Mutation],
+) -> np.ndarray:
+    if log_probabilities.shape != (len(mutations), len(AMINO_ACIDS)):
+        raise ValueError("masked-marginal probability shape mismatch")
+    amino_acid_index = {
+        amino_acid: index for index, amino_acid in enumerate(AMINO_ACIDS)
+    }
+    return np.asarray(
+        [
+            log_probabilities[index, amino_acid_index[mutation.mutant]]
+            - log_probabilities[index, amino_acid_index[mutation.wt]]
+            for index, mutation in enumerate(mutations)
+        ],
+        dtype=np.float32,
+    )
+
+
+def _thermostability_consensus(
+    mptherm_delta_tm: np.ndarray,
+    masked_marginal: np.ndarray,
+) -> np.ndarray:
+    if mptherm_delta_tm.shape != masked_marginal.shape:
+        raise ValueError("thermostability consensus arrays must have equal shape")
+    return (
+        THERMOSTABILITY_SCREENING_WEIGHTS["mptherm_delta_tm"]
+        * _percentile_ranks(mptherm_delta_tm)
+        + THERMOSTABILITY_SCREENING_WEIGHTS["masked_marginal"]
+        * _percentile_ranks(masked_marginal)
+    )
+
 
 def _single_calibration_features(
     latent: np.ndarray,
@@ -173,6 +234,20 @@ def predict_mutations(
     requests.append(EmbeddingRequest(joint_sequence, positions))
     embedder = ESMCEmbedder(model_name=model_name, device=device)
     vectors = embedder.encode(requests)
+    masked_log_probabilities = embedder.masked_marginal_log_probabilities(
+        wt_sequence, positions
+    )
+    masked_marginal = _masked_marginal_mutation_scores(
+        masked_log_probabilities, parsed
+    )
+    joint_masked_log_probabilities = (
+        embedder.masked_marginal_log_probabilities(joint_sequence, positions)
+        if len(parsed) > 1
+        else masked_log_probabilities
+    )
+    joint_masked_marginal = _masked_marginal_mutation_scores(
+        joint_masked_log_probabilities, parsed
+    )
     wt_vectors = vectors[0].astype(np.float32)
     single_vectors = np.concatenate(vectors[1:-1], axis=0).astype(np.float32)
     joint_vectors = vectors[-1].astype(np.float32)
@@ -207,6 +282,21 @@ def predict_mutations(
             for mutation, value in zip(parsed, constituent, strict=True)
         },
         "additive_ddg": float(constituent.sum()),
+        "constituent_masked_marginal_log_odds": {
+            str(mutation): float(value)
+            for mutation, value in zip(parsed, masked_marginal, strict=True)
+        },
+        "additive_masked_marginal_log_odds": float(masked_marginal.sum()),
+        "constituent_joint_context_masked_marginal_log_odds": {
+            str(mutation): float(value)
+            for mutation, value in zip(parsed, joint_masked_marginal, strict=True)
+        },
+        "joint_context_masked_pseudologlikelihood_log_odds": float(
+            joint_masked_marginal.sum()
+        ),
+        "masked_context_epistasis_log_odds": float(
+            joint_masked_marginal.sum() - masked_marginal.sum()
+        ),
         "model_provenance": embedder.provenance.canonical_json(),
     }
     if member_std is not None:
@@ -227,6 +317,7 @@ def predict_mutations(
         predicted_ddg = float(auxiliary.get("membrane_ddg", constituent)[0])
         result["predicted_ddg"] = predicted_ddg
         result["pretrained_ddg"] = float(constituent[0])
+        result["masked_marginal_log_odds"] = float(masked_marginal[0])
         if member_std is not None:
             result["pretrained_ddg_std"] = float(member_std[0])
         if auxiliary:
@@ -329,6 +420,16 @@ def screen_single_mutants(
             )
 
     embedder = ESMCEmbedder(model_name=model_name, device=device)
+    masked_log_probabilities = embedder.masked_marginal_log_probabilities(
+        wt_sequence,
+        selected_positions,
+        max_tokens=max_tokens,
+        max_batch_size=max_batch_size,
+    )
+    masked_by_position = {
+        position: masked_log_probabilities[index]
+        for index, position in enumerate(selected_positions)
+    }
     wt_vectors = embedder.encode(
         [EmbeddingRequest(wt_sequence, tuple(selected_positions))]
     )[0].astype(np.float32)
@@ -369,6 +470,17 @@ def screen_single_mutants(
     named_features, auxiliary = _single_calibration_features(
         latent, ddg, deltas, checkpoint_dir, torch_device
     )
+    amino_acid_index = {
+        amino_acid: index for index, amino_acid in enumerate(AMINO_ACIDS)
+    }
+    masked_marginal = np.asarray(
+        [
+            masked_by_position[mutation.position][amino_acid_index[mutation.mutant]]
+            - masked_by_position[mutation.position][amino_acid_index[mutation.wt]]
+            for mutation in mutations
+        ],
+        dtype=np.float32,
+    )
     calibration_path = checkpoint_dir / "gpcr_calibration.joblib"
     gpcr_score: np.ndarray | None = None
     if calibration_path.exists():
@@ -387,29 +499,26 @@ def screen_single_mutants(
             raise RuntimeError(f"missing inference features for {feature_set}")
         gpcr_score = calibration["pipeline"].predict(named_features[feature_set])
 
-    def percentile(values: np.ndarray) -> np.ndarray:
-        if len(values) == 1:
-            return np.ones(1, dtype=np.float32)
-        order = np.argsort(values, kind="stable")
-        ranks = np.empty(len(values), dtype=np.float32)
-        ranks[order] = np.arange(len(values), dtype=np.float32)
-        return ranks / (len(values) - 1)
-
     final_ddg = auxiliary.get("membrane_ddg", ddg)
-    general_percentile = percentile(-final_ddg)
-    gpcr_percentile = percentile(gpcr_score) if gpcr_score is not None else None
-    if gpcr_percentile is not None:
-        weights = calibration.get(
-            "screening_weights",
-            {"general_stability": 0.75, "gpcr_calibration": 0.25},
+    general_percentile = _percentile_ranks(-final_ddg)
+    masked_percentile = _percentile_ranks(masked_marginal)
+    gpcr_percentile = (
+        _percentile_ranks(gpcr_score) if gpcr_score is not None else None
+    )
+    if "mptherm_delta_tm" in auxiliary:
+        mptherm_percentile = _percentile_ranks(auxiliary["mptherm_delta_tm"])
+        consensus = _thermostability_consensus(
+            auxiliary["mptherm_delta_tm"], masked_marginal
         )
-        general_weight = float(weights["general_stability"])
-        gpcr_weight = float(weights["gpcr_calibration"])
-        consensus = general_weight * general_percentile + gpcr_weight * gpcr_percentile
+        ranking_policy = (
+            "0.80 MPTherm delta-Tm percentile + "
+            "0.20 ESM-C masked-marginal percentile; "
+            "the assay-specific GPCR score is reported separately"
+        )
     else:
-        general_weight = 1.0
-        gpcr_weight = 0.0
+        mptherm_percentile = None
         consensus = general_percentile
+        ranking_policy = "general-stability percentile"
 
     rows: list[dict[str, object]] = []
     for index, mutation in enumerate(mutations):
@@ -420,6 +529,8 @@ def screen_single_mutants(
             "mutant_aa": mutation.mutant,
             "predicted_ddg": float(final_ddg[index]),
             "pretrained_ddg": float(ddg[index]),
+            "masked_marginal_log_odds": float(masked_marginal[index]),
+            "masked_marginal_percentile": float(masked_percentile[index]),
             "predicted_stabilizing": bool(final_ddg[index] < 0),
             "general_stability_percentile": float(general_percentile[index]),
             "consensus_rank_score": float(consensus[index]),
@@ -429,6 +540,10 @@ def screen_single_mutants(
         if gpcr_score is not None:
             row["gpcr_stability_rank_score"] = float(gpcr_score[index])
             row["gpcr_stability_percentile"] = float(gpcr_percentile[index])
+        if mptherm_percentile is not None:
+            row["mptherm_delta_tm_percentile"] = float(
+                mptherm_percentile[index]
+            )
         if auxiliary:
             if "protherm_ddg" in auxiliary:
                 row["protherm_calibrated_ddg"] = float(
@@ -463,12 +578,7 @@ def screen_single_mutants(
         "screened_positions": len(selected_positions),
         "candidate_count": len(rows),
         "ranking_key": sort_key,
-        "ranking_policy": (
-            f"{general_weight:.2f} general-stability percentile + "
-            f"{gpcr_weight:.2f} GPCR fine-tune percentile"
-            if gpcr_score is not None
-            else "general-stability percentile"
-        ),
+        "ranking_policy": ranking_policy,
         "sign_convention": "negative predicted_ddg is stabilizing; higher ranking scores are better",
         "output_csv": str(output_csv) if output_csv is not None else None,
         "top_candidates": rows[: max(1, top)],

@@ -1672,14 +1672,9 @@ def train_gpcr_calibration(
         target, receptor_heldout_prediction, assay
     )
     receptor_heldout_baseline = _gpcr_metrics_by_assay(target, -base_ddg, assay)
-    receptor_macro = float(receptor_heldout["macro_within_assay_spearman"])
-    receptor_baseline_macro = float(
-        receptor_heldout_baseline["macro_within_assay_spearman"]
-    )
     # The endpoint is residual binding after heating, not signed ddG, and the
-    # new-receptor diagnostic is weak. Keep this score as a small ranking prior.
-    gpcr_weight = 0.10 if receptor_macro > receptor_baseline_macro else 0.0
-    general_weight = 1.0 - gpcr_weight
+    # new-receptor diagnostic is weak. Retain this score as a separately
+    # reported assay diagnostic rather than blending it into the primary scan.
     metrics = {
         "schema": "protein-stabilizer.gpcr-calibration.v5",
         "split_seed": split_seed,
@@ -1791,13 +1786,10 @@ def train_gpcr_calibration(
             "pipeline": selected,
             "feature_set": best_feature_set,
             "feature_order": feature_order[best_feature_set],
-            "screening_weights": {
-                "general_stability": general_weight,
-                "gpcr_calibration": gpcr_weight,
-            },
+            "screening_role": "diagnostic_only",
             "screening_policy": (
-                "thermodynamic-first blend; weak leave-one-receptor-out evidence "
-                "limits the GPCR residual-binding prior to 10%"
+                "reported separately; weak leave-one-receptor-out evidence "
+                "does not justify inclusion in the primary screening consensus"
             ),
             "output": "within-assay GPCR mutation stability ranking score",
             "metrics": metrics,

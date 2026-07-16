@@ -1,9 +1,10 @@
 # GPCR model-selection audit
 
-This document records compact experiments that were evaluated and deliberately
-kept out of the production scorer. The application target is ranking mutations
-for a previously unseen GPCR, so a result must improve receptor-held-out or
-within-receptor ranking—not merely fit a small pooled test set.
+This document records compact experiments evaluated for the production scorer,
+including the one accepted runtime prior and the candidates deliberately kept
+out. The application target is ranking mutations for a previously unseen GPCR,
+so a result must improve receptor-held-out or within-receptor ranking—not
+merely fit a small pooled test set.
 
 ## Evaluation policy
 
@@ -22,6 +23,28 @@ The production reference is the ESM-C 600M delta ensemble plus its MPTherm
 transfer head. On the official GPCR-tm test, the MPTherm head reaches Spearman
 `0.371`, Pearson `0.340`, MAE `3.588`, and RMSE `4.435`. Its macro Spearman for
 the two test receptors having more than one observation is `0.800`.
+
+## Accepted runtime prior
+
+ESM-C masked-marginal log odds add a cheap orthogonal signal without a new
+trained head or an additional mutant-sequence forward pass. Each WT site is
+masked once and all canonical substitutions are scored as
+`log P(mutant | masked WT context) - log P(WT | masked WT context)`.
+
+The selected scan consensus is 80% within-scan MPTherm delta-Tm percentile and
+20% within-scan masked-marginal percentile. On GPCR-tm development, Spearman
+after pooling the within-receptor percentiles increased from `0.093` to `0.103`;
+the within-receptor macro Spearman was effectively unchanged (`0.087` to
+`0.086`). On the official test, the two multi-row receptors retained macro
+Spearman `0.800`. On the independent 277-position C5aR scan, AUC increased from
+`0.660` to `0.678`, average precision from `0.245` to `0.255`, and thermostable
+substitutions in the top 50 from 12 to 13.
+
+The supplied-workbook association was inconsistent across assay states, so the
+masked score is not a universal continuous stability predictor. The
+assay-specific GPCR workbook calibration is still reported, but it is excluded
+from the primary consensus. Exact metrics and provenance are stored in
+[`esmc_masked_marginal_audit.json`](esmc_masked_marginal_audit.json).
 
 ## Rejected candidates
 
@@ -103,13 +126,15 @@ Native UniProt residue numbering and WT identities matched all 97 GPCR-tm rows.
 
 ## Current application decision
 
-Use the stored ESM-C mutant-minus-WT residue deltas and the compact production
-heads for high-throughput screening. Keep the GPCR workbook calibration at its
-validated 10% consensus weight. Treat the resulting list as an experimental
-prior and test several diverse substitutions rather than relying on one top
-prediction. The next materially different model upgrade should be ESM-C 6B or
-substantially larger GPCR stability data, not another small adapter selected on
-the present benchmarks.
+Use the stored ESM-C mutant-minus-WT residue deltas and compact production heads
+for high-throughput screening. Rank primarily with the 80% MPTherm / 20% masked
+consensus, while retaining general ddG and the GPCR workbook score as separate
+diagnostics. For a conservative experimental set, require general-ddG support
+for some candidates and deliberately include a smaller number of high-consensus
+disagreements. Test several diverse substitutions rather than relying on one
+top prediction. The next materially different model upgrade should be ESM-C 6B
+or substantially larger GPCR stability data, not another small adapter selected
+on the present benchmarks.
 
 ## External data sources
 
