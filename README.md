@@ -145,7 +145,8 @@ values ranging from `-0.121` to `0.515`. Each fold also retrains the MPTherm
 head after excluding every row from the held-out receptor. The GPCR score is
 therefore limited to a 10% screening prior.
 
-Additional GPCR-focused transfer, structure, physicochemical, and uncertainty
+Additional GPCR-focused transfer, structure, physicochemical, uncertainty,
+GPCRdb construct, ProteinGym membrane-expression, and direct C5aR alanine-scan
 experiments are recorded in
 [`docs/gpcr_model_selection.md`](docs/gpcr_model_selection.md). They were kept
 out of production because their receptor-held-out or within-receptor ranking
@@ -193,7 +194,9 @@ triage but is not a calibrated confidence interval.
   worse than the frozen ESM-C baseline on two unseen alpha-helical proteins.
   Official ThermoMPNN predictions, local structure descriptors, and a compact
   structure/model blend were also evaluated on GPCR-tm and did not pass the
-  development plus within-receptor ranking gates.
+  development plus within-receptor ranking gates. GPCRdb construct positives,
+  ProteinGym membrane expression/abundance assays, and a direct C5aR
+  alanine-scan classifier also failed the same untouched-test gate.
 - ProTherm is heterogeneous and replicate measurements can disagree; the
   normalization records replicate count and spread for every mutation.
 - The MPTherm head reaches only Spearman `0.371` on the small leak-free GPCR-tm

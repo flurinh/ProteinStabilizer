@@ -1,0 +1,53 @@
+{
+  "schema": "protein-stabilizer.gpcr-external-data-audit.v1",
+  "encoder": {
+    "model": "esmc_600m",
+    "checkpoint_sha256": "8ef856e1a237ee3f995442df997a962e70057faadecf38fc0c8561bd3c2f4324",
+    "feature": "final-layer contextual mutant-minus-WT residue embedding"
+  },
+  "audits": {
+    "gpcrdb_constructs": {
+      "source_commit": "705aa63be39752986b858b7442f63026e80b7758",
+      "external_receptors": 24,
+      "reported_positive_substitutions": 110,
+      "saturation_rows": 2071,
+      "request_manifest_sha256": "52cc40cf3bb9a89701a24204ffd2f40a3fc8ec6636d544d64774dfa82f50e2ec",
+      "external_receptor_auc": 0.8985,
+      "external_receptor_top1": 0.685,
+      "gpcr_tm_test_spearman": 0.1259,
+      "gpcr_tm_test_within_receptor_macro_spearman": 0.0,
+      "decision": "rejected"
+    },
+    "proteingym_membrane_expression": {
+      "source_sha256": "22e41fb41ea7da6f857aedf690975b298db06ab472b882aed279161b0369a152",
+      "core_assays": 9,
+      "core_rows": 34425,
+      "embedded_rows_including_ccr5_ablation": 40562,
+      "request_manifest_sha256": "b5dacfdad8de0f4d548181685666360ea7808fe108c12806e9d34fc678624c66",
+      "paper_heldout_macro_spearman": 0.4043,
+      "gpcr_tm_dev_base_macro_spearman": 0.1814,
+      "gpcr_tm_dev_with_expression_macro_spearman": 0.1640,
+      "gpcr_tm_test_standalone_spearman": 0.0140,
+      "decision": "rejected"
+    },
+    "c5ar_alanine_scan": {
+      "source_doi": "10.1016/j.bpj.2019.10.023",
+      "source_supplement_sha256": "e93e12e263d77125108e2e8f16ae10f9c3c68586cff01e7208ef69db6bf9e6d8",
+      "uniprot_id": "P21730",
+      "sequence_sha256": "dc48c194272465c04ae4727f3710ca1c75b6ca77006ea1730ed45ea75035d730",
+      "audited_positions": 277,
+      "reported_thermostable_substitutions": 34,
+      "request_manifest_sha256": "2619d749f09cada931bb814030a559c984816a2648203a2ee69cdff0691bab24",
+      "mptherm_baseline_auc_on_c5ar": 0.6605,
+      "mptherm_baseline_positives_in_top50": 12,
+      "selected_classifier_training_auc": 1.0,
+      "gpcr_tm_dev_selected_macro_spearman": 0.3162,
+      "gpcr_tm_test_spearman": 0.1958,
+      "gpcr_tm_test_within_receptor_macro_spearman": 0.6,
+      "gpcr_tm_test_mae": 3.9092,
+      "decision": "rejected",
+      "caveat": "The source reports 283 mutants from Val35 through Leu311, but that explicit inclusive canonical interval contains 277 positions. No undocumented rows were synthesized."
+    }
+  },
+  "production_change": "none"
+}

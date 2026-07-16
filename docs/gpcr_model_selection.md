@@ -34,6 +34,49 @@ the two test receptors having more than one observation is `0.800`.
 | Local structure descriptors | Tested relative SASA, nonlocal contact counts, bundle-axis depth, radial position, side-chain orientation, AlphaFold confidence, mutation-property changes, and burial interactions. Development selection preferred a two-score ESM-C model without structure (macro Spearman `0.181`). Its official-test Spearman was `0.357` and within-receptor macro Spearman `0.200`. | Keep the runtime sequence-only. |
 | Mutation physicochemical priors | Adding hydropathy, volume, charge, polarity, aromaticity, and backbone-breaker changes reduced the supplied-workbook site test macro Spearman from `0.601` to `0.526` and the receptor-held-out diagnostic. | Reject. Contextual ESM-C deltas already contain the useful part of this signal. |
 | Ensemble-disagreement re-ranking | Member standard deviation has weak correlation with generic absolute error (`0.179`) and very weak correlation on the GPCR workbook (`0.079`). | Retain `pretrained_ddg_std` as a caution flag, not a ranking penalty or calibrated interval. |
+| GPCRdb crystallization-construct positives | A delta-only contrastive head separated held-out construct receptors well (AUC `0.899`, top-1 recovery `0.685`), but official GPCR-tm test Spearman was only `0.126` and within-receptor macro Spearman was `0.000`. | Reject. Construct mutations encode receptor state, ligand, and crystallization-design choices rather than a transferable continuous stability endpoint. |
+| ProteinGym membrane expression/abundance transfer | Nine membrane assays gave paper-held-out macro Spearman `0.404` for the best compact head. On GPCR-tm development, adding it reduced leave-one-receptor-out macro Spearman from `0.181` to `0.164`; its standalone official-test Spearman was `0.014`. | Reject. Expression, abundance, surface display, and membrane insertion are useful phenotypes but are not interchangeable with GPCR thermal stability. |
+| C5aR experimental Ala/Leu scan | The published scan contributes 34 explicit thermostable substitutions on an otherwise stated exhaustive receptor scan. A delta classifier selected on GPCR-tm development raised leave-one-receptor-out macro Spearman from `0.181` to `0.316`, but official-test Spearman fell to `0.196`, within-receptor macro Spearman fell from `0.800` to `0.600`, and MAE increased from `3.588` to `3.909`. | Reject the single-receptor classifier. Its perfect training separation was overfit and did not transfer consistently. |
+
+## External-data audit
+
+The exact compact metrics and provenance are also stored in
+[`gpcr_external_data_audit.json`](gpcr_external_data_audit.json).
+
+The external-data experiments used only frozen ESM-C mutant-minus-WT residue
+deltas. ProteinGym contributed 34,425 rows from nine membrane expression,
+abundance, surface-display, and insertion assays; CCR5's mixed binding/surface
+assay was evaluated separately rather than silently pooled. The source parquet
+SHA-256 was
+`22e41fb41ea7da6f857aedf690975b298db06ab472b882aed279161b0369a152`,
+and the 40,562-row embedding-request manifest SHA-256 was
+`b5dacfdad8de0f4d548181685666360ea7808fe108c12806e9d34fc678624c66`.
+
+The GPCRdb construct audit used repository commit
+`705aa63be39752986b858b7442f63026e80b7758` and excluded every receptor
+present in GPCR-tm or the supplied workbook before training. This left 24
+external GPCRs, 109 sites, and 110 reported stabilizing substitutions. Its
+2,071-row site-saturation request manifest SHA-256 was
+`52cc40cf3bb9a89701a24204ffd2f40a3fc8ec6636d544d64774dfa82f50e2ec`.
+
+The C5aR audit used Supplementary Table S6 from Muk et al. to identify all 34
+reported thermostable substitutions. The paper states that 283 mutants span
+Val35 through Leu311, although that inclusive canonical UniProt interval
+contains 277 positions. No six undocumented rows were invented. The audit
+therefore used the explicit 277-position interval and is not treated as a
+production training source. The supplement SHA-256 was
+`e93e12e263d77125108e2e8f16ae10f9c3c68586cff01e7208ef69db6bf9e6d8`;
+the P21730 sequence SHA-256 was
+`dc48c194272465c04ae4727f3710ca1c75b6ca77006ea1730ed45ea75035d730`;
+and the ESM-C request manifest SHA-256 was
+`2619d749f09cada931bb814030a559c984816a2648203a2ee69cdff0691bab24`.
+
+The larger 1,231-mutant, five-assay GPCR alanine-scan matrix described by Muk
+et al. would be a high-value transfer source, but the raw per-mutant table is
+not present in the published supplement. The article states that Christopher
+Tate provided those measurements. It should only be added if the original
+table can be obtained with receptor, mutation, assay state, measured score,
+and tested-negative rows intact.
 
 ## ThermoMPNN provenance
 
@@ -53,3 +96,9 @@ prior and test several diverse substitutions rather than relying on one top
 prediction. The next materially different model upgrade should be ESM-C 6B or
 substantially larger GPCR stability data, not another small adapter selected on
 the present benchmarks.
+
+## External data sources
+
+- ProteinGym: https://github.com/OATML-Markslab/ProteinGym
+- GPCRdb construct data: https://github.com/protwis/gpcrdb_data
+- GPCR alanine-scan classifier study: https://doi.org/10.1016/j.bpj.2019.10.023
