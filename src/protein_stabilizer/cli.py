@@ -9,7 +9,11 @@ from typing import Sequence
 
 from .data import DatasetPaths, all_embedding_requests
 from .embeddings import build_embedding_cache
-from .esmc6b import DEFAULT_ESMC6B_MODEL, rerank_esmc6b_screen
+from .esmc6b import (
+    DEFAULT_ESMC6B_MODEL,
+    predict_esmc6b_mutations,
+    rerank_esmc6b_screen,
+)
 from .features import build_feature_files
 from .predictor import predict_mutations, screen_single_mutants
 from .training import (
@@ -188,6 +192,20 @@ def command_rerank_esmc6b(args: argparse.Namespace) -> dict[str, object]:
     )
 
 
+def command_predict_esmc6b(args: argparse.Namespace) -> dict[str, object]:
+    sequence = args.sequence if args.sequence is not None else _read_fasta(args.fasta)
+    mutations = [value.strip() for value in args.mutations.split(",") if value.strip()]
+    return predict_esmc6b_mutations(
+        sequence,
+        mutations,
+        args.checkpoints,
+        model_name_or_path=args.model,
+        device=args.device,
+        max_tokens=args.max_tokens,
+        max_batch_size=args.max_batch_size,
+    )
+
+
 def _common_pipeline_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
@@ -247,13 +265,26 @@ def build_parser() -> argparse.ArgumentParser:
     rerank.add_argument("--device", default="cuda")
     rerank.add_argument("--max-tokens", type=int, default=4096)
     rerank.add_argument("--max-batch-size", type=int, default=16)
+    predict_6b = subparsers.add_parser("predict-6b")
+    predict_6b.add_argument("--sequence")
+    predict_6b.add_argument("--fasta", type=Path)
+    predict_6b.add_argument("--mutations", required=True)
+    predict_6b.add_argument(
+        "--checkpoints",
+        type=Path,
+        default=DEFAULT_ESMC6B_CHECKPOINTS,
+    )
+    predict_6b.add_argument("--model", default=DEFAULT_ESMC6B_MODEL)
+    predict_6b.add_argument("--device", default="cuda")
+    predict_6b.add_argument("--max-tokens", type=int, default=4096)
+    predict_6b.add_argument("--max-batch-size", type=int, default=16)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command in {"predict", "screen", "rerank-6b"} and (
+    if args.command in {"predict", "screen", "rerank-6b", "predict-6b"} and (
         args.sequence is None
     ) == (
         args.fasta is None
@@ -267,6 +298,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "predict": command_predict,
         "screen": command_screen,
         "rerank-6b": command_rerank_esmc6b,
+        "predict-6b": command_predict_esmc6b,
     }
     _json(commands[args.command](args))
 

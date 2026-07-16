@@ -25,7 +25,11 @@ from .predictor import (
     _masked_marginal_mutation_scores,
     dual_backbone_thermostability_consensus,
 )
-from .training import load_auxiliary_checkpoint, load_scoring_checkpoint
+from .training import (
+    load_auxiliary_checkpoint,
+    load_multi_checkpoint,
+    load_scoring_checkpoint,
+)
 
 
 DEFAULT_ESMC6B_MODEL = "biohub/ESMC-6B"
@@ -250,6 +254,224 @@ def _ensemble_member_std(
                 .numpy()
             )
     return np.concatenate(outputs)
+
+
+def predict_esmc6b_mutations(
+    sequence: str,
+    mutations: Sequence[str | Mutation],
+    checkpoint_dir: Path,
+    *,
+    model_name_or_path: str = DEFAULT_ESMC6B_MODEL,
+    device: str = "cuda",
+    max_tokens: int = 4096,
+    max_batch_size: int = 16,
+) -> dict[str, object]:
+    """Predict one or more substitutions with the full ESM-C 6B heads."""
+
+    wt_sequence = normalize_sequence(sequence)
+    parsed = [
+        mutation if isinstance(mutation, Mutation) else Mutation.parse(mutation)
+        for mutation in mutations
+    ]
+    if not parsed:
+        raise ValueError("at least one mutation is required")
+    parsed = sorted(parsed, key=lambda mutation: mutation.position)
+    positions = tuple(mutation.position for mutation in parsed)
+    joint_sequence = apply_mutations(wt_sequence, parsed)
+    single_sequences = [
+        apply_mutations(wt_sequence, [mutation]) for mutation in parsed
+    ]
+    requests = [EmbeddingRequest(wt_sequence, positions)]
+    requests.extend(
+        EmbeddingRequest(single, (mutation.position,))
+        for single, mutation in zip(single_sequences, parsed, strict=True)
+    )
+    requests.append(EmbeddingRequest(joint_sequence, positions))
+
+    embedder = ESMC6BEmbedder(model_name_or_path, device)
+    vector_by_hash: dict[str, np.ndarray] = {}
+    for batch in token_batches(
+        requests,
+        max_tokens=max_tokens,
+        max_batch_size=max_batch_size,
+    ):
+        for request, vector in zip(batch, embedder.encode(batch), strict=True):
+            vector_by_hash[request.sequence_hash] = vector.astype(np.float32)
+    wt_vectors = vector_by_hash[requests[0].sequence_hash]
+    single_vectors = np.concatenate(
+        [
+            vector_by_hash[request.sequence_hash]
+            for request in requests[1:-1]
+        ],
+        axis=0,
+    )
+    joint_vectors = vector_by_hash[requests[-1].sequence_hash]
+    single_delta = single_vectors - wt_vectors
+    joint_delta = joint_vectors - wt_vectors
+
+    masked_log_probabilities = embedder.masked_marginal_log_probabilities(
+        wt_sequence,
+        positions,
+        max_tokens=max_tokens,
+        max_batch_size=max_batch_size,
+    )
+    masked_marginal = _masked_marginal_mutation_scores(
+        masked_log_probabilities,
+        parsed,
+    )
+    joint_masked_log_probabilities = (
+        embedder.masked_marginal_log_probabilities(
+            joint_sequence,
+            positions,
+            max_tokens=max_tokens,
+            max_batch_size=max_batch_size,
+        )
+        if len(parsed) > 1
+        else masked_log_probabilities
+    )
+    joint_masked_marginal = _masked_marginal_mutation_scores(
+        joint_masked_log_probabilities,
+        parsed,
+    )
+
+    torch_device = torch.device(device if torch.cuda.is_available() else "cpu")
+    checkpoint_dir = Path(checkpoint_dir)
+    base_model = load_scoring_checkpoint(checkpoint_dir, torch_device)
+    protherm_model = load_auxiliary_checkpoint(
+        checkpoint_dir / "protherm_ddg_head.pt",
+        torch_device,
+    )
+    mptherm_model = load_auxiliary_checkpoint(
+        checkpoint_dir / "mptherm_dtm_head.pt",
+        torch_device,
+    )
+    for name, model in (
+        ("base", base_model),
+        ("ProTherm", protherm_model),
+        ("MPTherm", mptherm_model),
+    ):
+        if model.config.embedding_dim != embedder.dimension:
+            raise RuntimeError(f"ESM-C 6B {name} checkpoint dimension mismatch")
+    constituent = _torch_prediction(
+        base_model,
+        single_delta,
+        device=torch_device,
+    )
+    protherm_ddg = _torch_prediction(
+        protherm_model,
+        single_delta,
+        device=torch_device,
+    )
+    mptherm_delta_tm = _torch_prediction(
+        mptherm_model,
+        single_delta,
+        device=torch_device,
+    )
+    member_std = (
+        _ensemble_member_std(
+            base_model,
+            single_delta,
+            device=torch_device,
+        )
+        if isinstance(base_model, SingleMutationEnsemble)
+        else None
+    )
+
+    result: dict[str, object] = {
+        "mutations": [str(mutation) for mutation in parsed],
+        "mutation_count": len(parsed),
+        "sign_convention": (
+            "negative predicted and ProTherm ddG are stabilizing; "
+            "positive MPTherm delta-Tm is favorable"
+        ),
+        "constituent_single_ddg": {
+            str(mutation): float(value)
+            for mutation, value in zip(parsed, constituent, strict=True)
+        },
+        "additive_ddg": float(constituent.sum()),
+        "constituent_protherm_calibrated_ddg": {
+            str(mutation): float(value)
+            for mutation, value in zip(parsed, protherm_ddg, strict=True)
+        },
+        "constituent_mptherm_predicted_delta_tm": {
+            str(mutation): float(value)
+            for mutation, value in zip(parsed, mptherm_delta_tm, strict=True)
+        },
+        "constituent_masked_marginal_log_odds": {
+            str(mutation): float(value)
+            for mutation, value in zip(parsed, masked_marginal, strict=True)
+        },
+        "additive_masked_marginal_log_odds": float(masked_marginal.sum()),
+        "constituent_joint_context_masked_marginal_log_odds": {
+            str(mutation): float(value)
+            for mutation, value in zip(
+                parsed,
+                joint_masked_marginal,
+                strict=True,
+            )
+        },
+        "joint_context_masked_pseudologlikelihood_log_odds": float(
+            joint_masked_marginal.sum()
+        ),
+        "masked_context_epistasis_log_odds": float(
+            joint_masked_marginal.sum() - masked_marginal.sum()
+        ),
+        "model_provenance": json.loads(embedder.provenance.canonical_json()),
+    }
+    if member_std is not None:
+        result["ensemble_size"] = len(base_model.members)
+        result["constituent_single_ddg_std"] = {
+            str(mutation): float(value)
+            for mutation, value in zip(parsed, member_std, strict=True)
+        }
+    if len(parsed) == 1:
+        result.update(
+            {
+                "predicted_ddg": float(constituent[0]),
+                "pretrained_ddg": float(constituent[0]),
+                "protherm_calibrated_ddg": float(protherm_ddg[0]),
+                "mptherm_predicted_delta_tm": float(mptherm_delta_tm[0]),
+                "masked_marginal_log_odds": float(masked_marginal[0]),
+            }
+        )
+        if member_std is not None:
+            result["pretrained_ddg_std"] = float(member_std[0])
+        return result
+
+    multi_model = load_multi_checkpoint(
+        checkpoint_dir / "multi_head.pt",
+        torch_device,
+    )
+    if multi_model.config.embedding_dim != embedder.dimension:
+        raise RuntimeError("ESM-C 6B epistasis checkpoint dimension mismatch")
+    single_batch = torch.from_numpy(single_delta[None].astype(np.float32)).to(
+        torch_device
+    )
+    joint_batch = torch.from_numpy(joint_delta[None].astype(np.float32)).to(
+        torch_device
+    )
+    with torch.inference_mode():
+        training_total, training_additive, epistasis = multi_model(
+            single_batch,
+            joint_batch,
+        )
+    ensemble_additive = float(constituent.sum())
+    correction = float(epistasis.item())
+    result.update(
+        {
+            "predicted_ddg": ensemble_additive + correction,
+            "model_additive_ddg": ensemble_additive,
+            "epistasis_ddg": correction,
+            "epistasis_training_additive_ddg": float(training_additive.item()),
+            "epistasis_training_total_ddg": float(training_total.item()),
+            "extrapolation_warning": (
+                "epistasis head was trained on double mutants"
+                if len(parsed) > 2
+                else None
+            ),
+        }
+    )
+    return result
 
 
 def rerank_esmc6b_screen(

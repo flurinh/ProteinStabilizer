@@ -81,6 +81,14 @@ ddG values as separate diagnostics. Exact metrics, cache manifests, checkpoint
 hashes, and limitations are in
 [`esmc6b_full_transfer_audit.json`](esmc6b_full_transfer_audit.json).
 
+For mutation combinations, a separate 6B permutation-invariant epistasis head
+is now available through `predict-6b`. On the protein-held-out Megascale-D
+double-mutant test it reaches Spearman `0.623` and MAE `0.741`, versus `0.615`
+and `1.142` for the 6B additive baseline and `0.545` and `0.851` for the
+existing 600M learned estimate. This supports using the 6B model to prioritize
+combinations after singles are selected, but it is not direct evidence for
+GPCR double mutants; larger combinations are also outside its training domain.
+
 ## Rejected candidates
 
 | Candidate | Selection/evaluation evidence | Decision |
@@ -170,12 +178,13 @@ Use the stored ESM-C mutant-minus-WT residue deltas and compact production heads
 for high-throughput screening. Rank the fast first pass with the 80% MPTherm /
 20% masked consensus. When GPU time permits, run the separate full-6B command
 as a second-stage reranker and retain both the original and reranked positions
-in the output. For a conservative experimental set, require general-ddG support
-for some candidates and deliberately include a smaller number of high-consensus
-disagreements. Test several diverse substitutions rather than relying on one
-top prediction. The remaining accuracy bottleneck is substantially larger,
-new-receptor GPCR stability data, not another adapter fitted to the present
-small benchmarks.
+in the output. Use the full-6B `predict-6b` command for proposed double mutants,
+keeping the additive and epistasis components visible. For a conservative
+experimental set, require general-ddG support for some candidates and
+deliberately include a smaller number of high-consensus disagreements. Test
+several diverse substitutions rather than relying on one top prediction. The
+remaining accuracy bottleneck is substantially larger, new-receptor GPCR
+stability data, not another adapter fitted to the present small benchmarks.
 
 ## External data sources
 

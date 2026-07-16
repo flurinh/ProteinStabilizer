@@ -4,10 +4,12 @@ ProteinStabilizer ranks amino-acid substitutions for stability, with a
 GPCR-specific calibration layer. The fast first pass uses a frozen ESM-C 600M
 encoder and compact heads over contextual residue-embedding differences. An
 optional full ESM-C 6B second pass now supplies a stronger general-ddG estimate
-and conservatively reranks GPCR candidates. Saturation screening also reads the
-encoder's masked amino-acid probabilities as a small sequence-compatibility
-prior. The current pipeline is intentionally optimized for application and
-screening, rather than for introducing a new protein-stability architecture.
+and conservatively reranks GPCR candidates. A separate 6B epistasis head scores
+double mutants and accepts larger mutation sets as an explicit extrapolation.
+Saturation screening also reads the encoder's masked amino-acid probabilities
+as a small sequence-compatibility prior. The current pipeline is intentionally
+optimized for application and screening, rather than for introducing a new
+protein-stability architecture.
 
 Solubility is deliberately not part of the current model.
 
@@ -65,7 +67,9 @@ dimensional ESM-C 6B vectors and a newly trained five-member Megascale ensemble.
 It does not mix 600M and 6B embeddings or heads. The application output keeps
 the 6B general ddG, ProTherm-adapted ddG, and MPTherm delta-Tm as separate
 columns. Its bounded GPCR rerank is 60% 600M MPTherm percentile, 15% 600M
-masked-marginal percentile, and 25% 6B MPTherm percentile.
+masked-marginal percentile, and 25% 6B MPTherm percentile. For combinations,
+the 6B constituent ensemble predictions are summed and one permutation-invariant
+6B epistasis correction is applied.
 
 Two additional membrane-specific transfer experiments are retained as audited
 candidates but fail their deployment gates: an mCSM-membrane equilibrium-ddG
@@ -156,8 +160,8 @@ The current deterministic run used seed `20260715`:
 | Evaluation | Spearman | Pearson | MAE | RMSE |
 | --- | ---: | ---: | ---: | ---: |
 | Single-mutant protein holdout | 0.777 | 0.782 | 0.556 | 0.755 |
-| Double-mutant learned estimate | 0.545 | 0.511 | 0.851 | 1.144 |
-| Double-mutant additive baseline | 0.601 | 0.562 | 1.135 | 1.441 |
+| ESM-C 600M double-mutant learned estimate | 0.545 | 0.511 | 0.851 | 1.144 |
+| ESM-C 600M double-mutant additive baseline | 0.601 | 0.562 | 1.135 | 1.441 |
 | ProTherm experimental ddG holdout | 0.409 | 0.292 | 1.168 | 1.993 |
 | MPTherm delta-Tm holdout | 0.222 | 0.208 | 3.652 | 4.826 |
 | Alpha-helical membrane ddG test, frozen ESM-C ensemble | 0.095 | 0.174 | 0.961 | 1.208 |
@@ -167,11 +171,15 @@ The current deterministic run used seed `20260715`:
 | GPCR-tm delta-Tm test, official ThermoMPNN | 0.126 | -0.016 | 3.805 | 4.542 |
 | GPCR-tm delta-Tm test, rejected structure/model blend | 0.385 | 0.426 | 3.602 | 4.221 |
 | ESM-C 6B single-mutant protein holdout | 0.818 | 0.816 | 0.516 | 0.705 |
+| ESM-C 6B double-mutant learned estimate | 0.623 | 0.592 | 0.741 | 0.983 |
+| ESM-C 6B double-mutant additive baseline | 0.615 | 0.586 | 1.142 | 1.468 |
 | ESM-C 6B ProTherm protein holdout | 0.481 | 0.348 | 1.133 | 1.979 |
 | ESM-C 6B MPTherm protein holdout | 0.274 | 0.278 | 3.517 | 4.719 |
 
-The epistasis model improves absolute error but the additive score ranks the
-double-mutant test set better. Both values are returned at inference.
+For 600M, the learned epistasis correction improves absolute error but reduces
+test-set rank correlation. With 6B, it improves both rank correlation and
+absolute error over the corresponding additive baseline. In both paths the
+constituent additive value and learned correction are returned separately.
 
 On the 26-row, mutation-site-held-out GPCR workbook test, the calibration
 achieves macro within-assay Spearman `0.601` and MAE `24.34` percentage points.
@@ -209,6 +217,22 @@ For a double mutant the output contains:
 - the corrected total ddG;
 - additive WT-context masked log odds; and
 - joint-context masked pseudo-log-likelihood and interaction log odds.
+
+Run the same combination directly with the full 6B checkpoints in its separate
+environment:
+
+```bash
+.venv-esmc6b/bin/protein-stabilizer predict-6b \
+  --fasta target_gpcr.fasta \
+  --mutations L72A,A73V
+```
+
+This uses only 6B embeddings and heads. On the protein-disjoint Megascale-D
+double-mutant test, its deployed learned estimate reaches Spearman `0.623`,
+MAE `0.741`, and RMSE `0.983`, versus Spearman `0.615`, MAE `1.142`, and RMSE
+`1.468` for the 6B additive baseline. These short soluble-protein measurements
+support the interaction model but are not direct evidence of GPCR-combination
+accuracy.
 
 Screen all 19 substitutions at selected sites, batching sequences according to
 the ESM-C token budget:
@@ -285,11 +309,13 @@ the top 50. Exact selection, provenance, and caveats are in
 ## ESM-C 6B status
 
 Full ESM-C 6B retraining is complete. Its separate caches contain 136,466
-Megascale sequences plus 7,502 focused transfer/GPCR sequences, and its compact
-application checkpoints are under `checkpoints/esmc_6b/`. The generic
-single-mutant holdout improves from Spearman `0.777` and MAE `0.556` with 600M
-to `0.818` and `0.516` with 6B. ProTherm and MPTherm protein-held-out
-correlations also improve.
+Megascale single-mutant sequences, 125,823 Megascale double-mutant sequences,
+and 7,502 focused transfer/GPCR sequences. Its compact application checkpoints
+are under `checkpoints/esmc_6b/`. The generic single-mutant holdout improves
+from Spearman `0.777` and MAE `0.556` with 600M to `0.818` and `0.516` with 6B.
+The deployed double-mutant estimate improves from Spearman `0.545` and MAE
+`0.851` with 600M to `0.623` and `0.741` with 6B. ProTherm and MPTherm
+protein-held-out correlations also improve.
 
 A 6B-only GPCR rank did not preserve the small official GPCR-tm receptor test,
 so 6B does not replace the fast production rank. Instead it is an optional

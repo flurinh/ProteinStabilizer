@@ -19,7 +19,7 @@ from protein_stabilizer.data import (
     sequence_hash,
     transfer_rows,
 )
-from protein_stabilizer.cli import _parse_positions
+from protein_stabilizer.cli import _parse_positions, build_parser
 from protein_stabilizer.embeddings import (
     ESMCEmbedder,
     ESMCProvenance,
@@ -311,6 +311,21 @@ def test_position_expression_parser() -> None:
     assert _parse_positions(None) is None
     with pytest.raises(ValueError, match="range"):
         _parse_positions("5-2")
+
+
+def test_esmc6b_multiple_mutation_cli_contract() -> None:
+    args = build_parser().parse_args(
+        [
+            "predict-6b",
+            "--sequence",
+            "ACDE",
+            "--mutations",
+            "A1C,E4W",
+        ]
+    )
+    assert args.command == "predict-6b"
+    assert args.model == "biohub/ESMC-6B"
+    assert args.mutations == "A1C,E4W"
 
 
 def test_long_transfer_sequence_is_cropped_and_remapped() -> None:

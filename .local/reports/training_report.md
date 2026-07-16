@@ -8,10 +8,12 @@ Seed: `20260715`
 The application now has two deliberately separate inference stages:
 
 - ESM-C 600M remains the fast default GPCR saturation screen and the only
-  trained epistasis path for multiple substitutions.
+  practical first-pass model.
 - A full ESM-C 6B single-mutant ensemble supplies a stronger general ddG,
   improved ProTherm/MPTherm transfer heads, and an optional bounded GPCR
   reranker.
+- A separate full-6B permutation-invariant head now supplies the preferred
+  learned correction for double mutants.
 
 Solubility and structure branches remain out of scope because their audited
 transfer candidates did not improve new-receptor stability ranking.
@@ -24,11 +26,14 @@ transfer candidates did not improve new-receptor stability ranking.
 - Checkpoint-index SHA-256:
   `6846456e20e6ee2c37461f7bfc21d316d69bdaf165b925691afcb39e583244da`.
 - Megascale cache: 136,466 sequences, 143,924 sites, 766.68 seconds.
+- Megascale double cache: 125,823 sequences, 240,431 sites, 697.84 seconds.
 - Focused transfer/GPCR cache: 7,502 sequences, 11,089 sites, 242.24 seconds.
 - Megascale request manifest:
   `e69cd477a7113dc5447c354cbf0dcff8cc1b5f6f9ed2f4c8b36fef7f1bffb99f`.
 - Focused request manifest:
   `f812e6e4e8e43c3131f836806cdef0491e7b573263b920cbb5be148fce72de37`.
+- Megascale double request manifest:
+  `b6127258998b8599a4db1e16609100c299938294b25defe9c2050c91dee79007`.
 
 ## Held-out results
 
@@ -40,6 +45,12 @@ transfer candidates did not improve new-receptor stability ranking.
 
 The 6B ProTherm head also reaches Spearman `0.571`, MAE `0.968`, and RMSE
 `1.368` on external S669.
+
+On the 18,574-row protein-held-out Megascale-D double-mutant test, the deployed
+6B learned estimate reaches Spearman `0.623`, Pearson `0.592`, MAE `0.741`, and
+RMSE `0.983`. Its corresponding 6B additive baseline reaches Spearman `0.615`,
+MAE `1.142`, and RMSE `1.468`. The existing 600M learned estimate reaches
+Spearman `0.545`, MAE `0.851`, and RMSE `1.144`.
 
 ## GPCR application decision
 
@@ -80,12 +91,15 @@ On the independent C5aR scan, the optional rank improves AUC from `0.678` to
   `ef241664fe8a2b28d40114e6f747751bf8f2ee10fdc29f7b816c017e8dc57b49`
 - `mptherm_dtm_head.pt`:
   `90fa914103cb94e08bc2cd968e90f05fa97c6516084ac157511bf95015b7867d`
+- `multi_head.pt`:
+  `1a94cb8ed93d0891614007092895498dd5a6ce18b17670972e535ddb17760b18`
 
 ## Interpretation
 
 ESM-C 6B is a material generic stability improvement and is ready for
 single-mutant application. It is not a standalone GPCR solution: the 6B-only
 rank failed the small receptor test, so the validated 600M signal stays in the
-optional blend. Multiple-mutant 6B epistasis remains future work; current
-double/multiple predictions continue to report the 600M additive and learned
-epistasis components separately.
+optional blend. Full-6B multiple-mutant inference is now available and reports
+the ensemble additive and learned epistasis components separately. Its evidence
+is protein-disjoint Megascale-D double-mutant performance, not direct GPCR
+combination data; sets larger than two mutations remain extrapolations.
