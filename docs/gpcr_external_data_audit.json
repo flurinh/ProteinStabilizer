@@ -47,6 +47,40 @@
       "gpcr_tm_test_mae": 3.9092,
       "decision": "rejected",
       "caveat": "The source reports 283 mutants from Val35 through Leu311, but that explicit inclusive canonical interval contains 277 positions. No undocumented rows were synthesized."
+    },
+    "muk_figure_s2_tm_scan": {
+      "source_doi": "10.1016/j.bpj.2019.10.023",
+      "source_supplement_sha256": "e93e12e263d77125108e2e8f16ae10f9c3c68586cff01e7208ef69db6bf9e6d8",
+      "published_matrix_rows": 1231,
+      "published_thermostable_rows": 256,
+      "published_nonthermostable_rows": 975,
+      "reconstructed_receptors": 4,
+      "reconstructed_tm_rows": 854,
+      "reconstructed_positive_rows": 82,
+      "reconstructed_negative_rows": 772,
+      "excluded_ambiguous_common_generic_positions": 10,
+      "reconstructed_csv_sha256": "9db9307f3e19168c11b5cb591933b67b12c93b1e7be9413fb63fdd885b6e7d9f",
+      "request_manifest_sha256": "bf009d79a820fb681204455dc378349b0e4836a32d8c79fbad9744649a7f576d",
+      "raw_delta_head": {
+        "features": "PCA-32 of raw ESM-C mutant-minus-WT residue delta",
+        "model": "balanced logistic regression",
+        "leave_one_receptor_out_min_auc": 0.4872,
+        "leave_one_receptor_out_macro_auc": 0.5239,
+        "c5ar_auc": 0.5701,
+        "c5ar_positives_in_top50": 6
+      },
+      "mptherm_transfer_latent_head": {
+        "features": "PCA-64 of MPTherm-pretrained latent coordinates and compact transfer scores",
+        "model": "balanced logistic regression",
+        "leave_one_receptor_out_min_auc": 0.5111,
+        "leave_one_receptor_out_macro_auc": 0.5335,
+        "c5ar_auc": 0.5384,
+        "c5ar_positives_in_top50": 6
+      },
+      "mptherm_baseline_auc_on_c5ar": 0.6605,
+      "mptherm_baseline_positives_in_top50": 12,
+      "decision": "rejected",
+      "caveat": "Figure S2 encodes receptor-specific transmembrane thermostabilizing positions, not the complete per-mutant score table. Receptor-colored cells were treated as positives, non-gray cells assigned to no or another receptor as negatives, and the ten gray shared cells were excluded because their receptor attribution is not recoverable from the figure."
     }
   },
   "production_change": "none"

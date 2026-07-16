@@ -37,6 +37,7 @@ the two test receptors having more than one observation is `0.800`.
 | GPCRdb crystallization-construct positives | A delta-only contrastive head separated held-out construct receptors well (AUC `0.899`, top-1 recovery `0.685`), but official GPCR-tm test Spearman was only `0.126` and within-receptor macro Spearman was `0.000`. | Reject. Construct mutations encode receptor state, ligand, and crystallization-design choices rather than a transferable continuous stability endpoint. |
 | ProteinGym membrane expression/abundance transfer | Nine membrane assays gave paper-held-out macro Spearman `0.404` for the best compact head. On GPCR-tm development, adding it reduced leave-one-receptor-out macro Spearman from `0.181` to `0.164`; its standalone official-test Spearman was `0.014`. | Reject. Expression, abundance, surface display, and membrane insertion are useful phenotypes but are not interchangeable with GPCR thermal stability. |
 | C5aR experimental Ala/Leu scan | The published scan contributes 34 explicit thermostable substitutions on an otherwise stated exhaustive receptor scan. A delta classifier selected on GPCR-tm development raised leave-one-receptor-out macro Spearman from `0.181` to `0.316`, but official-test Spearman fell to `0.196`, within-receptor macro Spearman fell from `0.800` to `0.600`, and MAE increased from `3.588` to `3.909`. | Reject the single-receptor classifier. Its perfect training separation was overfit and did not transfer consistently. |
+| Muk et al. Figure S2 GPCR TM scan | The vector supplement yielded 854 conservative labels after excluding ten gray shared positions: 82 receptor-specific positives and 772 negatives across A2A, β1AR, NTSR1, and AT1R. A raw-delta head reached leave-one-receptor-out macro AUC `0.524`; an MPTherm-pretrained latent head reached `0.534`. On blind C5aR they recovered only 6 positives in the top 50 (AUC `0.570` and `0.538`), versus 12 and AUC `0.660` for the unchanged MPTherm score. | Reject. The recoverable TM labels are too weak and incomplete to improve new-receptor screening. |
 
 ## External-data audit
 
@@ -77,6 +78,19 @@ not present in the published supplement. The article states that Christopher
 Tate provided those measurements. It should only be added if the original
 table can be obtained with receptor, mutation, assay state, measured score,
 and tested-negative rows intact.
+
+The vector artwork in Supplementary Figure S2 does preserve a conservative
+subset of those labels. Receptor-colored cells identify receptor-specific
+thermostabilizing TM positions; uncolored or differently colored non-gray
+positions provide negatives for the receptor, while the ten gray shared
+positions cannot be assigned safely and were omitted. GPCRdb generic-number
+mappings produced 854 Ala/Leu substitutions across four receptors (82 positive,
+772 negative). Their ESM-C request manifest was
+`bf009d79a820fb681204455dc378349b0e4836a32d8c79fbad9744649a7f576d`.
+Neither a raw-delta head nor a head built on MPTherm-pretrained latent
+coordinates survived whole-receptor transfer or the independent C5aR gate, so
+the reconstructed rows are audit evidence rather than production training
+data.
 
 ## ThermoMPNN provenance
 
