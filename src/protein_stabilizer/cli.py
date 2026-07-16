@@ -9,6 +9,7 @@ from typing import Sequence
 
 from .data import DatasetPaths, all_embedding_requests
 from .embeddings import build_embedding_cache
+from .esmc6b import DEFAULT_ESMC6B_MODEL, rerank_esmc6b_screen
 from .features import build_feature_files
 from .predictor import predict_mutations, screen_single_mutants
 from .training import (
@@ -23,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CACHE = ROOT / "embeddings/esmc_600m/residue_cache.h5"
 DEFAULT_FEATURES = ROOT / "artifacts/features"
 DEFAULT_CHECKPOINTS = ROOT / "checkpoints/esmc_600m"
+DEFAULT_ESMC6B_CHECKPOINTS = ROOT / "checkpoints/esmc_6b"
 
 
 def _json(value: object) -> None:
@@ -171,6 +173,21 @@ def command_screen(args: argparse.Namespace) -> dict[str, object]:
     )
 
 
+def command_rerank_esmc6b(args: argparse.Namespace) -> dict[str, object]:
+    sequence = args.sequence if args.sequence is not None else _read_fasta(args.fasta)
+    return rerank_esmc6b_screen(
+        sequence,
+        args.input,
+        args.output,
+        args.checkpoints,
+        model_name_or_path=args.model,
+        device=args.device,
+        max_tokens=args.max_tokens,
+        max_batch_size=args.max_batch_size,
+        top=args.top,
+    )
+
+
 def _common_pipeline_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
@@ -211,13 +228,34 @@ def build_parser() -> argparse.ArgumentParser:
     screen.add_argument("--device", default="cuda")
     screen.add_argument("--max-tokens", type=int, default=8192)
     screen.add_argument("--max-batch-size", type=int, default=128)
+    rerank = subparsers.add_parser("rerank-6b")
+    rerank.add_argument("--sequence")
+    rerank.add_argument("--fasta", type=Path)
+    rerank.add_argument("--input", type=Path, required=True)
+    rerank.add_argument(
+        "--output",
+        type=Path,
+        default=ROOT / "artifacts/screen_esmc6b.csv",
+    )
+    rerank.add_argument("--top", type=int, default=50)
+    rerank.add_argument(
+        "--checkpoints",
+        type=Path,
+        default=DEFAULT_ESMC6B_CHECKPOINTS,
+    )
+    rerank.add_argument("--model", default=DEFAULT_ESMC6B_MODEL)
+    rerank.add_argument("--device", default="cuda")
+    rerank.add_argument("--max-tokens", type=int, default=4096)
+    rerank.add_argument("--max-batch-size", type=int, default=16)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command in {"predict", "screen"} and (args.sequence is None) == (
+    if args.command in {"predict", "screen", "rerank-6b"} and (
+        args.sequence is None
+    ) == (
         args.fasta is None
     ):
         parser.error(f"{args.command} requires exactly one of --sequence or --fasta")
@@ -228,6 +266,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "run": command_run,
         "predict": command_predict,
         "screen": command_screen,
+        "rerank-6b": command_rerank_esmc6b,
     }
     _json(commands[args.command](args))
 

@@ -1,77 +1,91 @@
 # ProteinStabilizer training report
 
-Date: 2026-07-15
+Date: 2026-07-16
 Seed: `20260715`
-
-Runtime: Python 3.13, PyTorch 2.10.0+cu128, ESM 3.2.1,
-scikit-learn 1.8.0, h5py 3.15.1.
 
 ## Outcome
 
-A frozen ESM-C 600M encoder was used to generate a reusable mutation-site
-embedding cache. Compact trainable heads now support single substitutions,
-additive-plus-epistatic double substitutions, GPCR-specific ranking, direct
-prediction, and saturation screening.
+The application now has two deliberately separate inference stages:
 
-## Data and artifacts
+- ESM-C 600M remains the fast default GPCR saturation screen and the only
+  trained epistasis path for multiple substitutions.
+- A full ESM-C 6B single-mutant ensemble supplies a stronger general ddG,
+  improved ProTherm/MPTherm transfer heads, and an optional bounded GPCR
+  reranker.
 
-- ESM-C sequences: 253,731 unique sequences.
-- Cached contextual residue sites: 375,487.
-- Embedding cache size: 910,568,366 bytes.
-- Embedding runtime: 249.1 seconds on NVIDIA RTX 5090.
-- ESM-C checkpoint SHA-256:
-  `8ef856e1a237ee3f995442df997a962e70057faadecf38fc0c8561bd3c2f4324`.
-- Embedding request manifest SHA-256:
-  `e28d4238990c7a1b77692eb4c6f9e6828f02a823a5e9656ca2a6097b7e134f88`.
-- Completed embedding cache SHA-256:
-  `867416eddb7b8cd256f8a68b128fdc230ee03eca902cf3412a637e1b3a0d302a`.
+Solubility and structure branches remain out of scope because their audited
+transfer candidates did not improve new-receptor stability ranking.
 
-Training rows:
+## ESM-C 6B artifacts
 
-- single train/validation source: 116,688 rows, 116 proteins;
-- single held-out test: 19,645 rows, 19 proteins;
-- double train/validation/test: 85,253 / 10,282 / 18,574 rows;
-- double rows with measured additive/epistasis targets:
-  78,817 / 9,704 / 16,923;
-- GPCR fine-tuning: 133 assay rows, 96 unique mutation sites;
-- GPCR train/validation/test: 58 / 19 / 19 sites.
+- Runtime: Python 3.12, Transformers 4.57.6, ESM 3.3.0,
+  PyTorch 2.9.1+cu128.
+- Encoder: `biohub/ESMC-6B`, 2,560-dimensional final-layer residue vectors.
+- Checkpoint-index SHA-256:
+  `6846456e20e6ee2c37461f7bfc21d316d69bdaf165b925691afcb39e583244da`.
+- Megascale cache: 136,466 sequences, 143,924 sites, 766.68 seconds.
+- Focused transfer/GPCR cache: 7,502 sequences, 11,089 sites, 242.24 seconds.
+- Megascale request manifest:
+  `e69cd477a7113dc5447c354cbf0dcff8cc1b5f6f9ed2f4c8b36fef7f1bffb99f`.
+- Focused request manifest:
+  `f812e6e4e8e43c3131f836806cdef0491e7b573263b920cbb5be148fce72de37`.
 
 ## Held-out results
 
-Single-mutant thermodynamic test:
+| Evaluation | 600M Spearman | 6B Spearman | 600M MAE | 6B MAE |
+| --- | ---: | ---: | ---: | ---: |
+| Megascale single protein holdout | 0.777 | 0.818 | 0.556 | 0.516 |
+| ProTherm protein holdout | 0.409 | 0.481 | 1.168 | 1.133 |
+| MPTherm protein holdout | 0.222 | 0.274 | 3.652 | 3.517 |
 
-- Spearman: 0.7539
-- Pearson: 0.7624
-- MAE: 0.5823
-- RMSE: 0.7857
+The 6B ProTherm head also reaches Spearman `0.571`, MAE `0.968`, and RMSE
+`1.368` on external S669.
 
-Double-mutant thermodynamic test:
+## GPCR application decision
 
-- learned total: Spearman 0.4924, Pearson 0.4515, MAE 0.9066, RMSE 1.2197;
-- additive baseline: Spearman 0.5600, Pearson 0.5178, MAE 1.1924,
-  RMSE 1.5088;
-- direct epistasis target: Spearman 0.4944, Pearson 0.4966, MAE 0.6284,
-  RMSE 0.8045.
+The fast default rank remains:
 
-GPCR assay-balanced grouped test:
+```text
+0.80 * 600M MPTherm percentile
++ 0.20 * 600M masked-marginal percentile
+```
 
-- 26 assay rows from 19 held-out mutation sites;
-- macro within-assay Spearman: 0.370;
-- uncalibrated pretrained macro within-assay Spearman: -0.237.
+The optional second-stage 6B rank is:
+
+```text
+0.60 * 600M MPTherm percentile
++ 0.15 * 600M masked-marginal percentile
++ 0.25 * 6B MPTherm percentile
+```
+
+The 6B share was selected only inside a conservative `0.00`–`0.25`
+development grid. GPCR-tm development macro within-receptor Spearman improves
+from `0.086` to `0.117`; four receptors improve, six tie, and none worsen. The
+two evaluable official-test receptors improve from macro `0.800` to `1.000`,
+but the 12-row set has been consulted by earlier stages and is confirmatory,
+not untouched.
+
+On the independent C5aR scan, the optional rank improves AUC from `0.678` to
+`0.696`, average precision from `0.255` to `0.317`, and positives in the top
+50 from 13 to 15. The paired-bootstrap 95% interval for the AP gain is
+`+0.005` to `+0.116`.
 
 ## Checkpoint integrity
 
+- `single_ensemble.pt`:
+  `e227ed23a215f7355a705ab51a1cd3c81ae0b44cfdb4fd07154d956b8cf518fe`
 - `single_head.pt`:
-  `79b37482e558aeb376436efa7de3cb578181db43f0a3038b51fe113de8d73fc8`
-- `multi_head.pt`:
-  `361bc844d107dc56f84938d614d1ff0aeacd843a73c63abd7ffa6839e881170c`
-- `gpcr_calibration.joblib`:
-  `db676afc0c73ebad26e7256cbd6a59795e26905fe1d327cf5438773fff266df8`
+  `67a34284e98aa20cb1f595645f3bf11f7c9a4b04a304fea1a4fa1c1c4dd6f017`
+- `protherm_ddg_head.pt`:
+  `ef241664fe8a2b28d40114e6f747751bf8f2ee10fdc29f7b816c017e8dc57b49`
+- `mptherm_dtm_head.pt`:
+  `90fa914103cb94e08bc2cd968e90f05fa97c6516084ac157511bf95015b7867d`
 
 ## Interpretation
 
-The single-mutant model is suitable for candidate prioritization. For multiple
-mutations, the learned epistasis term improves calibrated error but reduces
-held-out rank correlation relative to simple addition, so applications should
-inspect both. GPCR calibration is useful as a secondary ranking prior but is
-not yet strong enough to replace the general score or experimental validation.
+ESM-C 6B is a material generic stability improvement and is ready for
+single-mutant application. It is not a standalone GPCR solution: the 6B-only
+rank failed the small receptor test, so the validated 600M signal stays in the
+optional blend. Multiple-mutant 6B epistasis remains future work; current
+double/multiple predictions continue to report the 600M additive and learned
+epistasis components separately.

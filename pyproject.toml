@@ -20,6 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 esmc = ["esm==3.2.1.post1"]
+esmc6b = ["transformers==4.57.6"]
 test = ["pytest>=8"]
 
 [project.scripts]

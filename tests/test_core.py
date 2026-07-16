@@ -41,6 +41,7 @@ from protein_stabilizer.predictor import (
     _masked_marginal_mutation_scores,
     _percentile_ranks,
     _thermostability_consensus,
+    dual_backbone_thermostability_consensus,
 )
 from protein_stabilizer.transfer_data import _pdb_chain_sequence, mutation_window
 
@@ -252,6 +253,31 @@ def test_thermostability_consensus_is_eighty_twenty_rank_blend() -> None:
     np.testing.assert_allclose(
         _thermostability_consensus(mptherm, masked), expected
     )
+
+
+def test_dual_backbone_consensus_uses_selected_gpcr_rank_blend() -> None:
+    mptherm_600m = np.asarray([0.0, 2.0, 1.0], dtype=np.float32)
+    masked_600m = np.asarray([3.0, 1.0, 2.0], dtype=np.float32)
+    mptherm_6b = np.asarray([1.0, 0.0, 3.0], dtype=np.float32)
+    expected = (
+        0.60 * _percentile_ranks(mptherm_600m)
+        + 0.15 * _percentile_ranks(masked_600m)
+        + 0.25 * _percentile_ranks(mptherm_6b)
+    )
+    np.testing.assert_allclose(
+        dual_backbone_thermostability_consensus(
+            mptherm_600m,
+            masked_600m,
+            mptherm_6b,
+        ),
+        expected,
+    )
+    with pytest.raises(ValueError, match="equal shape"):
+        dual_backbone_thermostability_consensus(
+            mptherm_600m,
+            masked_600m[:2],
+            mptherm_6b,
+        )
 
 
 def test_gpcr_split_holds_out_complete_sites(tmp_path: Path) -> None:

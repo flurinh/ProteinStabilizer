@@ -32,6 +32,12 @@ THERMOSTABILITY_SCREENING_WEIGHTS = {
     "masked_marginal": 0.20,
 }
 
+DUAL_BACKBONE_SCREENING_WEIGHTS = {
+    "esmc_600m_mptherm_delta_tm": 0.60,
+    "esmc_600m_masked_marginal": 0.15,
+    "esmc_6b_mptherm_delta_tm": 0.25,
+}
+
 
 def _percentile_ranks(values: np.ndarray) -> np.ndarray:
     values = np.asarray(values, dtype=np.float64)
@@ -86,6 +92,30 @@ def _thermostability_consensus(
         * _percentile_ranks(mptherm_delta_tm)
         + THERMOSTABILITY_SCREENING_WEIGHTS["masked_marginal"]
         * _percentile_ranks(masked_marginal)
+    )
+
+
+def dual_backbone_thermostability_consensus(
+    esmc_600m_mptherm_delta_tm: np.ndarray,
+    esmc_600m_masked_marginal: np.ndarray,
+    esmc_6b_mptherm_delta_tm: np.ndarray,
+) -> np.ndarray:
+    """Rank single-mutant GPCR screens with the selected 600M/6B blend."""
+
+    arrays = (
+        np.asarray(esmc_600m_mptherm_delta_tm),
+        np.asarray(esmc_600m_masked_marginal),
+        np.asarray(esmc_6b_mptherm_delta_tm),
+    )
+    if arrays[0].shape != arrays[1].shape or arrays[0].shape != arrays[2].shape:
+        raise ValueError("dual-backbone consensus arrays must have equal shape")
+    return (
+        DUAL_BACKBONE_SCREENING_WEIGHTS["esmc_600m_mptherm_delta_tm"]
+        * _percentile_ranks(arrays[0])
+        + DUAL_BACKBONE_SCREENING_WEIGHTS["esmc_600m_masked_marginal"]
+        * _percentile_ranks(arrays[1])
+        + DUAL_BACKBONE_SCREENING_WEIGHTS["esmc_6b_mptherm_delta_tm"]
+        * _percentile_ranks(arrays[2])
     )
 
 

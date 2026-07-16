@@ -32,11 +32,12 @@ masked once and all canonical substitutions are scored as
 `log P(mutant | masked WT context) - log P(WT | masked WT context)`.
 
 The selected scan consensus is 80% within-scan MPTherm delta-Tm percentile and
-20% within-scan masked-marginal percentile. On GPCR-tm development, Spearman
-after pooling the within-receptor percentiles increased from `0.093` to `0.103`;
-the within-receptor macro Spearman was effectively unchanged (`0.087` to
-`0.086`). On the official test, the two multi-row receptors retained macro
-Spearman `0.800`. On the independent 277-position C5aR scan, AUC increased from
+20% within-scan masked-marginal percentile. After correcting an audit that had
+computed development percentiles in receptor domains containing test rows,
+GPCR-tm development pooled Spearman increases from `0.055` to `0.059`; the
+within-receptor macro Spearman remains effectively unchanged (`0.087` to
+`0.086`). On the official test, the two multi-row receptors retain macro
+Spearman `0.800`. On the independent 277-position C5aR scan, AUC increases from
 `0.660` to `0.678`, average precision from `0.245` to `0.255`, and thermostable
 substitutions in the top 50 from 12 to 13.
 
@@ -45,6 +46,40 @@ masked score is not a universal continuous stability predictor. The
 assay-specific GPCR workbook calibration is still reported, but it is excluded
 from the primary consensus. Exact metrics and provenance are stored in
 [`esmc_masked_marginal_audit.json`](esmc_masked_marginal_audit.json).
+
+## Optional full-6B rerank
+
+The full ESM-C 6B Megascale ensemble improves the generic single-mutant
+protein-holdout result from Spearman `0.777` and MAE `0.556` to `0.818` and
+`0.516`. Its ProTherm and MPTherm transfer heads also improve their
+protein-disjoint holdouts to Spearman `0.481` and `0.274`, respectively.
+
+A 6B-only GPCR rank did not preserve the official GPCR-tm receptor ranking.
+The accepted application path therefore retains the validated 600M score and
+limits 6B to a 25% second-stage prior:
+
+```text
+0.60 * 600M MPTherm percentile
++ 0.15 * 600M masked-marginal percentile
++ 0.25 * 6B MPTherm percentile
+```
+
+The 6B weight was selected from the bounded `0.00` to `0.25` development grid;
+development and test percentiles were computed in separate within-receptor
+domains. Development macro within-receptor Spearman increased from `0.086` to
+`0.117`; four receptors improved and six tied. The two evaluable official-test
+receptors increased from macro `0.800` to `1.000`, although this 12-row set has
+been consulted by earlier project stages and is no longer an untouched
+benchmark. On the independent C5aR scan, AUC increased from `0.678` to `0.696`,
+average precision from `0.255` to `0.317`, and positives in the top 50 from 13
+to 15. A paired stratified bootstrap placed the AP improvement at `+0.062`
+with a 95% interval of `+0.005` to `+0.116`.
+
+This is an optional slower reranker, not a replacement for the fast 600M first
+pass. It also reports the materially stronger 6B general and ProTherm-adapted
+ddG values as separate diagnostics. Exact metrics, cache manifests, checkpoint
+hashes, and limitations are in
+[`esmc6b_full_transfer_audit.json`](esmc6b_full_transfer_audit.json).
 
 ## Rejected candidates
 
@@ -61,7 +96,7 @@ from the primary consensus. Exact metrics and provenance are stored in
 | ProteinGym membrane expression/abundance transfer | Nine membrane assays gave paper-held-out macro Spearman `0.404` for the best compact head. On GPCR-tm development, adding it reduced leave-one-receptor-out macro Spearman from `0.181` to `0.164`; its standalone official-test Spearman was `0.014`. | Reject. Expression, abundance, surface display, and membrane insertion are useful phenotypes but are not interchangeable with GPCR thermal stability. |
 | C5aR experimental Ala/Leu scan | The published scan contributes 34 explicit thermostable substitutions on an otherwise stated exhaustive receptor scan. A delta classifier selected on GPCR-tm development raised leave-one-receptor-out macro Spearman from `0.181` to `0.316`, but official-test Spearman fell to `0.196`, within-receptor macro Spearman fell from `0.800` to `0.600`, and MAE increased from `3.588` to `3.909`. | Reject the single-receptor classifier. Its perfect training separation was overfit and did not transfer consistently. |
 | Muk et al. Figure S2 GPCR TM scan | The vector supplement yielded 854 conservative labels after excluding ten gray shared positions: 82 receptor-specific positives and 772 negatives across A2A, β1AR, NTSR1, and AT1R. A raw-delta head reached leave-one-receptor-out macro AUC `0.524`; an MPTherm-pretrained latent head reached `0.534`. On blind C5aR they recovered only 6 positives in the top 50 (AUC `0.570` and `0.538`), versus 12 and AUC `0.660` for the unchanged MPTherm score. | Reject. The recoverable TM labels are too weak and incomplete to improve new-receptor screening. |
-| ESM-C 6B masked marginal | The public 6B checkpoint scored all 451 unique sites in 15 seconds on an RTX 5090. It improved the independent C5aR scan to AUC `0.698`, average precision `0.318`, and 16 positives in the top 50, while preserving official-test macro Spearman `0.800`. Its receptor-held-out development macro Spearman was `-0.036`, however, and a 5% runtime blend gave only a marginal development gain. | Keep as evidence for a future full 6B retraining, not as a second production runtime. |
+| ESM-C 6B masked marginal alone | The public 6B checkpoint scored all 451 unique sites in 15 seconds on an RTX 5090. It improved the independent C5aR scan to AUC `0.698`, average precision `0.318`, and 16 positives in the top 50, while preserving official-test macro Spearman `0.800`. Its receptor-held-out development macro Spearman was `-0.036`, however. | Do not use the masked-only score. Full 6B delta-head retraining is now complete and is used only through the bounded optional reranker above. |
 | Official DDGemb predictions | DDGemb reached development macro within-receptor Spearman `0.272`, but reversed to `-0.600` on the official GPCR-tm test. On C5aR it reached AUC `0.627`, average precision `0.185`, and 12 positives in the top 50. | Reject the score and the public-server dependency. |
 | DDGemb S2450 fine-tuning | A five-fold compact delta-head ensemble improved the homology-reduced S669 benchmark from Spearman `0.531` to `0.541` and RMSE `1.413` to `1.404`. Its receptor-held-out GPCR-tm development macro Spearman was `-0.062`. | Keep the downloaded benchmark and embeddings, but do not add another runtime head for a small generic gain that does not transfer to GPCRs. |
 
@@ -132,16 +167,15 @@ Native UniProt residue numbering and WT identities matched all 97 GPCR-tm rows.
 ## Current application decision
 
 Use the stored ESM-C mutant-minus-WT residue deltas and compact production heads
-for high-throughput screening. Rank primarily with the 80% MPTherm / 20% masked
-consensus, while retaining general ddG and the GPCR workbook score as separate
-diagnostics. For a conservative experimental set, require general-ddG support
+for high-throughput screening. Rank the fast first pass with the 80% MPTherm /
+20% masked consensus. When GPU time permits, run the separate full-6B command
+as a second-stage reranker and retain both the original and reranked positions
+in the output. For a conservative experimental set, require general-ddG support
 for some candidates and deliberately include a smaller number of high-consensus
 disagreements. Test several diverse substitutions rather than relying on one
-top prediction. A zero-shot ESM-C 6B masked score is promising on C5aR but does
-not pass receptor-held-out selection. The next 6B stage should therefore be a
-separate embedding cache and full head retraining, not a second masked-only
-runtime. Otherwise, wait for substantially larger GPCR stability data rather
-than adding another small adapter selected on the present benchmarks.
+top prediction. The remaining accuracy bottleneck is substantially larger,
+new-receptor GPCR stability data, not another adapter fitted to the present
+small benchmarks.
 
 ## External data sources
 

@@ -1,0 +1,148 @@
+{
+  "schema": "protein-stabilizer.esmc6b-full-transfer-audit.v1",
+  "date": "2026-07-16",
+  "objective": "improve practical GPCR mutation screening with full ESM-C 6B mutant-minus-WT residue embeddings while retaining leak-resistant receptor-level evaluation",
+  "encoder": {
+    "model": "biohub/ESMC-6B",
+    "embedding_dimension": 2560,
+    "inference_dtype": "bfloat16",
+    "storage_dtype": "float16",
+    "attention_backend": "PyTorch scaled-dot-product attention",
+    "checkpoint_index_sha256": "6846456e20e6ee2c37461f7bfc21d316d69bdaf165b925691afcb39e583244da",
+    "package_versions": "transformers=4.57.6; esm=3.3.0; torch=2.9.1+cu128",
+    "residue_policy": "final-layer contextual residue; biological position 1 maps to token 1 after BOS"
+  },
+  "embedding_caches": {
+    "megascale_single": {
+      "path": "embeddings/esmc_6b/megascale_single.h5",
+      "unique_sequences": 136466,
+      "residue_sites": 143924,
+      "elapsed_seconds": 766.68,
+      "request_manifest_sha256": "e69cd477a7113dc5447c354cbf0dcff8cc1b5f6f9ed2f4c8b36fef7f1bffb99f",
+      "completed_cache_sha256": "977d82468d0b1784fd0a22c42da5d69c98b801438b75f15b8634e11ffda87df4"
+    },
+    "focused_transfer": {
+      "path": "embeddings/esmc_6b/focused_transfer.h5",
+      "unique_sequences": 7502,
+      "residue_sites": 11089,
+      "elapsed_seconds": 242.24,
+      "request_manifest_sha256": "f812e6e4e8e43c3131f836806cdef0491e7b573263b920cbb5be148fce72de37",
+      "completed_cache_sha256": "16fff9a77b3cb3028f8cefb5d2e906c62a04f608f5e113ef8d0885eedf529987"
+    }
+  },
+  "generic_heldout_results": {
+    "megascale_single_protein_holdout": {
+      "rows": 19645,
+      "esmc_600m": {
+        "spearman": 0.7766369875671548,
+        "pearson": 0.782291840047901,
+        "mae": 0.5558821573109907,
+        "rmse": 0.7553319616986118
+      },
+      "esmc_6b": {
+        "spearman": 0.8184640039815914,
+        "pearson": 0.815570577661938,
+        "mae": 0.5156622944220177,
+        "rmse": 0.7051919773413016
+      }
+    },
+    "protherm_protein_holdout": {
+      "rows": 376,
+      "esmc_600m_spearman": 0.4093170134449091,
+      "esmc_6b_spearman": 0.4810549654883645,
+      "esmc_6b_mae": 1.1328773973856439,
+      "esmc_6b_rmse": 1.978798658638189
+    },
+    "mptherm_protein_holdout": {
+      "rows": 124,
+      "esmc_600m_spearman": 0.22169029790928205,
+      "esmc_6b_spearman": 0.274243935416612,
+      "esmc_6b_mae": 3.5173526775212056,
+      "esmc_6b_rmse": 4.7186487858683
+    },
+    "s669_external": {
+      "esmc_6b_megascale_head_spearman": 0.5319752351419977,
+      "esmc_6b_protherm_head_spearman": 0.5710797014181278,
+      "esmc_6b_protherm_head_mae": 0.9677639782055656,
+      "esmc_6b_protherm_head_rmse": 1.3681481923700132
+    }
+  },
+  "gpcr_optional_rerank": {
+    "weights": {
+      "esmc_600m_mptherm_percentile": 0.6,
+      "esmc_600m_masked_marginal_percentile": 0.15,
+      "esmc_6b_mptherm_percentile": 0.25
+    },
+    "selection": "evaluate weights 0.00 through 0.25 for the 6B auxiliary in 0.05 increments on the 82-row GPCR-tm development split; preserve the validated 4:1 ratio between the two 600M components; use separate within-receptor percentile domains for development and test",
+    "development": {
+      "rows": 82,
+      "baseline_macro_within_receptor_spearman": 0.08630280886320982,
+      "candidate_macro_within_receptor_spearman": 0.11686278346026927,
+      "receptors_improved": 4,
+      "receptors_tied": 6,
+      "receptors_worsened": 0
+    },
+    "official_test_confirmation": {
+      "rows": 12,
+      "multi_observation_receptors": 2,
+      "baseline_macro_within_receptor_spearman": 0.8,
+      "candidate_macro_within_receptor_spearman": 1.0,
+      "note": "This very small test has been consulted by earlier project stages and is confirmation rather than a fresh untouched benchmark."
+    },
+    "c5ar_independent_scan": {
+      "rows": 277,
+      "reported_thermostable_substitutions": 34,
+      "baseline": {
+        "roc_auc": 0.6779835390946501,
+        "average_precision": 0.25525862817464123,
+        "positives_in_top50": 13
+      },
+      "candidate_from_cached_features": {
+        "roc_auc": 0.6961389494069232,
+        "average_precision": 0.3173330848278983,
+        "positives_in_top50": 15
+      },
+      "candidate_end_to_end_runtime_path": {
+        "roc_auc": 0.6963205035100459,
+        "average_precision": 0.3179014167154969,
+        "positives_in_top50": 15
+      },
+      "paired_stratified_bootstrap_10000": {
+        "roc_auc_difference": {
+          "point": 0.018094892277898733,
+          "ci95": [
+            -0.004720406681191003,
+            0.04151537158073104
+          ],
+          "probability_positive": 0.941
+        },
+        "average_precision_difference": {
+          "point": 0.06207445665325706,
+          "ci95": [
+            0.004745194478616843,
+            0.11608706124534707
+          ],
+          "probability_positive": 0.9827
+        }
+      }
+    },
+    "deployment_role": "optional second-stage reranker and stronger general-ddG diagnostic; the fast 600M screen remains the default first pass"
+  },
+  "rejected_6b_only_ranking": {
+    "reason": "6B-only combinations improved development fits or C5aR in isolation but did not preserve the two-receptor official GPCR-tm ranking; the validated 600M signal remains necessary",
+    "full_6b_mptherm_standalone_official_macro_spearman": 0.2
+  },
+  "application_checkpoints": {
+    "single_ensemble.pt": "e227ed23a215f7355a705ab51a1cd3c81ae0b44cfdb4fd07154d956b8cf518fe",
+    "single_head.pt": "67a34284e98aa20cb1f595645f3bf11f7c9a4b04a304fea1a4fa1c1c4dd6f017",
+    "protherm_ddg_head.pt": "ef241664fe8a2b28d40114e6f747751bf8f2ee10fdc29f7b816c017e8dc57b49",
+    "mptherm_dtm_head.pt": "90fa914103cb94e08bc2cd968e90f05fa97c6516084ac157511bf95015b7867d"
+  },
+  "limitations": [
+    "The optional rank blend is supported by only 82 development rows, 12 official-test rows, and one independent C5aR scan.",
+    "The official GPCR-tm confirmation is too small to estimate a reliable confidence interval and is no longer untouched.",
+    "A 6B rerank requires a separate transformers environment and substantially more GPU runtime than the default 600M screen.",
+    "The 6B path currently reranks single substitutions. Multiple substitutions continue to use the 600M additive and epistasis model.",
+    "Delta-Tm ranks and masked marginal scores are not calibrated kcal/mol and do not guarantee expression, function, or crystallization."
+  ]
+}

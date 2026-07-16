@@ -16,12 +16,13 @@
     "gpcr_tm_development": {
       "rows": 82,
       "source_sha256": "3c158828162136c8a61c0e894c99f9651f85333a1d8aa132cb46ac1373d0a4db",
-      "mptherm_pooled_within_receptor_percentile_spearman": 0.09292375265885894,
-      "consensus_pooled_within_receptor_percentile_spearman": 0.10332362523631243,
+      "mptherm_pooled_within_receptor_percentile_spearman": 0.054878196628102595,
+      "consensus_pooled_within_receptor_percentile_spearman": 0.05891031462362592,
       "mptherm_macro_within_receptor_spearman": 0.08678990795537819,
-      "consensus_macro_within_receptor_spearman": 0.08629754051667181
+      "consensus_macro_within_receptor_spearman": 0.08630280886320982,
+      "correction_2026_07_16": "The earlier pooled values ranked development rows in receptor domains that also contained official-test rows. These corrected values compute development percentiles only inside the 82-row development split. The macro result, official-test preservation, and C5aR evidence are effectively unchanged."
     },
-    "policy": "promote only as a small rank prior: it improves pooled within-receptor-percentile development ranking, changes development macro Spearman by less than 0.001, preserves official-test within-receptor ranking, and improves the independent C5aR scan"
+    "policy": "retain as a small rank prior: after correcting the development percentile domain, it still gives a small pooled gain, changes development macro Spearman by less than 0.001, preserves official-test within-receptor ranking, and improves the independent C5aR scan"
   },
   "heldout_evaluations": {
     "gpcr_tm_official_test": {

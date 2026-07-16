@@ -1,0 +1,10 @@
+# Exact core versions used for the 2026-07-16 ESM-C 6B caches and checkpoints.
+esm==3.3.0
+h5py==3.16.0
+joblib==1.5.3
+numpy==2.5.1
+pandas==3.0.3
+scikit-learn==1.9.0
+scipy==1.18.0
+torch==2.9.1
+transformers==4.57.6

@@ -1,12 +1,13 @@
 # ProteinStabilizer
 
 ProteinStabilizer ranks amino-acid substitutions for stability, with a
-GPCR-specific calibration layer. It uses a frozen ESM-C 600M encoder and trains
-only compact heads over contextual residue-embedding differences. Saturation
-screening also reads the encoder's masked amino-acid probabilities as a small
-sequence-compatibility prior. The current pipeline is intentionally optimized
-for application and screening, rather than for introducing a new
-protein-stability architecture.
+GPCR-specific calibration layer. The fast first pass uses a frozen ESM-C 600M
+encoder and compact heads over contextual residue-embedding differences. An
+optional full ESM-C 6B second pass now supplies a stronger general-ddG estimate
+and conservatively reranks GPCR candidates. Saturation screening also reads the
+encoder's masked amino-acid probabilities as a small sequence-compatibility
+prior. The current pipeline is intentionally optimized for application and
+screening, rather than for introducing a new protein-stability architecture.
 
 Solubility is deliberately not part of the current model.
 
@@ -58,6 +59,13 @@ residual binding after heating rather than thermodynamic ddG, the output is
 explicitly a ranking score, not kcal/mol or a stability percentage.
 Its new-receptor evidence is weak, so it is reported separately and is not
 included in the primary screening consensus.
+
+The optional 6B path repeats the same residue-delta architecture with 2,560
+dimensional ESM-C 6B vectors and a newly trained five-member Megascale ensemble.
+It does not mix 600M and 6B embeddings or heads. The application output keeps
+the 6B general ddG, ProTherm-adapted ddG, and MPTherm delta-Tm as separate
+columns. Its bounded GPCR rerank is 60% 600M MPTherm percentile, 15% 600M
+masked-marginal percentile, and 25% 6B MPTherm percentile.
 
 Two additional membrane-specific transfer experiments are retained as audited
 candidates but fail their deployment gates: an mCSM-membrane equilibrium-ddG
@@ -111,8 +119,20 @@ export HF_HOME=/data/fast/cache/huggingface
 .venv/bin/protein-stabilizer run
 ```
 
-`requirements-lock.txt` records the exact package versions used to produce the
-checked-in heads. The looser `pyproject.toml` bounds are for development.
+`requirements-lock.txt` records the exact 600M environment and
+`requirements-esmc6b-lock.txt` records the 6B training environment. The looser
+`pyproject.toml` bounds are for development.
+
+ESM-C 6B uses `transformers==4.57.6`, which conflicts with the validated 600M
+environment. Install it separately:
+
+```bash
+python3.12 -m venv .venv-esmc6b
+.venv-esmc6b/bin/pip install -e '.[esmc6b]'
+```
+
+The 6B checkpoint is downloaded from `biohub/ESMC-6B` on first use unless
+`--model` points to an existing snapshot.
 
 The `run` command:
 
@@ -146,6 +166,9 @@ The current deterministic run used seed `20260715`:
 | GPCR-tm delta-Tm test, rejected GPCR adapter | -0.042 | -0.044 | 3.737 | 4.623 |
 | GPCR-tm delta-Tm test, official ThermoMPNN | 0.126 | -0.016 | 3.805 | 4.542 |
 | GPCR-tm delta-Tm test, rejected structure/model blend | 0.385 | 0.426 | 3.602 | 4.221 |
+| ESM-C 6B single-mutant protein holdout | 0.818 | 0.816 | 0.516 | 0.705 |
+| ESM-C 6B ProTherm protein holdout | 0.481 | 0.348 | 1.133 | 1.979 |
+| ESM-C 6B MPTherm protein holdout | 0.274 | 0.278 | 3.517 | 4.719 |
 
 The epistasis model improves absolute error but the additive score ranks the
 double-mutant test set better. Both values are returned at inference.
@@ -206,6 +229,27 @@ general ddG head calls destabilizing. `pretrained_ddg_std` records disagreement
 across the five heads as an uncertainty flag; it is useful for triage but is
 not a calibrated confidence interval.
 
+For a slower second-stage 6B pass, rerank the completed 600M CSV in the separate
+environment:
+
+```bash
+.venv-esmc6b/bin/protein-stabilizer rerank-6b \
+  --fasta target_gpcr.fasta \
+  --input artifacts/target_gpcr_screen.csv \
+  --output artifacts/target_gpcr_screen_6b.csv
+```
+
+This adds `esmc6b_pretrained_ddg`, `esmc6b_protherm_calibrated_ddg`,
+`esmc6b_mptherm_predicted_delta_tm`, and 6B uncertainty/masked-marginal
+diagnostics. It preserves the original score and rank in
+`esmc600m_consensus_rank_score` and `esmc600m_rank`, then sorts by the optional
+60/15/25 dual-backbone consensus. On GPCR-tm development, the bounded prior
+improved macro within-receptor Spearman from `0.086` to `0.117` without
+worsening any evaluable receptor. On the independent C5aR scan, average
+precision improved from `0.255` to `0.317`, with 15 rather than 13 positives in
+the top 50. Exact selection, provenance, and caveats are in
+[`docs/esmc6b_full_transfer_audit.json`](docs/esmc6b_full_transfer_audit.json).
+
 ## Limitations
 
 - The encoder is sequence-only; membrane topology and structure are not model
@@ -221,6 +265,10 @@ not a calibrated confidence interval.
 - The MPTherm head reaches only Spearman `0.371` on the small leak-free GPCR-tm
   test. Its delta-Tm output is an auxiliary ranking signal, not a calibrated
   universal GPCR stability measurement.
+- The optional 6B rerank is supported by only 82 GPCR-tm development rows, a
+  12-row confirmation set, and one independent C5aR scan. The confirmation set
+  has been consulted in earlier project stages, so it is not a fresh untouched
+  benchmark. Keep the original 600M rank visible when selecting experiments.
 - Masked-marginal log odds measure sequence compatibility, not kcal/mol,
   delta-Tm, expression, activity, or crystallizability. The 20% weight improved
   the independent C5aR scan while preserving the GPCR-tm within-receptor test
@@ -234,21 +282,23 @@ not a calibrated confidence interval.
 - Predictions are candidates for experimental screening, not evidence that a
   receptor will express, remain functional, or crystallize.
 
-## ESM-C 6B migration
+## ESM-C 6B status
 
-The feature and checkpoint schemas infer the embedding dimension, so the heads
-do not assume 1,152 dimensions internally. Moving to ESM-C 6B still requires a
-separate embedding cache and complete retraining; 600M and 6B vectors or heads
-must never share a cache.
+Full ESM-C 6B retraining is complete. Its separate caches contain 136,466
+Megascale sequences plus 7,502 focused transfer/GPCR sequences, and its compact
+application checkpoints are under `checkpoints/esmc_6b/`. The generic
+single-mutant holdout improves from Spearman `0.777` and MAE `0.556` with 600M
+to `0.818` and `0.516` with 6B. ProTherm and MPTherm protein-held-out
+correlations also improve.
 
-The public Biohub ESM-C 6B checkpoint was audited as a masked-marginal scorer.
-It improved the independent C5aR scan to AUC `0.698`, average precision `0.318`,
-and 16 positives in the top 50, but its receptor-held-out GPCR-tm development
-macro Spearman was `-0.036`. A 5% 6B blend was too small an improvement to
-justify a separate 6B runtime. The production backend therefore remains 600M;
-the next 6B step is full embedding and head retraining, not mixing 6B scores or
-vectors into the existing cache. Exact provenance is in
-[`docs/esmc6b_ddgemb_transfer_audit.json`](docs/esmc6b_ddgemb_transfer_audit.json).
+A 6B-only GPCR rank did not preserve the small official GPCR-tm receptor test,
+so 6B does not replace the fast production rank. Instead it is an optional
+bounded second-stage prior and a stronger general-ddG diagnostic. The 600M and
+6B caches remain strictly separate. The earlier masked-only/DDGemb experiment
+is recorded in
+[`docs/esmc6b_ddgemb_transfer_audit.json`](docs/esmc6b_ddgemb_transfer_audit.json);
+the completed full-transfer stage is in
+[`docs/esmc6b_full_transfer_audit.json`](docs/esmc6b_full_transfer_audit.json).
 
 ## Sources
 
