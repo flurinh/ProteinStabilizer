@@ -13,6 +13,17 @@ protein-stability architecture.
 
 Solubility is deliberately not part of the current model.
 
+## Project dashboard
+
+Open [`docs/model_dashboard.html`](docs/model_dashboard.html) for the current
+model roles, training losses, held-out performance, expected ddG error scale,
+GPCR screening evidence, and external-method context. It is generated directly
+from the checked-in metric and audit JSON files:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python scripts/build_model_dashboard.py
+```
+
 ## Model
 
 For one substitution at residue `i`:
