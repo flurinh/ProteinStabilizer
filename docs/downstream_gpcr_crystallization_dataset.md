@@ -1,4 +1,4 @@
-# Downstream dataset: GPCR crystallization-assisting mutations
+# Downstream dataset: GPCR construct-stabilizing and crystallization mutations
 
 Status: deferred. This is a downstream data and model track, not part of the
 current stability model.
@@ -7,21 +7,29 @@ current stability model.
 
 Build a GPCR-specific dataset from experimentally solved structures and their
 engineered constructs. Compare each deposited receptor construct with its
-canonical wild-type sequence and use construct substitutions as weak evidence
-for mutations that help expression, purification, conformational locking, or
-crystallization.
+canonical wild-type sequence and use construct substitutions primarily as weak
+evidence for practical receptor stabilization. In GPCR crystallography,
+researchers commonly stabilize the receptor in a ligand-bound state and in
+detergent so that a homogeneous receptor-compound complex survives purification
+and crystallization. Expression, conformational locking, and crystal packing
+remain related secondary mechanisms.
 
-This endpoint must remain separate from thermodynamic stability:
+The useful distinction is therefore not “stability versus crystallization,”
+but measured physical stability versus a weak construct-derived stabilization
+label:
 
 - a construct mutation is not a measured delta-delta-G or delta-Tm label;
-- some substitutions stabilize one ligand/state rather than the receptor
-  generally;
+- many substitutions are deliberately selected for thermostability, detergent
+  stability, or conformational homogeneity and should contribute positive
+  stabilization evidence;
+- some stabilize one ligand/state rather than the receptor generally;
 - some help trafficking, expression, detergent tolerance, or crystal packing;
 - some are neutral passengers in a successful multi-mutation construct.
 
-The resulting target should therefore be named a
-`crystallization_assistance_score`, never stability in kcal/mol or degrees
-Celsius.
+The primary weak target should therefore be named a
+`construct_stabilization_score`. A broader `crystallization_assistance_score`
+can capture other engineering effects. Neither should be labeled in kcal/mol
+or degrees Celsius unless the source provides an actual measurement.
 
 ## Proposed data sources
 
@@ -62,8 +70,22 @@ and numbering offsets must not be interpreted as receptor mutations.
 Treat the task as positive-unlabeled learning rather than ordinary binary
 classification.
 
-An engineered substitution receives stronger positive weight when one or more
-of the following hold:
+Use a hierarchy of evidence:
+
+1. **Strong stabilization evidence:** the paper, supplement, or GPCRdb
+   explicitly identifies the mutation as thermostabilizing, reports a
+   stability screen, or provides delta-Tm or another physical measurement.
+   Preserve the experimental value and assay conditions when available.
+2. **Moderate construct-stabilization evidence:** an engineered substitution
+   recurs across independent structures, is retained across construct
+   generations, or appears in multiple ligand states or laboratories.
+3. **Weak crystallization evidence:** an otherwise unexplained substitution is
+   present in one successful construct. It may assist expression, state
+   locking, packing, or purification and should receive less stabilization
+   credit.
+
+Within those tiers, an engineered substitution receives stronger positive
+weight when one or more of the following hold:
 
 1. the primary paper or GPCRdb explicitly calls it stabilizing or
    crystallization-enabling;
@@ -83,9 +105,10 @@ supplements.
 
 The model should expose at least:
 
+- a construct-stabilization rank as the primary output;
 - a crystallization-assistance rank;
 - the evidence/confidence weight behind that rank;
-- optionally separate heads for explicit thermostabilization,
+- separate heads for measured/explicit thermostabilization,
   expression/purification assistance, and state locking if enough annotations
   exist.
 
@@ -101,9 +124,10 @@ The model should expose at least:
 - Report retrieval metrics such as average precision, enrichment, and recovery
   of annotated construct mutations in the top 20/50, not kcal/mol error.
 
-The existing GPCR-tm and C5aR stability benchmarks remain separate safety
-checks. A crystallization head may complement the stability rank, but must not
-silently replace it or be presented as physical stability.
+The existing GPCR-tm and C5aR stability benchmarks remain direct stability
+checks. The construct-stabilization score may complement the current stability
+rank if it transfers, but its weak label must not be presented as a physical
+stability measurement.
 
 ## Implementation sequence
 
@@ -119,13 +143,15 @@ silently replace it or be presented as physical stability.
 7. Build receptor/family-held-out and temporal splits before model fitting.
 8. Develop the new scoring logic with frozen ESM-C 600M embeddings, then port
    the identical logic to ESM-C 6B for the production decision.
-9. Compare a separate crystallization head with a small prior added to the
-   current 6B GPCR stability rank.
+9. Train a primary construct-stabilization objective and, if the annotations
+   support it, secondary crystallization/expression/state objectives.
+10. Compare the resulting 6B construct-stabilization score with a small prior
+    added to the current 6B GPCR stability rank.
 
 ## Promotion gate
 
 Promote this track only if the 6B version improves held-out-receptor or temporal
-recovery of independently annotated crystallization mutations and does not
-materially degrade the existing GPCR-tm and C5aR stability ranks. Until then,
-report crystallization assistance as an experimental, non-physical score.
-
+recovery of independently annotated stabilizing construct mutations. Adding it
+to the main stability rank must also preserve or improve GPCR-tm and C5aR.
+Until then, report construct stabilization as an experimental, non-physical
+score.
