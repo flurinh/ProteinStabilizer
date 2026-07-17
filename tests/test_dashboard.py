@@ -15,3 +15,8 @@ def test_model_dashboard_is_generated_from_recorded_metrics(tmp_path) -> None:
     assert data["models"][1]["spearman"] == 0.818
     assert data["expected_ddg"]["generic_mae"] == 0.516
     assert data["gpcr"]["c5ar"]["rerank_ap"] == 0.318
+    assert data["structure_scale"]["status"] == "rejected_for_production"
+    assert data["structure_scale"]["development_candidate"] == 0.489
+    assert data["structure_scale"]["official_candidate"] == -0.5
+    assert data["structure_scale"]["c5ar_candidate_top50"] == 11
+    assert "ProteinMPNN logic scaled to 6B" in html

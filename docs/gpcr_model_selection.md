@@ -81,6 +81,30 @@ ddG values as separate diagnostics. Exact metrics, cache manifests, checkpoint
 hashes, and limitations are in
 [`esmc6b_full_transfer_audit.json`](esmc6b_full_transfer_audit.json).
 
+### ProteinMPNN structure logic scaled to 6B
+
+The sequence-conditioned ProteinMPNN likelihood was first selected with the
+600M development workflow, then attached to the strongest existing 6B rank.
+This is the intended use of 600M: discover scoring logic cheaply, but make the
+production decision only after evaluating the same logic at 6B scale.
+
+On the 82-row development set, a full `0.00` to `1.00` structure-weight grid
+selected an 80% ProteinMPNN contribution. Macro within-receptor Spearman rose
+from `0.115` to `0.489`, and nested leave-one-receptor-out selection reached
+`0.453`. The frozen candidate did not transfer: official-test macro Spearman
+fell from `1.000` to `-0.500`, while C5aR AUC fell from `0.696` to `0.673`,
+average precision from `0.317` to `0.242`, and positives in the top 50 from 15
+to 11.
+
+A post-hoc 3% structure prior preserved official macro Spearman and produced
+C5aR point estimates of AUC `0.697`, average precision `0.337`, and 15
+positives in the top 50. It is not promoted: the top-50 result did not improve,
+both paired bootstrap intervals included zero gain, and inspecting the weight
+after the confirmation failure exhausted its value as independent evidence.
+The current 6B sequence rank therefore remains the production choice. Exact
+selection results and structure/checkpoint provenance are in
+[`proteinmpnn_esmc6b_scale_audit.json`](proteinmpnn_esmc6b_scale_audit.json).
+
 For mutation combinations, a separate 6B permutation-invariant epistasis head
 is now available through `predict-6b`. On the protein-held-out Megascale-D
 double-mutant test it reaches Spearman `0.623` and MAE `0.741`, versus `0.615`
@@ -97,6 +121,7 @@ GPCR double mutants; larger combinations are also outside its training domain.
 | Five-member MPTherm transfer ensemble | MPTherm test Spearman decreased from `0.222` to `0.183`. | Reject. |
 | Official ThermoMPNN | GPCR-tm official test: Spearman `0.126`, Pearson `-0.016`, MAE `3.805`, RMSE `4.542`. | Reject as a standalone GPCR score. |
 | MPTherm + ThermoMPNN + base ESM-C ridge | Selected on development leave-one-receptor-out macro Spearman `0.379`. Official test Spearman rose slightly from `0.371` to `0.385`, but macro within-receptor Spearman fell from `0.800` to `0.600`, and MAE increased from `3.588` to `3.602`. | Reject the extra checkpoint, PDB input, and graph-model runtime for a marginal pooled gain. |
+| ESM-C 6B rank + ProteinMPNN conditioned likelihood | Scaling the 600M-discovered structure logic selected an 80% structure weight and development macro Spearman `0.489`, but official macro Spearman fell to `-0.500` and C5aR AP/top-50 fell to `0.242`/11. A post-hoc 3% prior reached AP `0.337` but retained only 15 top-50 positives and had an AP-difference CI spanning `-0.005` to `+0.060`. | Reject. The strong development association does not transfer robustly enough to add a structure runtime. |
 | Local structure descriptors | Tested relative SASA, nonlocal contact counts, bundle-axis depth, radial position, side-chain orientation, AlphaFold confidence, mutation-property changes, and burial interactions. Development selection preferred a two-score ESM-C model without structure (macro Spearman `0.181`). Its official-test Spearman was `0.357` and within-receptor macro Spearman `0.200`. | Keep the runtime sequence-only. |
 | Mutation physicochemical priors | Adding hydropathy, volume, charge, polarity, aromaticity, and backbone-breaker changes reduced the supplied-workbook site test macro Spearman from `0.601` to `0.526` and the receptor-held-out diagnostic. | Reject. Contextual ESM-C deltas already contain the useful part of this signal. |
 | Ensemble-disagreement re-ranking | Member standard deviation has weak correlation with generic absolute error (`0.179`) and very weak correlation on the GPCR workbook (`0.079`). | Retain `pretrained_ddg_std` as a caution flag, not a ranking penalty or calibrated interval. |

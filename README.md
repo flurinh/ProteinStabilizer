@@ -292,7 +292,11 @@ the top 50. Exact selection, provenance, and caveats are in
   worse than the frozen ESM-C baseline on two unseen alpha-helical proteins.
   Official ThermoMPNN predictions, local structure descriptors, and a compact
   structure/model blend were also evaluated on GPCR-tm and did not pass the
-  development plus within-receptor ranking gates. GPCRdb construct positives,
+  development plus within-receptor ranking gates. Sequence-conditioned
+  ProteinMPNN logic was additionally discovered with 600M and scaled to the
+  selected 6B rank; its development-optimal blend reached macro Spearman
+  `0.489` but fell to `-0.500` on the official two-receptor macro check and
+  reduced C5aR top-50 recovery from 15 to 11. GPCRdb construct positives,
   ProteinGym membrane expression/abundance assays, and a direct C5aR
   alanine-scan classifier also failed the same untouched-test gate.
 - ProTherm is heterogeneous and replicate measurements can disagree; the

@@ -37,6 +37,7 @@ def dashboard_data() -> dict[str, object]:
     gpcr_dtm = _load("checkpoints/esmc_600m/gpcr_dtm_metrics.json")
     gpcr_full = _load("docs/esmc6b_full_transfer_audit.json")
     ddgemb = _load("docs/esmc6b_ddgemb_transfer_audit.json")
+    structure_scale = _load("docs/proteinmpnn_esmc6b_scale_audit.json")
 
     test_600m = single_600m["test"]
     test_6b = single_6b["test"]
@@ -48,6 +49,9 @@ def dashboard_data() -> dict[str, object]:
     gpcr_test = gpcr_dtm["test_mptherm_baseline"]
     gpcr_rank = gpcr_full["gpcr_optional_rerank"]
     c5ar = gpcr_rank["c5ar_independent_scan"]
+    structure_selection = structure_scale["development_policy"]["scale_selection"]
+    structure_confirmation = structure_scale["frozen_confirmation"]
+    small_structure_prior = structure_scale["post_hoc_small_prior_diagnostic"]
     s669 = ddgemb["s2450_transfer"]["S669_results"]
 
     loss_600m = _final_losses(single_600m)
@@ -60,7 +64,7 @@ def dashboard_data() -> dict[str, object]:
             "best_ddg": "ESM-C 6B",
             "gpcr_path": "600M rank + optional 6B rerank",
             "training": "Complete",
-            "structure_audit": "ProteinMPNN likelihood audit in progress; not production",
+            "structure_audit": "ProteinMPNN logic scaled to 6B; rejected for inconsistent transfer",
         },
         "expected_ddg": {
             "generic_mae": _round(test_6b["mae"]),
@@ -247,6 +251,64 @@ def dashboard_data() -> dict[str, object]:
                 ),
             },
         },
+        "structure_scale": {
+            "status": structure_scale["decision"]["status"],
+            "selected_weight": float(structure_selection["selected_weight"]),
+            "development_baseline": _round(
+                structure_selection[
+                    "sequence_baseline_macro_spearman_recomputed"
+                ]
+            ),
+            "development_candidate": _round(
+                structure_selection["selected_macro_spearman"]
+            ),
+            "development_nested": _round(
+                structure_selection[
+                    "nested_leave_one_receptor_out_macro_spearman"
+                ]
+            ),
+            "official_baseline": _round(
+                structure_confirmation["official_gpcr_tm"][
+                    "sequence_baseline_macro_within_receptor_spearman"
+                ]
+            ),
+            "official_candidate": _round(
+                structure_confirmation["official_gpcr_tm"][
+                    "candidate_macro_within_receptor_spearman"
+                ]
+            ),
+            "c5ar_baseline_ap": _round(
+                structure_confirmation["c5ar"]["sequence_baseline"][
+                    "average_precision"
+                ]
+            ),
+            "c5ar_candidate_ap": _round(
+                structure_confirmation["c5ar"]["candidate"]["average_precision"]
+            ),
+            "c5ar_baseline_top50": int(
+                structure_confirmation["c5ar"]["sequence_baseline"][
+                    "positives_in_top50"
+                ]
+            ),
+            "c5ar_candidate_top50": int(
+                structure_confirmation["c5ar"]["candidate"][
+                    "positives_in_top50"
+                ]
+            ),
+            "small_prior_weight": float(small_structure_prior["weight"]),
+            "small_prior_ap": _round(
+                small_structure_prior["c5ar"]["average_precision"]
+            ),
+            "small_prior_top50": int(
+                small_structure_prior["c5ar"]["positives_in_top50"]
+            ),
+            "small_prior_ap_ci": [
+                _round(value)
+                for value in small_structure_prior["c5ar"][
+                    "paired_stratified_bootstrap_10000"
+                ]["average_precision_difference_ci95"]
+            ],
+        },
         "same_project_comparisons": [
             {
                 "model": "Our 600M MPTherm head",
@@ -279,6 +341,14 @@ def dashboard_data() -> dict[str, object]:
                 "metric": "AUC 0.696 · AP 0.318 · top-50 15/34",
                 "decision": "Optional reranker",
                 "tone": "good",
+            },
+            {
+                "model": "6B rank + ProteinMPNN",
+                "input": "Sequence + structure",
+                "benchmark": "Frozen official / C5aR checks",
+                "metric": "macro ρ −0.500 · AP 0.242 · top-50 11/34",
+                "decision": "Rejected after 6B scale-up",
+                "tone": "bad",
             },
         ],
         "literature_context": [
@@ -328,6 +398,7 @@ def dashboard_data() -> dict[str, object]:
             "checkpoints/esmc_6b/transfer_metrics.json",
             "docs/esmc6b_full_transfer_audit.json",
             "docs/esmc6b_ddgemb_transfer_audit.json",
+            "docs/proteinmpnn_esmc6b_scale_audit.json",
         ],
     }
 
@@ -500,7 +571,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       <h2>My assessment</h2>
       <div class="callout">
         <strong>Use it now for screening, not for believing a decimal.</strong>
-        <p>The 6B model is genuinely better on protein-disjoint generic stability. The GPCR evidence is directionally useful but small, so receptor ranking is more trustworthy than absolute ΔΔG. The next material gain is likely to come from new GPCR measurements or a genuinely independent physics signal—not another adapter fitted to the same 82 development rows.</p>
+        <p>The 6B model is genuinely better on protein-disjoint generic stability. The GPCR evidence is directionally useful but small, so receptor ranking is more trustworthy than absolute ΔΔG. ProteinMPNN structure likelihood was scaled from the 600M development workflow to the 6B rank; its large development gain did not transfer, so the production path remains sequence-only.</p>
       </div>
       <p><strong>Practical target:</strong> rank a broad single-mutant scan, inspect the 6B rerank, retain general-ΔΔG support, and test a diverse panel rather than only near-duplicate top hits.</p>
     </div>
@@ -566,6 +637,7 @@ document.querySelector("#ddg-bars").innerHTML =
   bar("S669 local MAE", e.s669_mae, 1.5);
 
 const g = DATA.gpcr;
+const s = DATA.structure_scale;
 document.querySelector("#gpcr").innerHTML =
   `<h3>Within-receptor rank</h3>` +
   bar("Fast development", g.development.fast_macro_spearman, 1) +
@@ -577,7 +649,12 @@ document.querySelector("#gpcr").innerHTML =
   bar("6B rerank AUC", g.c5ar.rerank_auc, 1, true) +
   bar("Fast AP", g.c5ar.fast_ap, 1) +
   bar("6B rerank AP", g.c5ar.rerank_ap, 1, true) +
-  `<p class="foot">${g.c5ar.rows} substitutions · ${g.c5ar.positives} reported thermostable. The 12-row official test is confirmatory, not untouched.</p>`;
+  `<p class="foot">${g.c5ar.rows} substitutions · ${g.c5ar.positives} reported thermostable. The 12-row official test is confirmatory, not untouched.</p>` +
+  `<h3 style="margin-top:20px">ProteinMPNN logic scaled to 6B</h3>` +
+  bar("Development", s.development_candidate, 1) +
+  bar("Official check", s.official_candidate, 1, true) +
+  bar("C5aR AP", s.c5ar_candidate_ap, 1) +
+  `<p class="foot">The development-selected ${Math.round(100*s.selected_weight)}% structure blend rose from ρ ${fmt(s.development_baseline)} to ${fmt(s.development_candidate)}, but official macro ρ fell from ${fmt(s.official_baseline)} to ${fmt(s.official_candidate)} and C5aR top-50 recovery fell ${s.c5ar_baseline_top50}→${s.c5ar_candidate_top50}. Rejected. A post-hoc ${Math.round(100*s.small_prior_weight)}% prior reached AP ${fmt(s.small_prior_ap)}, but kept ${s.small_prior_top50} top-50 positives and its AP difference CI [${fmt(s.small_prior_ap_ci[0])}, ${fmt(s.small_prior_ap_ci[1])}] includes zero.</p>`;
 
 document.querySelector("#local-comparison").innerHTML = table(
   ["Model", "Input", "Benchmark", "Measured result", "Decision"],

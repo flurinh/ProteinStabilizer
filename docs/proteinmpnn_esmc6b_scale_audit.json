@@ -1,0 +1,140 @@
+{
+  "schema": "protein-stabilizer.proteinmpnn-esmc6b-scale-audit.v1",
+  "date": "2026-07-17",
+  "objective": "test whether sequence-conditioned ProteinMPNN structure likelihood, discovered with ESM-C 600M, improves the strongest existing ESM-C 6B GPCR mutation rank",
+  "decision": {
+    "status": "rejected_for_production",
+    "production_model": "existing sequence-only 600M/6B GPCR rank",
+    "reason": "The development-selected 6B structure blend failed both external checks. A post-hoc 3% structure prior preserved the official rank and slightly increased C5aR AP, but did not recover another positive in the top 50 and its paired bootstrap intervals included zero improvement.",
+    "interpretation": "The 600M experiment identified a real development-set structure association, but that association did not scale into a robust new-receptor improvement when attached to the 6B production rank."
+  },
+  "models": {
+    "sequence_rank": {
+      "formula": "0.60 * within-scan ESM-C 600M MPTherm percentile + 0.15 * within-scan ESM-C 600M masked-marginal percentile + 0.25 * within-scan ESM-C 6B MPTherm percentile",
+      "sign": "higher is more favorable",
+      "checkpoint_sha256": {
+        "esmc_600m_mptherm": "7db5b93409d7ab1f5985cd296f415c95fcbb52468c5668ef55f5a955d167f64e",
+        "esmc_6b_mptherm": "90fa914103cb94e08bc2cd968e90f05fa97c6516084ac157511bf95015b7867d"
+      }
+    },
+    "structure_score": {
+      "model": "ProteinMPNN v_48_020",
+      "mode": "sequence-conditioned conditional probabilities",
+      "formula": "mean over 16 random decoding orders of log P(mutant | backbone, remaining WT sequence) - log P(WT | backbone, remaining WT sequence)",
+      "sign": "higher is more favorable",
+      "repository": "https://github.com/dauparas/ProteinMPNN",
+      "repository_commit": "8907e6671bfbfc92303b5f79c4b5e6ce47cdef57",
+      "weight_sha256": "c9cb4a671d79604111231f8dbfc7c590e06f1197453b7a6854ac6661a642f5bd",
+      "random_orders": 16,
+      "seed": 20260716
+    }
+  },
+  "development_policy": {
+    "rows": 82,
+    "split": "GPCR-tm official training rows, excluding three rows at official test mutation sites",
+    "grouping": "whole receptor; every score converted to a within-receptor percentile",
+    "logic_discovery": {
+      "encoder": "ESM-C 600M",
+      "conditioned_proteinmpnn_standalone_macro_spearman": 0.48033586014328195,
+      "backbone_only_proteinmpnn_standalone_macro_spearman": 0.2232558130120747,
+      "selected_mode": "sequence-conditioned",
+      "note": "Only the structure-score mode was carried forward. The blend weight was reselected against the 6B rank."
+    },
+    "scale_selection": {
+      "encoder": "existing 600M/6B production rank",
+      "candidate_formula": "(1 - w) * sequence_rank + w * conditioned_ProteinMPNN_percentile",
+      "weight_grid": {
+        "minimum": 0.0,
+        "maximum": 1.0,
+        "step": 0.05,
+        "tie_break": "smaller weight"
+      },
+      "selected_weight": 0.8,
+      "sequence_baseline_macro_spearman_recomputed": 0.11530231400043837,
+      "selected_macro_spearman": 0.48893290493132896,
+      "nested_leave_one_receptor_out_macro_spearman": 0.4530664778542051,
+      "note": "The recomputed sequence baseline differs slightly from the recorded runtime value 0.11686278346026927 because this paired audit was reconstructed from stored float16 feature tensors. Candidate and baseline use the same reconstruction."
+    }
+  },
+  "frozen_confirmation": {
+    "selected_weight": 0.8,
+    "official_gpcr_tm": {
+      "rows": 12,
+      "multi_observation_receptors": 2,
+      "sequence_baseline_macro_within_receptor_spearman": 1.0,
+      "candidate_macro_within_receptor_spearman": -0.5
+    },
+    "c5ar": {
+      "rows": 277,
+      "reported_thermostable_substitutions": 34,
+      "sequence_baseline": {
+        "roc_auc": 0.6963205035100459,
+        "average_precision": 0.31740979075734455,
+        "positives_in_top50": 15
+      },
+      "candidate": {
+        "roc_auc": 0.6733236504478335,
+        "average_precision": 0.24226345257965698,
+        "positives_in_top50": 11
+      }
+    }
+  },
+  "post_hoc_small_prior_diagnostic": {
+    "status": "not_selected_and_not_independent",
+    "weight": 0.03,
+    "reason_for_reporting": "This is the best observed small-weight compromise that preserved the already-consulted official macro rank while improving the point estimates on C5aR. It was inspected after the selected 0.80 blend failed and is therefore not an untouched confirmation.",
+    "development_macro_spearman": 0.13038982201929544,
+    "official_macro_within_receptor_spearman": 1.0,
+    "c5ar": {
+      "roc_auc": 0.6974098281287825,
+      "average_precision": 0.337273441162647,
+      "positives_in_top50": 15,
+      "paired_stratified_bootstrap_10000": {
+        "seed": 20260717,
+        "roc_auc_difference_ci95": [
+          -0.0031469377874607796,
+          0.005809731299927456
+        ],
+        "roc_auc_probability_positive": 0.6741,
+        "average_precision_difference_ci95": [
+          -0.005149737164813875,
+          0.05955855076245417
+        ],
+        "average_precision_probability_positive": 0.8782
+      }
+    }
+  },
+  "data_provenance": {
+    "gpcr_tm_source": {
+      "path": "data/curated/gpcr_tm_dtm.csv",
+      "sha256": "3c158828162136c8a61c0e894c99f9651f85333a1d8aa132cb46ac1373d0a4db"
+    },
+    "gpcr_tm_esmc6b_features": {
+      "path": "artifacts/features_esmc_6b/gpcr_tm.h5",
+      "sha256": "dca0a65fe4e00107983213ca40ac0caffdb69f1f2f5e6bfb00d9d98bdc563a69"
+    },
+    "c5ar_esmc6b_features": {
+      "path": "artifacts/features_esmc_6b/c5ar.h5",
+      "sha256": "58a693bcb2d1522593930693fb76d47d1576340180ccd3fa4c0b4f59b6364b95"
+    },
+    "gpcr_structure_archive": {
+      "url": "https://biosig.lab.uq.edu.au/gpcr_tm/static/datasets/pdbs_gpcr_stability.tar.gz",
+      "sha256": "c0aae6f768d03e07221322cbc4b49b2d31494b2e7d406d80f289d6a2518b4ab9"
+    },
+    "c5ar_structure": {
+      "source": "AlphaFold DB AF-P21730-F1 model v6",
+      "sha256": "cea32c64bc50462613a7fa08bf90d45c28a6eb461c5a99de82fde48ddeb3096c"
+    },
+    "generated_score_sha256": {
+      "gpcr_tm_proteinmpnn": "5b72ad6c8b5d4a234b4d226ccc3f5349d002dfe0010681f9678d8b6bff27ba87",
+      "c5ar_proteinmpnn": "f3a35e92d8dc130d9684240513865a17d421a7c6b5b7bb4a357a240a97e755a7"
+    }
+  },
+  "limitations": [
+    "The official GPCR-tm confirmation contains only 12 rows and has been consulted repeatedly.",
+    "C5aR is one receptor and its binary thermostability labels are not calibrated delta-Tm or delta-delta-G.",
+    "The GPCR-tm structures and C5aR AlphaFold structure do not have identical provenance or uncertainty.",
+    "A ProteinMPNN likelihood is a sequence-backbone compatibility score, not a physical stability unit.",
+    "No untouched GPCR benchmark remains for promoting the post-hoc 3% diagnostic."
+  ]
+}
