@@ -15,6 +15,11 @@ def _load(relative: str) -> dict[str, object]:
     return json.loads((ROOT / relative).read_text(encoding="utf-8"))
 
 
+def _load_optional(relative: str) -> dict[str, object] | None:
+    path = ROOT / relative
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+
+
 def _round(value: float, digits: int = 3) -> float:
     return round(float(value), digits)
 
@@ -38,6 +43,40 @@ def dashboard_data() -> dict[str, object]:
     gpcr_full = _load("docs/esmc6b_full_transfer_audit.json")
     ddgemb = _load("docs/esmc6b_ddgemb_transfer_audit.json")
     structure_scale = _load("docs/proteinmpnn_esmc6b_scale_audit.json")
+    hierarchy_v2 = _load(
+        "checkpoints/esmc_600m_v2/hierarchy_ablation.json"
+    )
+    hierarchy_transfer = _load(
+        "checkpoints/esmc_600m_v2/hierarchy_transfer_metrics.json"
+    )
+    hierarchy_multi = _load(
+        "checkpoints/esmc_600m_v2/hierarchy_multi_metrics.json"
+    )
+    hierarchy_6b = _load_optional(
+        "checkpoints/esmc_6b_v2/hierarchy_scale_report.json"
+    )
+    hierarchy_6b_multi = _load_optional(
+        "checkpoints/esmc_6b_v2/hierarchy_multi_metrics.json"
+    )
+    hierarchy_6b_transfer = _load_optional(
+        "checkpoints/esmc_6b_v2/hierarchy_transfer_metrics.json"
+    )
+    hierarchy_600m_fp32 = _load_optional(
+        "checkpoints/esmc_600m_v2_fp32/hierarchy_scale_report.json"
+    )
+    state_6b = _load_optional(
+        "checkpoints/esmc_6b_state_potential_fp32/state_potential_report.json"
+    )
+    state_6b_multi = _load_optional(
+        "checkpoints/esmc_6b_state_potential_fp32/hierarchy_multi_metrics.json"
+    )
+    zero_shot_gpcr = _load_optional(
+        "checkpoints/esmc_6b_state_potential_fp32/"
+        "zero_shot_membrane_rank_report.json"
+    )
+    c5ar_state = _load_optional(
+        "docs/esmc6b_state_potential_c5ar_audit.json"
+    )
 
     test_600m = single_600m["test"]
     test_6b = single_6b["test"]
@@ -53,22 +92,40 @@ def dashboard_data() -> dict[str, object]:
     structure_confirmation = structure_scale["frozen_confirmation"]
     small_structure_prior = structure_scale["post_hoc_small_prior_diagnostic"]
     s669 = ddgemb["s2450_transfer"]["S669_results"]
+    hierarchy_main = hierarchy_v2["selected_main"]
+    hierarchy_test = hierarchy_main["test"]["regression"]
+    hierarchy_retrieval = hierarchy_main["test"]["retrieval_from_ddg"]
+    hierarchy_losses = [
+        float(member["history"][-1]["train_loss"]["total"])
+        for member in hierarchy_main["members"]
+    ]
+    hierarchy_adapters = hierarchy_transfer["adapters"]
+    hierarchy_multi_test = hierarchy_multi["evaluation"]["test"]
 
     loss_600m = _final_losses(single_600m)
     loss_6b = _final_losses(single_6b)
 
-    return {
+    data = {
         "status": {
-            "headline": "Ready for mutation screening; GPCR magnitudes remain uncertain",
-            "fast_path": "ESM-C 600M",
-            "best_ddg": "ESM-C 6B",
-            "gpcr_path": "600M rank + optional 6B rerank",
-            "training": "Complete",
-            "structure_audit": "ProteinMPNN logic scaled to 6B; rejected for inconsistent transfer",
+            "headline": (
+                "600M v2 promoted on the frozen generic test; "
+                "GPCR calibration remains diagnostic"
+            ),
+            "fast_path": "ESM-C 600M v2 hierarchy",
+            "best_ddg": "600M v2 ≈ retained 6B baseline",
+            "gpcr_path": (
+                "Retained GPCR consensus + v2 signed-ddG support"
+            ),
+            "training": "600M single, transfer, and multi complete; 6B next",
+            "structure_audit": (
+                "Learned ProteinMPNN fusion passed at 600M; the older "
+                "post-hoc 6B likelihood blend remains rejected"
+            ),
         },
         "expected_ddg": {
-            "generic_mae": _round(test_6b["mae"]),
-            "generic_rmse": _round(test_6b["rmse"]),
+            "generic_mae": _round(hierarchy_test["mae"]),
+            "generic_rmse": _round(hierarchy_test["rmse"]),
+            "retained_6b_mae": _round(test_6b["mae"]),
             "experimental_mae": _round(protherm_6b["mae"]),
             "experimental_rmse": _round(protherm_6b["rmse"]),
             "s669_mae": _round(s669["existing_protherm_head"]["mae"]),
@@ -80,6 +137,37 @@ def dashboard_data() -> dict[str, object]:
             ),
         },
         "losses": [
+            {
+                "model": "600M v2 hierarchy ensemble",
+                "objective": "joint Huber + rank + retrieval",
+                "members": 5,
+                "final_median": _round(
+                    statistics.median(hierarchy_losses), 4
+                ),
+                "final_range": [
+                    _round(min(hierarchy_losses), 4),
+                    _round(max(hierarchy_losses), 4),
+                ],
+                "note": (
+                    "50-epoch floor; checkpoints selected by protein-held-out "
+                    "validation, not final train loss."
+                ),
+            },
+            {
+                "model": "600M v2 double epistasis",
+                "objective": "total + supervised epistasis Huber",
+                "members": 1,
+                "final_median": _round(
+                    hierarchy_multi["training"]["history"][-1]["train_loss"],
+                    4,
+                ),
+                "final_range": None,
+                "note": (
+                    "Best validation checkpoint was epoch "
+                    f"{hierarchy_multi['training']['best_epoch']}; training "
+                    "continued through the 50-epoch floor."
+                ),
+            },
             {
                 "model": "600M single ensemble",
                 "objective": "Huber",
@@ -120,6 +208,41 @@ def dashboard_data() -> dict[str, object]:
             },
         ],
         "models": [
+            {
+                "name": "ESM-C 600M v2 hierarchy",
+                "role": "Promoted generic screen + stabilizer retrieval",
+                "status": "production",
+                "target": (
+                    "ΔΔG, kcal/mol · AP "
+                    f"{_round(hierarchy_retrieval['average_precision'])} · "
+                    f"top-50 {int(hierarchy_retrieval['hits_at_50'])}"
+                ),
+                "test": "Same frozen Megascale protein holdout",
+                "rows": int(hierarchy_main["test_rows"]),
+                "spearman": _round(hierarchy_test["spearman"]),
+                "pearson": _round(hierarchy_test["pearson"]),
+                "mae": _round(hierarchy_test["mae"]),
+                "rmse": _round(hierarchy_test["rmse"]),
+            },
+            {
+                "name": "ESM-C 600M v2 double",
+                "role": "Constituent sum + learned epistasis",
+                "status": "production",
+                "target": (
+                    "ΔΔG, kcal/mol · additive MAE "
+                    f"{_round(hierarchy_multi_test['additive']['mae'])}"
+                ),
+                "test": "Megascale-D protein holdout",
+                "rows": int(hierarchy_multi_test["total"]["n"]),
+                "spearman": _round(
+                    hierarchy_multi_test["total"]["spearman"]
+                ),
+                "pearson": _round(
+                    hierarchy_multi_test["total"]["pearson"]
+                ),
+                "mae": _round(hierarchy_multi_test["total"]["mae"]),
+                "rmse": _round(hierarchy_multi_test["total"]["rmse"]),
+            },
             {
                 "name": "ESM-C 600M single",
                 "role": "Fast production first pass",
@@ -182,6 +305,62 @@ def dashboard_data() -> dict[str, object]:
             },
         ],
         "transfer": [
+            {
+                "model": "600M v2 ProTherm diagnostic",
+                "endpoint": "ΔΔG, kcal/mol",
+                "spearman": _round(
+                    hierarchy_adapters["protherm"]["evaluation"]["test"][
+                        "spearman"
+                    ]
+                ),
+                "mae": _round(
+                    hierarchy_adapters["protherm"]["evaluation"]["test"]["mae"]
+                ),
+                "rmse": _round(
+                    hierarchy_adapters["protherm"]["evaluation"]["test"][
+                        "rmse"
+                    ]
+                ),
+                "rows": int(
+                    hierarchy_adapters["protherm"]["evaluation"]["test"]["n"]
+                ),
+            },
+            {
+                "model": "600M v2 MPTherm diagnostic",
+                "endpoint": "ΔTm, °C",
+                "spearman": _round(
+                    hierarchy_adapters["mptherm"]["evaluation"]["test"][
+                        "spearman"
+                    ]
+                ),
+                "mae": _round(
+                    hierarchy_adapters["mptherm"]["evaluation"]["test"]["mae"]
+                ),
+                "rmse": _round(
+                    hierarchy_adapters["mptherm"]["evaluation"]["test"]["rmse"]
+                ),
+                "rows": int(
+                    hierarchy_adapters["mptherm"]["evaluation"]["test"]["n"]
+                ),
+            },
+            {
+                "model": "600M v2 GPCR ΔTm diagnostic",
+                "endpoint": "ΔTm, °C",
+                "spearman": _round(
+                    hierarchy_adapters["gpcr_tm"]["evaluation"]["test"][
+                        "spearman"
+                    ]
+                ),
+                "mae": _round(
+                    hierarchy_adapters["gpcr_tm"]["evaluation"]["test"]["mae"]
+                ),
+                "rmse": _round(
+                    hierarchy_adapters["gpcr_tm"]["evaluation"]["test"]["rmse"]
+                ),
+                "rows": int(
+                    hierarchy_adapters["gpcr_tm"]["evaluation"]["test"]["n"]
+                ),
+            },
             {
                 "model": "600M MPTherm",
                 "endpoint": "ΔTm, °C",
@@ -311,6 +490,17 @@ def dashboard_data() -> dict[str, object]:
         },
         "same_project_comparisons": [
             {
+                "model": "Our 600M v2 hierarchy",
+                "input": "Sequence + learned structure context",
+                "benchmark": "Frozen generic protein holdout",
+                "metric": (
+                    "ρ 0.818 · MAE 0.513 · stabilizer AP 0.386 · "
+                    "top-50 33"
+                ),
+                "decision": "Promoted; every prespecified gate passed",
+                "tone": "good",
+            },
+            {
                 "model": "Our 600M MPTherm head",
                 "input": "Sequence",
                 "benchmark": "GPCR-tm official test",
@@ -389,6 +579,9 @@ def dashboard_data() -> dict[str, object]:
             },
         ],
         "sources": [
+            "checkpoints/esmc_600m_v2/hierarchy_ablation.json",
+            "checkpoints/esmc_600m_v2/hierarchy_transfer_metrics.json",
+            "checkpoints/esmc_600m_v2/hierarchy_multi_metrics.json",
             "checkpoints/esmc_600m/single_metrics.json",
             "checkpoints/esmc_600m/multi_metrics.json",
             "checkpoints/esmc_600m/transfer_metrics.json",
@@ -401,6 +594,377 @@ def dashboard_data() -> dict[str, object]:
             "docs/proteinmpnn_esmc6b_scale_audit.json",
         ],
     }
+    if hierarchy_6b is not None:
+        candidate = hierarchy_6b["candidate"]
+        regression = candidate["test"]["regression"]
+        validation = candidate["validation"]
+        retrieval_key = (
+            "retrieval_head"
+            if float(validation["retrieval_head"]["average_precision"])
+            >= float(validation["retrieval_from_ddg"]["average_precision"])
+            else "retrieval_from_ddg"
+        )
+        retrieval = candidate["test"][retrieval_key]
+        eligible = bool(hierarchy_6b["production_eligible"])
+        losses = [
+            float(member["history"][-1]["train_loss"]["total"])
+            for member in candidate["members"]
+        ]
+        data["losses"].insert(
+            0,
+            {
+                "model": "6B v2 hierarchy ensemble · native FP32",
+                "objective": "joint Huber + rank + retrieval",
+                "members": len(losses),
+                "final_median": _round(statistics.median(losses), 4),
+                "final_range": [
+                    _round(min(losses), 4),
+                    _round(max(losses), 4),
+                ],
+                "note": (
+                    "Native FP32 ESM-C/cache/head; TF32 disabled; "
+                    "protein-held-out checkpoint selection."
+                ),
+            },
+        )
+        data["models"].insert(
+            0,
+            {
+                "name": "ESM-C 6B v2 hierarchy · native FP32",
+                "role": (
+                    "Highest-accuracy generic screen"
+                    if eligible
+                    else "Frozen scale diagnostic"
+                ),
+                "status": "production" if eligible else "limited",
+                "target": (
+                    f"ΔΔG, kcal/mol · AP "
+                    f"{_round(retrieval['average_precision'])} · "
+                    f"top-50 {int(retrieval['hits_at_50'])}"
+                ),
+                "test": "Same frozen Megascale protein holdout",
+                "rows": int(candidate["test_rows"]),
+                "spearman": _round(regression["spearman"]),
+                "pearson": _round(regression["pearson"]),
+                "mae": _round(regression["mae"]),
+                "rmse": _round(regression["rmse"]),
+            },
+        )
+        data["same_project_comparisons"].insert(
+            0,
+            {
+                "model": "Our 6B v2 hierarchy · native FP32",
+                "input": "Sequence + learned structure context",
+                "benchmark": "Frozen generic protein holdout",
+                "metric": (
+                    f"ρ {_round(regression['spearman'])} · "
+                    f"MAE {_round(regression['mae'])} · "
+                    f"stabilizer AP {_round(retrieval['average_precision'])} · "
+                    f"top-50 {int(retrieval['hits_at_50'])}"
+                ),
+                "decision": (
+                    "Highest-accuracy production path; every scale gate passed"
+                    if eligible
+                    else "Did not pass all scale gates"
+                ),
+                "tone": "good" if eligible else "bad",
+            },
+        )
+        data["status"]["headline"] = (
+            "6B v2 native-FP32 passed every generic promotion gate; "
+            "GPCR calibration remains diagnostic"
+            if eligible
+            else "6B v2 native-FP32 hierarchy did not pass every promotion gate"
+        )
+        data["status"]["best_ddg"] = (
+            "6B v2 native FP32"
+            if eligible
+            else "600M v2 / retained 6B baseline"
+        )
+        data["status"]["training"] = (
+            "6B v2 native-FP32 single, transfer, and multi complete"
+        )
+        data["expected_ddg"]["generic_mae"] = _round(regression["mae"])
+        data["expected_ddg"]["generic_rmse"] = _round(regression["rmse"])
+        data["sources"].append(
+            "checkpoints/esmc_6b_v2/hierarchy_scale_report.json"
+        )
+    if hierarchy_6b_multi is not None:
+        multi_test = hierarchy_6b_multi["evaluation"]["test"]
+        multi_training = hierarchy_6b_multi["training"]
+        data["losses"].insert(
+            1,
+            {
+                "model": "6B v2 double epistasis · native FP32",
+                "objective": "total + supervised epistasis Huber",
+                "members": 1,
+                "final_median": _round(
+                    multi_training["history"][-1]["train_loss"], 4
+                ),
+                "final_range": None,
+                "note": (
+                    f"Validation selected epoch {multi_training['best_epoch']}; "
+                    f"training continued through the "
+                    f"{multi_training['minimum_epochs']}-epoch floor."
+                ),
+            },
+        )
+        data["models"].insert(
+            1,
+            {
+                "name": "ESM-C 6B v2 double · native FP32",
+                "role": "Constituent sum + permutation-invariant epistasis",
+                "status": "production",
+                "target": (
+                    "ΔΔG, kcal/mol · epistasis ρ "
+                    f"{_round(multi_test['epistasis']['spearman'])}"
+                ),
+                "test": "Megascale-D protein holdout",
+                "rows": int(multi_test["total"]["n"]),
+                "spearman": _round(multi_test["total"]["spearman"]),
+                "pearson": _round(multi_test["total"]["pearson"]),
+                "mae": _round(multi_test["total"]["mae"]),
+                "rmse": _round(multi_test["total"]["rmse"]),
+            },
+        )
+        data["sources"].append(
+            "checkpoints/esmc_6b_v2/hierarchy_multi_metrics.json"
+        )
+    if hierarchy_6b_transfer is not None:
+        transfer_rows = []
+        for key, label, endpoint in (
+            ("protherm", "6B v2 ProTherm diagnostic", "ΔΔG, kcal/mol"),
+            ("mptherm", "6B v2 MPTherm diagnostic", "ΔTm, °C"),
+            ("gpcr_tm", "6B v2 GPCR ΔTm diagnostic", "ΔTm, °C"),
+            (
+                "gpcr_rank",
+                "6B v2 GPCR crystallization rank diagnostic",
+                "macro-assay rank · overall ρ -0.161 · not physical units",
+            ),
+        ):
+            metrics = hierarchy_6b_transfer["adapters"][key]["evaluation"][
+                "test"
+            ]
+            transfer_rows.append(
+                {
+                    "model": label,
+                    "endpoint": endpoint,
+                    "spearman": _round(
+                        metrics.get("macro_assay_spearman", metrics["spearman"])
+                    ),
+                    "mae": _round(metrics["mae"]),
+                    "rmse": _round(metrics["rmse"]),
+                    "rows": int(metrics["n"]),
+                }
+            )
+        data["transfer"] = transfer_rows + data["transfer"]
+        data["sources"].append(
+            "checkpoints/esmc_6b_v2/hierarchy_transfer_metrics.json"
+        )
+    if hierarchy_600m_fp32 is not None:
+        fast_candidate = hierarchy_600m_fp32["candidate"]
+        fast_regression = fast_candidate["test"]["regression"]
+        fast_retrieval = fast_candidate["test"]["retrieval_from_ddg"]
+        improves_regression = (
+            float(fast_regression["spearman"])
+            > float(hierarchy_test["spearman"])
+            and float(fast_regression["mae"]) < float(hierarchy_test["mae"])
+        )
+        improves_retrieval = (
+            float(fast_retrieval["average_precision"])
+            >= float(hierarchy_retrieval["average_precision"])
+        )
+        data["models"].insert(
+            2 if hierarchy_6b_multi is not None else 1,
+            {
+                "name": "ESM-C 600M v2 retrain · native FP32",
+                "role": (
+                    "Better fast regression; retained 600M v2 has higher AP"
+                    if improves_regression and not improves_retrieval
+                    else "Native-FP32 fast-path candidate"
+                ),
+                "status": (
+                    "production"
+                    if improves_regression and improves_retrieval
+                    else "limited"
+                ),
+                "target": (
+                    f"ΔΔG, kcal/mol · AP "
+                    f"{_round(fast_retrieval['average_precision'])} · "
+                    f"top-50 {int(fast_retrieval['hits_at_50'])}"
+                ),
+                "test": "Same frozen Megascale protein holdout",
+                "rows": int(fast_candidate["test_rows"]),
+                "spearman": _round(fast_regression["spearman"]),
+                "pearson": _round(fast_regression["pearson"]),
+                "mae": _round(fast_regression["mae"]),
+                "rmse": _round(fast_regression["rmse"]),
+            },
+        )
+        data["sources"].append(
+            "checkpoints/esmc_600m_v2_fp32/hierarchy_scale_report.json"
+        )
+    if state_6b is not None:
+        blended = state_6b["blended"]["test"]
+        regression = blended["regression"]
+        retrieval = blended["retrieval_from_ddg"]
+        state_weight = state_6b["blend_selection"][
+            "state_potential_weight"
+        ]
+        losses = [
+            float(member["history"][-1]["train_loss"]["total"])
+            for member in state_6b["members"]
+        ]
+        data["status"].update(
+            {
+                "headline": (
+                    "Strict-FP32 6B hierarchy/state fusion is the promoted "
+                    "generic model; retained GPCR reranker remains best on C5aR"
+                ),
+                "best_ddg": "6B hierarchy + WT-conditioned state potential",
+                "training": (
+                    "600M logic validation and strict-FP32 6B single/double "
+                    "scale-up complete"
+                ),
+                "gpcr_path": (
+                    "Promoted fused ΔΔG + retained GPCR-specific reranker"
+                ),
+            }
+        )
+        data["expected_ddg"]["generic_mae"] = _round(regression["mae"])
+        data["expected_ddg"]["generic_rmse"] = _round(regression["rmse"])
+        data["losses"].insert(
+            0,
+            {
+                "model": "6B WT-conditioned state-potential ensemble",
+                "objective": "Huber + rank + stabilizer retrieval",
+                "members": len(losses),
+                "final_median": _round(statistics.median(losses), 4),
+                "final_range": [
+                    _round(min(losses), 4),
+                    _round(max(losses), 4),
+                ],
+                "note": (
+                    f"Validation selected state weight {state_weight}; strict "
+                    "FP32 and TF32 disabled."
+                ),
+            },
+        )
+        data["models"].insert(
+            0,
+            {
+                "name": "ESM-C 6B hierarchy/state fusion · strict FP32",
+                "role": "Highest-accuracy generic stabilizing-mutation screen",
+                "status": "production",
+                "target": (
+                    f"ΔΔG, kcal/mol · AP "
+                    f"{_round(retrieval['average_precision'])} · "
+                    f"top-50 {int(retrieval['hits_at_50'])}"
+                ),
+                "test": "Frozen Megascale protein holdout",
+                "rows": int(regression["n"]),
+                "spearman": _round(regression["spearman"]),
+                "pearson": _round(regression["pearson"]),
+                "mae": _round(regression["mae"]),
+                "rmse": _round(regression["rmse"]),
+            },
+        )
+        data["same_project_comparisons"].insert(
+            0,
+            {
+                "model": "Our 6B hierarchy/state fusion · strict FP32",
+                "input": "WT/mutant context + WT-conditioned 20-state potential",
+                "benchmark": "Frozen generic protein holdout",
+                "metric": (
+                    f"ρ {_round(regression['spearman'])} · "
+                    f"MAE {_round(regression['mae'])} · "
+                    f"AP {_round(retrieval['average_precision'])} · "
+                    f"top-50 {int(retrieval['hits_at_50'])}"
+                ),
+                "decision": "Promoted; every frozen single-mutant gate passed",
+                "tone": "good",
+            },
+        )
+        data["sources"].append(
+            "checkpoints/esmc_6b_state_potential_fp32/"
+            "state_potential_report.json"
+        )
+    if state_6b_multi is not None:
+        multi_test = state_6b_multi["evaluation"]["test"]
+        eligible = bool(
+            state_6b_multi.get("promotion", {}).get(
+                "production_eligible", False
+            )
+        )
+        data["models"].insert(
+            1,
+            {
+                "name": "ESM-C 6B fused double-mutant model",
+                "role": "Unordered constituent set + learned epistasis",
+                "status": "production" if eligible else "limited",
+                "target": (
+                    "ΔΔG, kcal/mol · epistasis ρ "
+                    f"{_round(multi_test['epistasis']['spearman'])}"
+                ),
+                "test": "Megascale-D protein holdout",
+                "rows": int(multi_test["total"]["n"]),
+                "spearman": _round(multi_test["total"]["spearman"]),
+                "pearson": _round(multi_test["total"]["pearson"]),
+                "mae": _round(multi_test["total"]["mae"]),
+                "rmse": _round(multi_test["total"]["rmse"]),
+            },
+        )
+        data["sources"].append(
+            "checkpoints/esmc_6b_state_potential_fp32/"
+            "hierarchy_multi_metrics.json"
+        )
+    if zero_shot_gpcr is not None:
+        selected = zero_shot_gpcr["gpcr_blend_selection"]
+        data["gpcr"]["development"]["fused_macro_spearman"] = _round(
+            selected["selected_development"]["macro_protein_spearman"]
+        )
+        data["gpcr"]["official_test"]["fused_macro_spearman"] = _round(
+            selected["selected_official"]["macro_protein_spearman"]
+        )
+        data["status"]["structure_audit"] = (
+            "Membrane-only adapter rejected: validation selected weight 0; "
+            "generic fusion retained"
+        )
+        data["sources"].append(
+            "checkpoints/esmc_6b_state_potential_fp32/"
+            "zero_shot_membrane_rank_report.json"
+        )
+    if c5ar_state is not None:
+        candidate = c5ar_state["evaluation"]["candidate"]
+        data["gpcr"]["c5ar"].update(
+            {
+                "fusion_auc": _round(candidate["roc_auc"]),
+                "fusion_ap": _round(candidate["average_precision"]),
+                "fusion_top50": int(candidate["positives_in_top50"]),
+            }
+        )
+        data["same_project_comparisons"].insert(
+            1,
+            {
+                "model": "6B generic fusion on C5aR",
+                "input": "Sequence + WT-conditioned state potential",
+                "benchmark": "Independent C5aR saturation scan",
+                "metric": (
+                    f"AUC {_round(candidate['roc_auc'])} · "
+                    f"AP {_round(candidate['average_precision'])} · "
+                    f"top-50 {int(candidate['positives_in_top50'])}/34"
+                ),
+                "decision": (
+                    "Improves fast MPTherm but does not replace retained "
+                    "GPCR reranker"
+                ),
+                "tone": "bad",
+            },
+        )
+        data["sources"].append(
+            "docs/esmc6b_state_potential_c5ar_audit.json"
+        )
+    return data
 
 
 HTML_TEMPLATE = r"""<!doctype html>
@@ -570,10 +1134,10 @@ HTML_TEMPLATE = r"""<!doctype html>
     <div class="panel">
       <h2>My assessment</h2>
       <div class="callout">
-        <strong>Use it now for screening, not for believing a decimal.</strong>
-        <p>The 6B model is genuinely better on protein-disjoint generic stability. The GPCR evidence is directionally useful but small, so receptor ranking is more trustworthy than absolute ΔΔG. ProteinMPNN structure likelihood was scaled from the 600M development workflow to the 6B rank; its large development gain did not transfer, so the production path remains sequence-only.</p>
+        <strong>Use v2 now for broad screening, not for believing a GPCR decimal.</strong>
+        <p>The 600M hierarchy combines mutation direction, ordered local and global ESM-C context, membrane priors, and learned ProteinMPNN features. It passed every prespecified generic promotion gate and approximately matches the retained 6B baseline. The separate GPCR and membrane transfer heads did not generalize strongly enough to claim calibrated magnitudes, so receptor ranking remains more trustworthy than absolute ΔΔG.</p>
       </div>
-      <p><strong>Practical target:</strong> rank a broad single-mutant scan, inspect the 6B rerank, retain general-ΔΔG support, and test a diverse panel rather than only near-duplicate top hits.</p>
+      <p><strong>Practical target:</strong> rank a broad single-mutant scan, retain general-ΔΔG support, and test a diverse panel rather than only near-duplicate top hits.</p>
     </div>
   </section>
 
@@ -604,7 +1168,7 @@ document.querySelector("#stamp").innerHTML =
 
 const e = DATA.expected_ddg;
 document.querySelector("#kpis").innerHTML = [
-  ["Best generic ρ", fmt(DATA.models[1].spearman), "6B · protein-held-out"],
+  ["Best generic ρ", fmt(DATA.models[0].spearman), "600M v2 · protein-held-out"],
   ["Typical |ΔΔG error|", `${fmt(e.generic_mae, 2)} kcal/mol`, "Megascale holdout"],
   ["Experimental transfer", `${fmt(e.experimental_mae, 2)} kcal/mol`, "ProTherm holdout"],
   ["C5aR rerank AP", fmt(DATA.gpcr.c5ar.rerank_ap), `${DATA.gpcr.c5ar.rerank_top50}/34 positives in top 50`],
@@ -632,7 +1196,8 @@ document.querySelector("#losses").innerHTML = DATA.losses.map(l => `
 document.querySelector("#ddg-callout").innerHTML =
   `<strong>Operational expectation: roughly ±1 kcal/mol for a new GPCR.</strong><p>${e.interpretation}</p>`;
 document.querySelector("#ddg-bars").innerHTML =
-  bar("6B Megascale MAE", e.generic_mae, 1.5) +
+  bar("600M v2 Megascale MAE", e.generic_mae, 1.5) +
+  bar("Retained 6B MAE", e.retained_6b_mae, 1.5, true) +
   bar("6B ProTherm MAE", e.experimental_mae, 1.5, true) +
   bar("S669 local MAE", e.s669_mae, 1.5);
 

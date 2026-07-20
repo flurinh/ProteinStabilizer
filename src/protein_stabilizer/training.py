@@ -7,7 +7,7 @@ import json
 import math
 import random
 import time
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Callable, Iterable
@@ -20,10 +20,14 @@ import torch
 from scipy.stats import pearsonr, spearmanr
 from sklearn.decomposition import PCA
 from sklearn.linear_model import Ridge
+from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
+from .embeddings import file_sha256
 from .models import (
+    DirectionalSingleMutationEnsemble,
+    DirectionalSingleMutationHead,
     EpistasisConfig,
     MultiMutationHead,
     SingleHeadConfig,
@@ -58,6 +62,169 @@ def regression_metrics(target: np.ndarray, prediction: np.ndarray) -> dict[str, 
         "rmse": float(np.sqrt(np.mean(np.square(error)))),
         "pearson": pearson,
         "spearman": spearman,
+        "direction_accuracy": float(np.mean((target < 0) == (prediction < 0))),
+    }
+
+
+def stabilizer_retrieval_metrics(
+    target: np.ndarray,
+    score: np.ndarray,
+    *,
+    threshold: float = -0.5,
+    top_ks: tuple[int, ...] = (20, 50),
+) -> dict[str, float | int]:
+    """Evaluate rare stabilizer retrieval with larger scores ranked first."""
+
+    target = np.asarray(target, dtype=np.float64)
+    score = np.asarray(score, dtype=np.float64)
+    if target.shape != score.shape or target.ndim != 1:
+        raise ValueError("retrieval arrays must have equal one-dimensional shape")
+    labels = target < threshold
+    positives = int(labels.sum())
+    negatives = int((~labels).sum())
+    prevalence = float(labels.mean()) if len(labels) else math.nan
+    result: dict[str, float | int] = {
+        "n": int(len(labels)),
+        "threshold": float(threshold),
+        "positives": positives,
+        "prevalence": prevalence,
+        "average_precision": (
+            float(average_precision_score(labels, score)) if positives else math.nan
+        ),
+        "auroc": (
+            float(roc_auc_score(labels, score))
+            if positives and negatives
+            else math.nan
+        ),
+    }
+    order = np.argsort(-score, kind="stable")
+    for requested_k in top_ks:
+        k = min(int(requested_k), len(labels))
+        hits = int(labels[order[:k]].sum()) if k else 0
+        precision = float(hits / k) if k else math.nan
+        result[f"hits_at_{requested_k}"] = hits
+        result[f"precision_at_{requested_k}"] = precision
+        result[f"recall_at_{requested_k}"] = (
+            float(hits / positives) if positives else math.nan
+        )
+        result[f"enrichment_at_{requested_k}"] = (
+            float(precision / prevalence) if prevalence > 0 else math.nan
+        )
+    fraction_k = max(1, math.ceil(0.10 * len(labels))) if len(labels) else 0
+    fraction_hits = int(labels[order[:fraction_k]].sum()) if fraction_k else 0
+    result["hits_at_10_percent"] = fraction_hits
+    result["precision_at_10_percent"] = (
+        float(fraction_hits / fraction_k) if fraction_k else math.nan
+    )
+    result["recall_at_10_percent"] = (
+        float(fraction_hits / positives) if positives else math.nan
+    )
+    result["enrichment_at_10_percent"] = (
+        float(result["precision_at_10_percent"] / prevalence)
+        if prevalence > 0 and fraction_k
+        else math.nan
+    )
+    return result
+
+
+@dataclass(frozen=True)
+class DirectionalObjectiveConfig:
+    """Fixed v2 objective used for the controlled directional ablation."""
+
+    stabilizer_threshold: float = -0.5
+    neutral_upper_threshold: float = 0.5
+    regression_weight: float = 1.0
+    retrieval_weight: float = 0.25
+    ranking_weight: float = 0.10
+    ranking_pairs_per_batch: int = 256
+    minimum_ranking_gap: float = 0.25
+    maximum_bin_weight: float = 6.0
+
+
+def balanced_stability_weights(
+    target: np.ndarray,
+    *,
+    stabilizer_threshold: float = -0.5,
+    neutral_upper_threshold: float = 0.5,
+    maximum_weight: float = 6.0,
+) -> np.ndarray:
+    """Balance stabilizing, near-neutral, and destabilizing target regions."""
+
+    target = np.asarray(target, dtype=np.float32)
+    if target.ndim != 1 or not len(target):
+        raise ValueError("target must be a non-empty one-dimensional array")
+    bins = (
+        target < stabilizer_threshold,
+        (target >= stabilizer_threshold) & (target <= neutral_upper_threshold),
+        target > neutral_upper_threshold,
+    )
+    weights = np.ones(len(target), dtype=np.float32)
+    populated = [mask for mask in bins if np.any(mask)]
+    for mask in populated:
+        weights[mask] = len(target) / (len(populated) * int(mask.sum()))
+    weights = np.clip(weights, 1.0 / maximum_weight, maximum_weight)
+    weights /= weights.mean()
+    return weights
+
+
+def _ranking_pair_indices(
+    protein_id: np.ndarray,
+    target: np.ndarray,
+    indices: np.ndarray,
+    rng: np.random.Generator,
+    *,
+    count: int,
+    minimum_gap: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Sample within-protein pairs, returning the more stable member first."""
+
+    groups = [
+        indices[protein_id[indices] == name]
+        for name in sorted(set(protein_id[indices].tolist()))
+    ]
+    groups = [
+        group
+        for group in groups
+        if len(group) >= 2 and float(np.ptp(target[group])) >= minimum_gap
+    ]
+    if not groups or count <= 0:
+        empty = np.empty(0, dtype=np.int64)
+        return empty, empty
+    stable: list[int] = []
+    unstable: list[int] = []
+    attempts = 0
+    maximum_attempts = max(100, 20 * count)
+    while len(stable) < count and attempts < maximum_attempts:
+        group = groups[int(rng.integers(len(groups)))]
+        left, right = rng.choice(group, size=2, replace=False)
+        attempts += 1
+        difference = float(target[left] - target[right])
+        if abs(difference) < minimum_gap:
+            continue
+        if difference < 0:
+            stable.append(int(left))
+            unstable.append(int(right))
+        else:
+            stable.append(int(right))
+            unstable.append(int(left))
+    return np.asarray(stable, dtype=np.int64), np.asarray(unstable, dtype=np.int64)
+
+
+def _directional_evaluation(
+    target: np.ndarray,
+    ddg: np.ndarray,
+    retrieval_score: np.ndarray,
+    *,
+    threshold: float,
+) -> dict[str, object]:
+    return {
+        "regression": regression_metrics(target, ddg),
+        "retrieval_from_ddg": stabilizer_retrieval_metrics(
+            target, -ddg, threshold=threshold
+        ),
+        "retrieval_head": stabilizer_retrieval_metrics(
+            target, retrieval_score, threshold=threshold
+        ),
     }
 
 
@@ -260,6 +427,587 @@ def train_single_head(
     )
     _save_json(checkpoint_dir / "single_metrics.json", metrics)
     return metrics
+
+
+def train_directional_single_head(
+    feature_dir: Path,
+    checkpoint_dir: Path,
+    *,
+    seed: int = 20260715,
+    epochs: int = 30,
+    patience: int = 6,
+    batch_size: int = 1024,
+    learning_rate: float = 1e-3,
+    weight_decay: float = 1e-4,
+    ensemble_size: int = 5,
+    device: str = "cuda",
+    objective: DirectionalObjectiveConfig = DirectionalObjectiveConfig(),
+) -> dict[str, object]:
+    """Train v2 candidate 2: exact directionality plus stabilizer retrieval."""
+
+    if ensemble_size < 1:
+        raise ValueError("directional ensemble size must be positive")
+    torch_device = torch.device(device if torch.cuda.is_available() else "cpu")
+    with h5py.File(Path(feature_dir) / "single_train.h5", "r") as handle:
+        delta = np.asarray(handle["delta"], dtype=np.float16)
+        target = np.asarray(handle["target"], dtype=np.float32)
+        split = np.asarray(handle["split"].asstr()[:])
+        protein_id = np.asarray(handle["protein_id"].asstr()[:])
+        embedding_provenance = json.loads(handle.attrs["embedding_provenance"])
+        train_source_sha256 = str(handle.attrs["source_sha256"])
+    with h5py.File(Path(feature_dir) / "single_test.h5", "r") as handle:
+        test_delta = np.asarray(handle["delta"], dtype=np.float16)
+        test_target = np.asarray(handle["target"], dtype=np.float32)
+        test_protein_id = np.asarray(handle["protein_id"].asstr()[:])
+        test_embedding_provenance = json.loads(handle.attrs["embedding_provenance"])
+        test_source_sha256 = str(handle.attrs["source_sha256"])
+    if embedding_provenance != test_embedding_provenance:
+        raise RuntimeError("directional train/test embedding provenance mismatch")
+
+    train_indices = np.flatnonzero(split == "train")
+    val_indices = np.flatnonzero(split == "val")
+    if not len(train_indices) or not len(val_indices):
+        raise RuntimeError("directional training requires protein-disjoint train/val rows")
+    config = SingleHeadConfig(embedding_dim=delta.shape[1])
+    train_weights = np.ones(len(target), dtype=np.float32)
+    train_weights[train_indices] = balanced_stability_weights(
+        target[train_indices],
+        stabilizer_threshold=objective.stabilizer_threshold,
+        neutral_upper_threshold=objective.neutral_upper_threshold,
+        maximum_weight=objective.maximum_bin_weight,
+    )
+    started = time.monotonic()
+    member_payloads: list[dict[str, object]] = []
+    member_metrics: list[dict[str, object]] = []
+    val_ddg_predictions: list[np.ndarray] = []
+    val_retrieval_predictions: list[np.ndarray] = []
+    test_ddg_predictions: list[np.ndarray] = []
+    test_retrieval_predictions: list[np.ndarray] = []
+    huber = torch.nn.HuberLoss(delta=1.0, reduction="none")
+    binary_cross_entropy = torch.nn.BCEWithLogitsLoss(reduction="none")
+
+    for member_index in range(ensemble_size):
+        member_seed = seed + member_index
+        set_reproducible_seed(member_seed)
+        model = DirectionalSingleMutationHead(config).to(torch_device)
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=learning_rate, weight_decay=weight_decay
+        )
+        rng = np.random.default_rng(member_seed)
+        best_state: dict[str, torch.Tensor] | None = None
+        best_score = -math.inf
+        best_epoch = 0
+        history: list[dict[str, object]] = []
+        stale_epochs = 0
+        for epoch in range(1, epochs + 1):
+            model.train()
+            shuffled = rng.permutation(train_indices)
+            component_totals = {
+                "regression": 0.0,
+                "retrieval": 0.0,
+                "ranking": 0.0,
+                "total": 0.0,
+            }
+            seen = 0
+            for start in range(0, len(shuffled), batch_size):
+                indices = shuffled[start : start + batch_size]
+                x = torch.from_numpy(delta[indices].astype(np.float32)).to(torch_device)
+                y = torch.from_numpy(target[indices]).to(torch_device)
+                weight = torch.from_numpy(train_weights[indices]).to(torch_device)
+                label = (y < objective.stabilizer_threshold).float()
+                optimizer.zero_grad(set_to_none=True)
+                latent = model.latent(x)
+                ddg = model.output(latent).squeeze(-1)
+                retrieval_logit = model.retrieval_output(latent).squeeze(-1)
+                regression_loss = (huber(ddg, y) * weight).sum() / weight.sum()
+                retrieval_loss = (
+                    binary_cross_entropy(retrieval_logit, label) * weight
+                ).sum() / weight.sum()
+
+                stable_indices, unstable_indices = _ranking_pair_indices(
+                    protein_id,
+                    target,
+                    train_indices,
+                    rng,
+                    count=min(objective.ranking_pairs_per_batch, len(indices)),
+                    minimum_gap=objective.minimum_ranking_gap,
+                )
+                if len(stable_indices):
+                    stable_x = torch.from_numpy(
+                        delta[stable_indices].astype(np.float32)
+                    ).to(torch_device)
+                    unstable_x = torch.from_numpy(
+                        delta[unstable_indices].astype(np.float32)
+                    ).to(torch_device)
+                    stable_score = model.stabilizer_logit(stable_x)
+                    unstable_score = model.stabilizer_logit(unstable_x)
+                    ranking_loss = torch.nn.functional.softplus(
+                        -(stable_score - unstable_score)
+                    ).mean()
+                else:
+                    ranking_loss = torch.zeros((), device=torch_device)
+                loss = (
+                    objective.regression_weight * regression_loss
+                    + objective.retrieval_weight * retrieval_loss
+                    + objective.ranking_weight * ranking_loss
+                )
+                loss.backward()
+                optimizer.step()
+                count = len(indices)
+                component_totals["regression"] += float(regression_loss.detach()) * count
+                component_totals["retrieval"] += float(retrieval_loss.detach()) * count
+                component_totals["ranking"] += float(ranking_loss.detach()) * count
+                component_totals["total"] += float(loss.detach()) * count
+                seen += count
+
+            validation_ddg = _torch_predictions(
+                model,
+                (delta[val_indices],),
+                lambda x: model(x),
+                batch_size=batch_size,
+                device=torch_device,
+            )
+            validation_retrieval = _torch_predictions(
+                model,
+                (delta[val_indices],),
+                lambda x: model.stabilizer_logit(x),
+                batch_size=batch_size,
+                device=torch_device,
+            )
+            validation = _directional_evaluation(
+                target[val_indices],
+                validation_ddg,
+                validation_retrieval,
+                threshold=objective.stabilizer_threshold,
+            )
+            spearman = float(validation["regression"]["spearman"])
+            average_precision = float(
+                validation["retrieval_head"]["average_precision"]
+            )
+            selection_score = (
+                0.75 * spearman + 0.25 * average_precision
+                if np.isfinite(spearman) and np.isfinite(average_precision)
+                else -math.inf
+            )
+            losses = {
+                name: value / seen for name, value in component_totals.items()
+            }
+            history.append(
+                {
+                    "epoch": epoch,
+                    "train_loss": losses,
+                    "validation": validation,
+                    "selection_score": selection_score,
+                }
+            )
+            print(
+                f"directional member={member_index + 1}/{ensemble_size} "
+                f"epoch={epoch:02d} train={losses['total']:.4f} "
+                f"val_rmse={validation['regression']['rmse']:.4f} "
+                f"val_spearman={spearman:.4f} "
+                f"val_ap={average_precision:.4f}",
+                flush=True,
+            )
+            if selection_score > best_score + 1e-5:
+                best_score = selection_score
+                best_epoch = epoch
+                best_state = copy.deepcopy(model.state_dict())
+                stale_epochs = 0
+            else:
+                stale_epochs += 1
+                if stale_epochs >= patience:
+                    break
+        if best_state is None:
+            raise RuntimeError(
+                f"directional ensemble member {member_index} produced no valid model"
+            )
+        model.load_state_dict(best_state)
+        model.eval()
+        val_ddg = _torch_predictions(
+            model,
+            (delta[val_indices],),
+            lambda x: model(x),
+            batch_size=batch_size,
+            device=torch_device,
+        )
+        val_retrieval = _torch_predictions(
+            model,
+            (delta[val_indices],),
+            lambda x: model.stabilizer_logit(x),
+            batch_size=batch_size,
+            device=torch_device,
+        )
+        test_ddg = _torch_predictions(
+            model,
+            (test_delta,),
+            lambda x: model(x),
+            batch_size=batch_size,
+            device=torch_device,
+        )
+        test_retrieval = _torch_predictions(
+            model,
+            (test_delta,),
+            lambda x: model.stabilizer_logit(x),
+            batch_size=batch_size,
+            device=torch_device,
+        )
+        val_ddg_predictions.append(val_ddg)
+        val_retrieval_predictions.append(val_retrieval)
+        test_ddg_predictions.append(test_ddg)
+        test_retrieval_predictions.append(test_retrieval)
+        member_metrics.append(
+            {
+                "member": member_index,
+                "seed": member_seed,
+                "best_epoch": best_epoch,
+                "validation": _directional_evaluation(
+                    target[val_indices],
+                    val_ddg,
+                    val_retrieval,
+                    threshold=objective.stabilizer_threshold,
+                ),
+                "test": _directional_evaluation(
+                    test_target,
+                    test_ddg,
+                    test_retrieval,
+                    threshold=objective.stabilizer_threshold,
+                ),
+                "history": history,
+            }
+        )
+        member_payloads.append(
+            {
+                "config": asdict(config),
+                "state_dict": copy.deepcopy(model.cpu().state_dict()),
+            }
+        )
+
+    val_ddg = np.mean(val_ddg_predictions, axis=0)
+    val_retrieval = np.mean(val_retrieval_predictions, axis=0)
+    test_ddg = np.mean(test_ddg_predictions, axis=0)
+    test_retrieval = np.mean(test_retrieval_predictions, axis=0)
+    members = []
+    for payload in member_payloads:
+        member = DirectionalSingleMutationHead(config)
+        member.load_state_dict(payload["state_dict"])
+        members.append(member)
+    ensemble = DirectionalSingleMutationEnsemble(members).to(torch_device).eval()
+    constraint_count = min(2048, len(test_delta))
+    constraint_delta = torch.from_numpy(
+        test_delta[:constraint_count].astype(np.float32)
+    ).to(torch_device)
+    with torch.inference_mode():
+        forward = ensemble(constraint_delta)
+        reverse = ensemble(-constraint_delta)
+        self_prediction = ensemble(torch.zeros_like(constraint_delta))
+    constraint_metrics = {
+        "evaluated_rows": constraint_count,
+        "maximum_absolute_forward_plus_reverse": float(
+            torch.max(torch.abs(forward + reverse)).cpu()
+        ),
+        "maximum_absolute_self_ddg": float(
+            torch.max(torch.abs(self_prediction)).cpu()
+        ),
+    }
+    metrics = {
+        "schema": "protein-stabilizer.directional-single-ensemble-training.v2",
+        "candidate": "v2_directional_retrieval",
+        "seed": seed,
+        "ensemble_size": ensemble_size,
+        "elapsed_seconds": time.monotonic() - started,
+        "objective": asdict(objective),
+        "selection": (
+            "protein-disjoint validation; 0.75 signed-ddG Spearman + "
+            "0.25 stabilizer-head average precision"
+        ),
+        "train_rows": int(len(train_indices)),
+        "validation_rows": int(len(val_indices)),
+        "test_rows": int(len(test_target)),
+        "train_proteins": int(len(set(protein_id[train_indices].tolist()))),
+        "validation_proteins": int(len(set(protein_id[val_indices].tolist()))),
+        "test_proteins": int(len(set(test_protein_id.tolist()))),
+        "validation": _directional_evaluation(
+            target[val_indices],
+            val_ddg,
+            val_retrieval,
+            threshold=objective.stabilizer_threshold,
+        ),
+        "test": _directional_evaluation(
+            test_target,
+            test_ddg,
+            test_retrieval,
+            threshold=objective.stabilizer_threshold,
+        ),
+        "directional_constraints": constraint_metrics,
+        "members": member_metrics,
+        "embedding_provenance": embedding_provenance,
+        "train_source_sha256": train_source_sha256,
+        "test_source_sha256": test_source_sha256,
+        "sign_convention": "negative ddG is stabilizing; larger retrieval score is better",
+    }
+    checkpoint_dir = Path(checkpoint_dir)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    primary = member_payloads[0]
+    torch.save(
+        {
+            "schema": "protein-stabilizer.directional-single-head.v2",
+            "config": primary["config"],
+            "state_dict": primary["state_dict"],
+            "objective": asdict(objective),
+            "metrics": member_metrics[0],
+            "embedding_provenance": embedding_provenance,
+            "train_source_sha256": train_source_sha256,
+            "test_source_sha256": test_source_sha256,
+        },
+        checkpoint_dir / "directional_single_head.pt",
+    )
+    torch.save(
+        {
+            "schema": "protein-stabilizer.directional-single-ensemble.v2",
+            "members": member_payloads,
+            "objective": asdict(objective),
+            "metrics": metrics,
+            "embedding_provenance": embedding_provenance,
+            "train_source_sha256": train_source_sha256,
+            "test_source_sha256": test_source_sha256,
+        },
+        checkpoint_dir / "directional_single_ensemble.pt",
+    )
+    _save_json(checkpoint_dir / "directional_single_metrics.json", metrics)
+    return metrics
+
+
+def load_directional_single_checkpoint(
+    path: Path, device: str | torch.device = "cpu"
+) -> DirectionalSingleMutationHead:
+    payload = torch.load(path, map_location=device, weights_only=False)
+    if payload.get("schema") != "protein-stabilizer.directional-single-head.v2":
+        raise RuntimeError("directional single-head checkpoint schema mismatch")
+    model = DirectionalSingleMutationHead(SingleHeadConfig(**payload["config"]))
+    model.load_state_dict(payload["state_dict"])
+    return model.to(device).eval()
+
+
+def load_directional_single_ensemble_checkpoint(
+    path: Path, device: str | torch.device = "cpu"
+) -> DirectionalSingleMutationEnsemble:
+    payload = torch.load(path, map_location=device, weights_only=False)
+    if payload.get("schema") != "protein-stabilizer.directional-single-ensemble.v2":
+        raise RuntimeError("directional single-ensemble checkpoint schema mismatch")
+    members: list[DirectionalSingleMutationHead] = []
+    for member_payload in payload["members"]:
+        member = DirectionalSingleMutationHead(
+            SingleHeadConfig(**member_payload["config"])
+        )
+        member.load_state_dict(member_payload["state_dict"])
+        members.append(member)
+    return DirectionalSingleMutationEnsemble(members).to(device).eval()
+
+
+def evaluate_directional_ablation(
+    feature_dir: Path,
+    baseline_checkpoint_dir: Path,
+    candidate_checkpoint_dir: Path,
+    *,
+    output_path: Path | None = None,
+    device: str = "cuda",
+    batch_size: int = 2048,
+) -> dict[str, object]:
+    """Compare v1, post-hoc odd v1, and trained v2 on identical frozen rows."""
+
+    feature_dir = Path(feature_dir)
+    baseline_checkpoint_dir = Path(baseline_checkpoint_dir)
+    candidate_checkpoint_dir = Path(candidate_checkpoint_dir)
+    torch_device = torch.device(device if torch.cuda.is_available() else "cpu")
+    baseline = load_scoring_checkpoint(baseline_checkpoint_dir, torch_device)
+    candidate_path = candidate_checkpoint_dir / "directional_single_ensemble.pt"
+    candidate = load_directional_single_ensemble_checkpoint(
+        candidate_path, torch_device
+    )
+    candidate_payload = torch.load(
+        candidate_path, map_location="cpu", weights_only=False
+    )
+    objective = DirectionalObjectiveConfig(**candidate_payload["objective"])
+
+    arrays: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, object], str]] = {}
+    for name, filename in (
+        ("validation", "single_train.h5"),
+        ("test", "single_test.h5"),
+    ):
+        with h5py.File(feature_dir / filename, "r") as handle:
+            delta = np.asarray(handle["delta"], dtype=np.float16)
+            target = np.asarray(handle["target"], dtype=np.float32)
+            protein_id = np.asarray(handle["protein_id"].asstr()[:])
+            provenance = json.loads(handle.attrs["embedding_provenance"])
+            source_sha256 = str(handle.attrs["source_sha256"])
+            if name == "validation":
+                split = np.asarray(handle["split"].asstr()[:])
+                selected = split == "val"
+                delta = delta[selected]
+                target = target[selected]
+                protein_id = protein_id[selected]
+        arrays[name] = (delta, target, protein_id, provenance, source_sha256)
+    provenance_values = [value[3] for value in arrays.values()]
+    if any(value != provenance_values[0] for value in provenance_values[1:]):
+        raise RuntimeError("ablation feature provenance mismatch")
+    if candidate_payload.get("embedding_provenance") != provenance_values[0]:
+        raise RuntimeError("candidate checkpoint/feature provenance mismatch")
+
+    raw: dict[str, dict[str, object]] = {}
+    for split_name, (delta, target, protein_id, _, source_sha256) in arrays.items():
+        baseline_ddg = _torch_predictions(
+            baseline,
+            (delta,),
+            lambda x: baseline(x),
+            batch_size=batch_size,
+            device=torch_device,
+        )
+        baseline_odd_ddg = _torch_predictions(
+            baseline,
+            (delta,),
+            lambda x: 0.5 * (baseline(x) - baseline(-x)),
+            batch_size=batch_size,
+            device=torch_device,
+        )
+        candidate_ddg = _torch_predictions(
+            candidate,
+            (delta,),
+            lambda x: candidate(x),
+            batch_size=batch_size,
+            device=torch_device,
+        )
+        candidate_retrieval = _torch_predictions(
+            candidate,
+            (delta,),
+            lambda x: candidate.stabilizer_logit(x),
+            batch_size=batch_size,
+            device=torch_device,
+        )
+        raw[split_name] = {
+            "rows": int(len(target)),
+            "proteins": int(len(set(protein_id.tolist()))),
+            "source_sha256": source_sha256,
+            "baseline": {
+                "regression": regression_metrics(target, baseline_ddg),
+                "retrieval": stabilizer_retrieval_metrics(
+                    target,
+                    -baseline_ddg,
+                    threshold=objective.stabilizer_threshold,
+                ),
+            },
+            "baseline_posthoc_odd": {
+                "regression": regression_metrics(target, baseline_odd_ddg),
+                "retrieval": stabilizer_retrieval_metrics(
+                    target,
+                    -baseline_odd_ddg,
+                    threshold=objective.stabilizer_threshold,
+                ),
+            },
+            "candidate": _directional_evaluation(
+                target,
+                candidate_ddg,
+                candidate_retrieval,
+                threshold=objective.stabilizer_threshold,
+            ),
+        }
+
+    validation_candidate = raw["validation"]["candidate"]
+    retrieval_policy = (
+        "negative_ddg"
+        if float(
+            validation_candidate["retrieval_from_ddg"]["average_precision"]
+        )
+        >= float(validation_candidate["retrieval_head"]["average_precision"])
+        else "retrieval_head"
+    )
+    for split_name, values in raw.items():
+        values["candidate"]["selected_retrieval"] = values["candidate"][
+            "retrieval_from_ddg"
+            if retrieval_policy == "negative_ddg"
+            else "retrieval_head"
+        ]
+    test = raw["test"]
+    baseline_test = test["baseline"]
+    candidate_test = test["candidate"]
+    baseline_regression = baseline_test["regression"]
+    candidate_regression = candidate_test["regression"]
+    baseline_retrieval = baseline_test["retrieval"]
+    candidate_retrieval = candidate_test["selected_retrieval"]
+    constraints = candidate_payload["metrics"]["directional_constraints"]
+    gate_checks = {
+        "spearman_improved": (
+            float(candidate_regression["spearman"])
+            > float(baseline_regression["spearman"])
+        ),
+        "mae_not_worse": (
+            float(candidate_regression["mae"]) <= float(baseline_regression["mae"])
+        ),
+        "average_precision_improved": (
+            float(candidate_retrieval["average_precision"])
+            > float(baseline_retrieval["average_precision"])
+        ),
+        "top_50_not_worse": (
+            int(candidate_retrieval["hits_at_50"])
+            >= int(baseline_retrieval["hits_at_50"])
+        ),
+        "exact_antisymmetry": (
+            float(constraints["maximum_absolute_forward_plus_reverse"]) < 1e-6
+            and float(constraints["maximum_absolute_self_ddg"]) < 1e-6
+        ),
+    }
+    result = {
+        "schema": "protein-stabilizer.directional-ablation.v1",
+        "candidate": "v2_directional_retrieval",
+        "objective": asdict(objective),
+        "selection_policy": (
+            "choose negative-ddG or retrieval-head ranking on protein-disjoint "
+            "validation average precision, then freeze for test"
+        ),
+        "selected_retrieval_policy": retrieval_policy,
+        "embedding_provenance": provenance_values[0],
+        "baseline_checkpoint": {
+            "path": str(baseline_checkpoint_dir / "single_ensemble.pt"),
+            "sha256": file_sha256(
+                baseline_checkpoint_dir / "single_ensemble.pt"
+            ),
+        },
+        "candidate_checkpoint": {
+            "path": str(candidate_path),
+            "sha256": file_sha256(candidate_path),
+        },
+        "validation": raw["validation"],
+        "test": raw["test"],
+        "test_delta_candidate_minus_baseline": {
+            "spearman": float(candidate_regression["spearman"])
+            - float(baseline_regression["spearman"]),
+            "mae": float(candidate_regression["mae"])
+            - float(baseline_regression["mae"]),
+            "rmse": float(candidate_regression["rmse"])
+            - float(baseline_regression["rmse"]),
+            "average_precision": float(candidate_retrieval["average_precision"])
+            - float(baseline_retrieval["average_precision"]),
+            "auroc": float(candidate_retrieval["auroc"])
+            - float(baseline_retrieval["auroc"]),
+            "hits_at_50": int(candidate_retrieval["hits_at_50"])
+            - int(baseline_retrieval["hits_at_50"]),
+        },
+        "directional_constraints": constraints,
+        "promotion_gate": {
+            "passed": all(gate_checks.values()),
+            "checks": gate_checks,
+            "policy": (
+                "candidate must improve test Spearman and stabilizer AP, not "
+                "worsen MAE or top-50 hits, and satisfy exact directionality"
+            ),
+        },
+    }
+    destination = (
+        Path(output_path)
+        if output_path is not None
+        else candidate_checkpoint_dir / "directional_ablation.json"
+    )
+    _save_json(destination, result)
+    return result
 
 
 def load_single_checkpoint(path: Path, device: str | torch.device = "cpu") -> SingleMutationHead:

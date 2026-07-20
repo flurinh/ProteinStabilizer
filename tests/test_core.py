@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+import math
 from pathlib import Path
 from types import SimpleNamespace
 
+import h5py
 import numpy as np
 import pandas as pd
 import pytest
@@ -19,23 +22,51 @@ from protein_stabilizer.data import (
     sequence_hash,
     transfer_rows,
 )
-from protein_stabilizer.cli import _parse_positions, build_parser
+from protein_stabilizer.cli import (
+    _parse_generic_numbering,
+    _parse_positions,
+    build_parser,
+)
 from protein_stabilizer.embeddings import (
     ESMCEmbedder,
     ESMCProvenance,
+    HierarchicalEmbedding,
+    HierarchyEmbeddingReader,
+    HierarchyEmbeddingWriter,
     ResidueEmbeddingReader,
     ResidueEmbeddingWriter,
+    file_sha256,
 )
+from protein_stabilizer.esmc6b import ESMC6BEmbedder
+from protein_stabilizer.gpcr_ranking import (
+    _sample_higher_is_better_pairs,
+)
+from protein_stabilizer.structure import _aligned_structure_indices
 from protein_stabilizer.models import (
+    DirectionalAssayConfig,
+    DirectionalAssayHead,
+    DirectionalSingleMutationEnsemble,
+    DirectionalSingleMutationHead,
     EpistasisConfig,
+    HierarchicalDirectionalMutationHead,
+    HierarchicalEpistasisConfig,
+    HierarchicalHeadConfig,
+    HierarchicalMultiMutationHead,
     MultiMutationHead,
     SingleHeadConfig,
     SingleMutationEnsemble,
     SingleMutationHead,
+    StatePotentialConfig,
+    StatePotentialMutationHead,
 )
 from protein_stabilizer.training import (
+    balanced_stability_weights,
+    evaluate_directional_ablation,
     gpcr_dtm_adapter_features,
+    load_directional_single_ensemble_checkpoint,
     membrane_adapter_features,
+    stabilizer_retrieval_metrics,
+    train_directional_single_head,
 )
 from protein_stabilizer.predictor import (
     _masked_marginal_mutation_scores,
@@ -44,6 +75,22 @@ from protein_stabilizer.predictor import (
     dual_backbone_thermostability_consensus,
 )
 from protein_stabilizer.transfer_data import _pdb_chain_sequence, mutation_window
+from protein_stabilizer.v2_features import (
+    MEMBRANE_FEATURE_NAMES,
+    membrane_topology_features,
+)
+from protein_stabilizer.v2_multi import MULTI_CHECKPOINT_SCHEMA
+from protein_stabilizer.v2_predictor import (
+    predict_hierarchical_mutations,
+    screen_hierarchical_single_mutants,
+)
+from protein_stabilizer.v2_training import (
+    HIERARCHY_CHECKPOINT_SCHEMA,
+    HierarchicalObjectiveConfig,
+    HierarchyArrays,
+    _train_candidate,
+)
+from protein_stabilizer.v2_transfer import _derived_validation_split
 
 
 def test_mutation_application_and_double_reconstruction() -> None:
@@ -99,6 +146,211 @@ def test_residue_cache_round_trip_and_resume(tmp_path: Path) -> None:
     np.testing.assert_array_equal(values, np.asarray([matrices[1][0], matrices[0][1], matrices[0][0], matrices[0][1]]))
 
 
+def test_hierarchy_cache_round_trip_preserves_ordered_windows(tmp_path: Path) -> None:
+    provenance = ESMCProvenance(
+        model_name="fake",
+        embedding_dimension=3,
+        package_version="test",
+        checkpoint_path="/fake/model",
+        checkpoint_sha256="0" * 64,
+    )
+    request = EmbeddingRequest("ACDE", (1, 3))
+    hierarchy = HierarchicalEmbedding(
+        global_mean=np.asarray([1, 2, 3], dtype=np.float16),
+        windows=np.arange(2 * 5 * 3, dtype=np.float16).reshape(2, 5, 3),
+        window_mask=np.asarray(
+            [[False, False, True, True, True], [True, True, True, True, False]]
+        ),
+    )
+    path = tmp_path / "hierarchy.h5"
+    with HierarchyEmbeddingWriter(path, provenance, window_radius=2) as writer:
+        writer.append([request], [hierarchy])
+        assert writer.missing_requests([request]) == []
+    with HierarchyEmbeddingReader(path) as reader:
+        values = reader.features(
+            [
+                (request.sequence_hash, 3),
+                (request.sequence_hash, 1),
+                (request.sequence_hash, 3),
+            ]
+        )
+    np.testing.assert_array_equal(
+        values["window"], hierarchy.windows[[1, 0, 1]]
+    )
+    np.testing.assert_array_equal(
+        values["window_mask"], hierarchy.window_mask[[1, 0, 1]]
+    )
+    np.testing.assert_array_equal(
+        values["global_mean"],
+        np.repeat(hierarchy.global_mean[None], 3, axis=0),
+    )
+    np.testing.assert_array_equal(values["sequence_length"], [4, 4, 4])
+
+
+def test_hierarchy_cache_preserves_float32_storage(tmp_path: Path) -> None:
+    provenance = ESMCProvenance(
+        model_name="fake-fp32",
+        embedding_dimension=2,
+        package_version="test",
+        checkpoint_path="/fake/model",
+        checkpoint_sha256="1" * 64,
+        inference_dtype="float32",
+        storage_dtype="float32",
+    )
+    request = EmbeddingRequest("ACDE", (2,))
+    hierarchy = HierarchicalEmbedding(
+        global_mean=np.asarray([1.00001, 2.00001], dtype=np.float32),
+        windows=np.asarray(
+            [[[3.00001, 4.00001], [5.00001, 6.00001], [7.00001, 8.00001]]],
+            dtype=np.float32,
+        ),
+        window_mask=np.ones((1, 3), dtype=bool),
+    )
+    path = tmp_path / "hierarchy-fp32.h5"
+    with HierarchyEmbeddingWriter(path, provenance, window_radius=1) as writer:
+        writer.append([request], [hierarchy])
+    with HierarchyEmbeddingReader(path) as reader:
+        values = reader.features([(request.sequence_hash, 2)])
+    assert values["window"].dtype == np.float32
+    assert values["global_mean"].dtype == np.float32
+    np.testing.assert_array_equal(values["window"][0], hierarchy.windows[0])
+    np.testing.assert_array_equal(values["global_mean"][0], hierarchy.global_mean)
+
+
+def test_hierarchy_dense_row_reader_preserves_order_and_duplicates(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "dense.h5"
+    values = np.arange(20_000, dtype=np.int32).reshape(10_000, 2)
+    indices = np.concatenate(
+        [
+            np.arange(0, 10_000, 2, dtype=np.int64),
+            np.asarray([8, 2, 8], dtype=np.int64),
+        ]
+    )
+    with h5py.File(path, "w") as handle:
+        dataset = handle.create_dataset(
+            "values", data=values, chunks=(16, 2)
+        )
+        observed = HierarchyEmbeddingReader._rows(dataset, indices)
+    np.testing.assert_array_equal(observed, values[indices])
+
+
+def test_membrane_topology_features_keep_site_annotations_explicit() -> None:
+    gpcr = membrane_topology_features(
+        "alpha_helical_gpcr",
+        generic_numbering="6.38x38",
+        is_gpcr=True,
+    )
+    assert len(gpcr) == len(MEMBRANE_FEATURE_NAMES) == 8
+    np.testing.assert_array_equal(gpcr[:5], [1, 1, 0, 1, 1])
+    assert gpcr[5] == pytest.approx(2 / 3)
+    assert gpcr[6] < 0
+    assert gpcr[7] == 1
+
+    whole_protein_only = membrane_topology_features("Membrane")
+    np.testing.assert_array_equal(
+        whole_protein_only,
+        [1, 0, 0, 0, 0, 0, 0, 1],
+    )
+    unknown = membrane_topology_features(None)
+    np.testing.assert_array_equal(unknown, np.zeros(8))
+
+
+def test_esmc_hierarchy_encodes_global_and_padded_local_context() -> None:
+    class FakeTokenizer:
+        def __call__(
+            self,
+            sequences: list[str],
+            *,
+            add_special_tokens: bool,
+            padding: bool,
+            truncation: bool,
+            return_tensors: str,
+        ) -> dict[str, torch.Tensor]:
+            assert add_special_tokens and padding and not truncation
+            assert return_tensors == "pt"
+            maximum = max(len(sequence) for sequence in sequences) + 2
+            rows = [
+                [1, *range(2, len(sequence) + 2), 99]
+                + [0] * (maximum - len(sequence) - 2)
+                for sequence in sequences
+            ]
+            masks = [
+                [1] * (len(sequence) + 2)
+                + [0] * (maximum - len(sequence) - 2)
+                for sequence in sequences
+            ]
+            return {
+                "input_ids": torch.tensor(rows),
+                "attention_mask": torch.tensor(masks),
+            }
+
+    class FakeModel:
+        tokenizer = FakeTokenizer()
+
+        def __call__(self, *, sequence_tokens: torch.Tensor) -> SimpleNamespace:
+            values = torch.stack(
+                [
+                    sequence_tokens.float(),
+                    sequence_tokens.float() + 10,
+                    sequence_tokens.float() + 20,
+                ],
+                dim=-1,
+            )
+            return SimpleNamespace(embeddings=values)
+
+    embedder = object.__new__(ESMCEmbedder)
+    embedder.device = torch.device("cpu")
+    embedder.dimension = 3
+    embedder.storage_dtype = np.dtype(np.float32)
+    embedder.model = FakeModel()
+    request = EmbeddingRequest("ACDE", (1, 3, 4))
+    result = embedder.encode_hierarchy([request], window_radius=2)[0]
+    np.testing.assert_allclose(result.global_mean, [3.5, 13.5, 23.5])
+    assert result.windows.shape == (3, 5, 3)
+    np.testing.assert_array_equal(
+        result.window_mask,
+        [
+            [False, False, True, True, True],
+            [True, True, True, True, False],
+            [True, True, True, False, False],
+        ],
+    )
+    np.testing.assert_allclose(result.windows[0, 2], [2, 12, 22])
+    np.testing.assert_allclose(result.windows[2, 2], [5, 15, 25])
+
+
+def test_esmc6b_hierarchy_uses_the_same_residue_offsets() -> None:
+    class FakeModel:
+        def __call__(self, **encoded: torch.Tensor) -> SimpleNamespace:
+            tokens = encoded["input_ids"].float()
+            values = torch.stack([tokens, tokens + 10], dim=-1)
+            return SimpleNamespace(last_hidden_state=values)
+
+    embedder = object.__new__(ESMC6BEmbedder)
+    embedder.device = torch.device("cpu")
+    embedder.dimension = 2
+    embedder.storage_dtype = np.dtype(np.float32)
+    embedder.strict_fp32 = True
+    embedder.model = FakeModel()
+    embedder._tokenize = lambda sequences: {
+        "input_ids": torch.tensor(
+            [[1, *range(2, len(sequence) + 2), 99] for sequence in sequences]
+        )
+    }
+    result = embedder.encode_hierarchy(
+        [EmbeddingRequest("ACDE", (1, 4))], window_radius=1
+    )[0]
+    np.testing.assert_allclose(result.global_mean, [3.5, 13.5])
+    np.testing.assert_array_equal(
+        result.window_mask,
+        [[False, True, True], [True, True, False]],
+    )
+    np.testing.assert_allclose(result.windows[0, 1], [2, 12])
+    np.testing.assert_allclose(result.windows[1, 1], [5, 15])
+
+
 def test_multi_mutation_head_is_permutation_invariant() -> None:
     torch.manual_seed(7)
     single = SingleMutationHead(
@@ -137,6 +389,374 @@ def test_single_mutation_ensemble_averages_predictions_and_latents() -> None:
     assert ensemble.member_predictions(delta).shape == (2, 5)
     torch.testing.assert_close(ensemble(delta), expected_prediction)
     torch.testing.assert_close(ensemble.latent(delta), expected_latent)
+
+
+def test_directional_head_is_exactly_antisymmetric_and_zero_at_self() -> None:
+    config = SingleHeadConfig(
+        embedding_dim=8, hidden_dim=12, latent_dim=6, dropout=0.0
+    )
+    torch.manual_seed(23)
+    members = [
+        DirectionalSingleMutationHead(config),
+        DirectionalSingleMutationHead(config),
+    ]
+    model = DirectionalSingleMutationEnsemble(members).eval()
+    delta = torch.randn(7, 8)
+    torch.testing.assert_close(model(delta), -model(-delta), atol=1e-7, rtol=1e-7)
+    torch.testing.assert_close(
+        model(torch.zeros_like(delta)), torch.zeros(7), atol=1e-7, rtol=0
+    )
+    assert model.stabilizer_logit(delta).shape == (7,)
+    assert model.member_stabilizer_logits(delta).shape == (2, 7)
+
+
+def test_hierarchical_head_swaps_complete_states_exactly() -> None:
+    torch.manual_seed(29)
+    config = HierarchicalHeadConfig(
+        embedding_dim=8,
+        window_size=5,
+        structure_dim=4,
+        membrane_dim=3,
+        state_dim=10,
+        context_dim=6,
+        hidden_dim=14,
+        latent_dim=7,
+    )
+    model = HierarchicalDirectionalMutationHead(config).eval()
+    batch = 6
+    wt_window = torch.randn(batch, 5, 8)
+    mutant_window = torch.randn(batch, 5, 8)
+    window_mask = torch.tensor(
+        [[False, True, True, True, True], [True] * 5] * 3,
+        dtype=torch.bool,
+    )
+    wt_global = torch.randn(batch, 8)
+    mutant_global = torch.randn(batch, 8)
+    structure = torch.randn(batch, 4)
+    structure_mask = torch.tensor([0, 1, 1, 0, 1, 1], dtype=torch.bool)
+    membrane = torch.randn(batch, 3)
+
+    forward = model.predict_heads(
+        wt_window,
+        mutant_window,
+        window_mask,
+        wt_global,
+        mutant_global,
+        structure=structure,
+        structure_mask=structure_mask,
+        membrane=membrane,
+    )
+    reverse = model.predict_heads(
+        mutant_window,
+        wt_window,
+        window_mask,
+        mutant_global,
+        wt_global,
+        structure=structure,
+        structure_mask=structure_mask,
+        membrane=membrane,
+    )
+    for task in ("ddg", "dtm", "retrieval"):
+        torch.testing.assert_close(
+            forward[task], -reverse[task], atol=1e-7, rtol=1e-7
+        )
+
+    self_prediction = model(
+        wt_window,
+        wt_window,
+        window_mask,
+        wt_global,
+        wt_global,
+        structure=structure,
+        structure_mask=structure_mask,
+        membrane=membrane,
+    )
+    torch.testing.assert_close(
+        self_prediction, torch.zeros(batch), atol=1e-7, rtol=0
+    )
+
+
+def test_hierarchical_multi_head_is_permutation_invariant() -> None:
+    torch.manual_seed(37)
+    model = HierarchicalMultiMutationHead(
+        HierarchicalEpistasisConfig(
+            latent_dim=7,
+            element_hidden_dim=11,
+            element_dim=5,
+            set_hidden_dim=9,
+        )
+    ).eval()
+    single_ddg = torch.randn(4, 3)
+    single_latent = torch.randn(4, 3, 7)
+    joint_latent = torch.randn(4, 3, 7)
+    mask = torch.tensor(
+        [
+            [True, True, False],
+            [True, True, True],
+            [True, False, True],
+            [False, True, True],
+        ]
+    )
+    permutation = torch.tensor([2, 0, 1])
+    forward = model(single_ddg, single_latent, joint_latent, mask)
+    permuted = model(
+        single_ddg[:, permutation],
+        single_latent[:, permutation],
+        joint_latent[:, permutation],
+        mask[:, permutation],
+    )
+    for value, expected in zip(forward, permuted, strict=True):
+        torch.testing.assert_close(value, expected)
+    torch.testing.assert_close(
+        forward[1], (single_ddg * mask).sum(dim=1)
+    )
+    torch.testing.assert_close(forward[0], forward[1] + forward[2])
+
+
+def test_directional_assay_heads_keep_endpoint_signs_separate() -> None:
+    torch.manual_seed(39)
+    model = DirectionalAssayHead(
+        DirectionalAssayConfig(
+            latent_dim=7,
+            membrane_dim=3,
+            context_dim=5,
+            hidden_dim=11,
+            output_latent_dim=6,
+        )
+    ).eval()
+    latent = torch.randn(8, 7)
+    ddg = torch.randn(8)
+    membrane = torch.randn(8, 3)
+    forward = model(latent, ddg, membrane)
+    reverse = model(-latent, -ddg, membrane)
+    torch.testing.assert_close(forward, -reverse, atol=1e-7, rtol=1e-7)
+    torch.testing.assert_close(
+        model(torch.zeros_like(latent), torch.zeros_like(ddg), membrane),
+        torch.zeros(8),
+        atol=1e-7,
+        rtol=0,
+    )
+
+
+def test_transfer_validation_derivation_holds_out_whole_proteins() -> None:
+    split = np.asarray(
+        ["train"] * 12 + ["test"] * 4 + ["quarantine"] * 2
+    )
+    protein = np.asarray(
+        ["a"] * 4 + ["b"] * 4 + ["c"] * 4 + ["d"] * 4 + ["e"] * 2
+    )
+    derived = _derived_validation_split(split, protein, seed=43)
+    train_proteins = set(protein[derived == "train"])
+    validation_proteins = set(protein[derived == "val"])
+    test_proteins = set(protein[derived == "test"])
+    assert train_proteins
+    assert validation_proteins
+    assert not train_proteins & validation_proteins
+    assert not train_proteins & test_proteins
+    assert not validation_proteins & test_proteins
+    assert np.all(derived[split == "quarantine"] == "quarantine")
+
+
+def test_transfer_split_promotes_overlapping_groups_to_test() -> None:
+    split = np.asarray(
+        ["train", "train", "train", "train", "test", "reference"]
+    )
+    protein = np.asarray(["a", "a", "b", "c", "a", "d"])
+    derived = _derived_validation_split(split, protein, seed=43)
+    assert np.all(derived[protein == "a"] == "test")
+    assert set(protein[derived == "train"]).isdisjoint(
+        set(protein[derived == "val"])
+    )
+    assert set(protein[derived == "train"]).isdisjoint(
+        set(protein[derived == "test"])
+    )
+    assert derived[-1] == "reference"
+
+
+def test_hierarchical_training_records_steps_and_examples() -> None:
+    rng = np.random.default_rng(41)
+
+    def arrays(rows: int, split: list[str]) -> HierarchyArrays:
+        wt_window = rng.normal(size=(rows, 5, 8)).astype(np.float16)
+        mutant_window = wt_window.copy()
+        mutation_signal = np.resize(
+            np.asarray([-1.5, -0.8, -0.2, 0.3, 0.9, 1.5], dtype=np.float32),
+            rows,
+        )
+        mutant_window[:, 2, 0] += mutation_signal
+        wt_global = rng.normal(size=(rows, 8)).astype(np.float16)
+        mutant_global = wt_global.copy()
+        mutant_global[:, 0] += 0.25 * mutation_signal
+        return HierarchyArrays(
+            wt_window=wt_window,
+            mutant_window=mutant_window,
+            window_mask=np.ones((rows, 5), dtype=bool),
+            wt_global=wt_global,
+            mutant_global=mutant_global,
+            structure=rng.normal(size=(rows, 4)).astype(np.float16),
+            structure_mask=np.ones(rows, dtype=bool),
+            membrane=np.zeros((rows, 3), dtype=np.float32),
+            target=mutation_signal,
+            sample_weight=np.ones(rows, dtype=np.float32),
+            protein_id=np.asarray(
+                [f"p{index // 4}" for index in range(rows)]
+            ),
+            split=np.asarray(split),
+            provenance={},
+        )
+
+    train = arrays(24, ["train"] * 16 + ["val"] * 8)
+    test = arrays(8, ["test"] * 8)
+    metrics, members = _train_candidate(
+        "synthetic",
+        train,
+        test,
+        use_structure=True,
+        seed=41,
+        epochs=2,
+        minimum_epochs=1,
+        patience=1,
+        batch_size=8,
+        learning_rate=1e-3,
+        weight_decay=1e-4,
+        ensemble_size=1,
+        device=torch.device("cpu"),
+        objective=HierarchicalObjectiveConfig(ranking_pairs_per_batch=4),
+    )
+    assert metrics["ensemble_size"] == 1
+    assert metrics["directional_constraints"][
+        "maximum_absolute_forward_plus_reverse"
+    ] < 1e-6
+    assert members[0]["optimizer_steps"] >= 2
+    assert members[0]["examples_seen"] >= 16
+
+
+def test_tail_balancing_and_retrieval_metrics_prioritize_stabilizers() -> None:
+    target = np.asarray([-2.0, -1.0, -0.2, 0.2, 1.0, 2.0], dtype=np.float32)
+    weights = balanced_stability_weights(target, maximum_weight=100.0)
+    bins = (target < -0.5, (target >= -0.5) & (target <= 0.5), target > 0.5)
+    totals = [float(weights[mask].sum()) for mask in bins]
+    np.testing.assert_allclose(totals, [2.0, 2.0, 2.0], rtol=1e-6)
+    metrics = stabilizer_retrieval_metrics(
+        target,
+        np.asarray([6.0, 5.0, 1.0, 0.0, -1.0, -2.0]),
+        top_ks=(2,),
+    )
+    assert metrics["positives"] == 2
+    assert metrics["average_precision"] == pytest.approx(1.0)
+    assert metrics["auroc"] == pytest.approx(1.0)
+    assert metrics["precision_at_2"] == pytest.approx(1.0)
+    assert metrics["recall_at_2"] == pytest.approx(1.0)
+
+
+def test_directional_training_checkpoint_keeps_provenance(tmp_path: Path) -> None:
+    feature_dir = tmp_path / "features"
+    checkpoint_dir = tmp_path / "checkpoints"
+    baseline_dir = tmp_path / "baseline"
+    feature_dir.mkdir()
+    baseline_dir.mkdir()
+    rng = np.random.default_rng(31)
+    provenance = {
+        "model_name": "fake-esmc",
+        "checkpoint_sha256": "a" * 64,
+        "embedding_dimension": 8,
+    }
+
+    def write_features(
+        path: Path,
+        rows: int,
+        proteins: list[str],
+        split: list[str],
+        source_hash: str,
+    ) -> None:
+        target = np.tile(
+            np.asarray([-1.5, -0.8, -0.1, 0.3, 1.0, 1.8], dtype=np.float32),
+            math.ceil(rows / 6),
+        )[:rows]
+        with h5py.File(path, "w") as handle:
+            handle.create_dataset("delta", data=rng.normal(size=(rows, 8)).astype("f2"))
+            handle.create_dataset("target", data=target)
+            handle.create_dataset(
+                "protein_id",
+                data=np.asarray(proteins, dtype=object),
+                dtype=h5py.string_dtype("utf-8"),
+            )
+            handle.create_dataset(
+                "split",
+                data=np.asarray(split, dtype=object),
+                dtype=h5py.string_dtype("utf-8"),
+            )
+            handle.attrs["embedding_provenance"] = json.dumps(provenance)
+            handle.attrs["source_sha256"] = source_hash
+
+    write_features(
+        feature_dir / "single_train.h5",
+        18,
+        ["train-a"] * 6 + ["train-b"] * 6 + ["validation"] * 6,
+        ["train"] * 12 + ["val"] * 6,
+        "b" * 64,
+    )
+    write_features(
+        feature_dir / "single_test.h5",
+        6,
+        ["test"] * 6,
+        ["test"] * 6,
+        "c" * 64,
+    )
+    metrics = train_directional_single_head(
+        feature_dir,
+        checkpoint_dir,
+        seed=31,
+        epochs=2,
+        patience=2,
+        batch_size=6,
+        ensemble_size=1,
+        device="cpu",
+    )
+    assert metrics["embedding_provenance"] == provenance
+    assert metrics["train_source_sha256"] == "b" * 64
+    assert metrics["test_source_sha256"] == "c" * 64
+    assert metrics["train_proteins"] == 2
+    assert metrics["validation_proteins"] == 1
+    assert (
+        metrics["directional_constraints"][
+            "maximum_absolute_forward_plus_reverse"
+        ]
+        < 1e-6
+    )
+    loaded = load_directional_single_ensemble_checkpoint(
+        checkpoint_dir / "directional_single_ensemble.pt"
+    )
+    delta = torch.randn(3, 8)
+    torch.testing.assert_close(loaded(delta), -loaded(-delta), atol=1e-7, rtol=1e-7)
+    baseline_config = SingleHeadConfig(
+        embedding_dim=8, hidden_dim=12, latent_dim=6, dropout=0.0
+    )
+    baseline = SingleMutationHead(baseline_config)
+    torch.save(
+        {
+            "schema": "protein-stabilizer.single-ensemble.v1",
+            "members": [
+                {
+                    "config": baseline.config_dict(),
+                    "state_dict": baseline.state_dict(),
+                }
+            ],
+            "metrics": {},
+        },
+        baseline_dir / "single_ensemble.pt",
+    )
+    ablation = evaluate_directional_ablation(
+        feature_dir,
+        baseline_dir,
+        checkpoint_dir,
+        device="cpu",
+        batch_size=6,
+    )
+    assert ablation["validation"]["rows"] == 6
+    assert ablation["test"]["rows"] == 6
+    assert len(ablation["candidate_checkpoint"]["sha256"]) == 64
+    assert ablation["directional_constraints"]["maximum_absolute_self_ddg"] < 1e-6
 
 
 def test_masked_marginal_scores_follow_canonical_amino_acid_order() -> None:
@@ -313,6 +933,268 @@ def test_position_expression_parser() -> None:
         _parse_positions("5-2")
 
 
+def test_v2_application_cli_contract() -> None:
+    args = build_parser().parse_args(
+        [
+            "predict-v2",
+            "--sequence",
+            "ACDE",
+            "--mutations",
+            "A1C,E4W",
+            "--topology",
+            "alpha_helical_gpcr",
+            "--generic-numbering",
+            "1=1.50x50,4=2.50x50",
+        ]
+    )
+    assert args.command == "predict-v2"
+    assert args.checkpoints.name == "esmc_600m_v2_fp32"
+    assert args.state_potential_checkpoint.name == (
+        "state_potential_ensemble.pt"
+    )
+    assert _parse_generic_numbering(args.generic_numbering) == {
+        1: "1.50x50",
+        4: "2.50x50",
+    }
+    with pytest.raises(ValueError, match="duplicate"):
+        _parse_generic_numbering("1=1.50x50,1=1.51x51")
+
+
+def test_v2_application_predicts_unordered_sets_and_screens(
+    tmp_path: Path,
+) -> None:
+    config = HierarchicalHeadConfig(
+        embedding_dim=8,
+        structure_dim=128,
+        membrane_dim=8,
+        state_dim=6,
+        context_dim=4,
+        hidden_dim=9,
+        latent_dim=5,
+    )
+    base = HierarchicalDirectionalMutationHead(config).eval()
+    checkpoint_dir = tmp_path / "checkpoints"
+    checkpoint_dir.mkdir()
+    torch.save(
+        {
+            "schema": HIERARCHY_CHECKPOINT_SCHEMA,
+            "candidate": "hierarchy_proteinmpnn",
+            "use_structure": True,
+            "members": [
+                {
+                    "config": base.config_dict(),
+                    "state_dict": base.state_dict(),
+                }
+            ],
+        },
+        checkpoint_dir / "hierarchy_selected_ensemble.pt",
+    )
+    state = StatePotentialMutationHead(
+        StatePotentialConfig(
+            embedding_dim=8,
+            window_size=9,
+            structure_dim=128,
+            membrane_dim=8,
+            state_dim=7,
+            amino_acid_dim=5,
+            hidden_dim=11,
+            latent_dim=6,
+        )
+    ).eval()
+    state_path = checkpoint_dir / "state_potential_ensemble.pt"
+    torch.save(
+        {
+            "schema": "protein-stabilizer.state-potential-ensemble.v1",
+            "candidate": "wt_conditioned_state_potential",
+            "members": [
+                {
+                    "config": state.config_dict(),
+                    "state_dict": state.state_dict(),
+                }
+            ],
+            "state_potential_weight": 0.55,
+            "baseline_checkpoint_sha256": file_sha256(
+                checkpoint_dir / "hierarchy_selected_ensemble.pt"
+            ),
+            "promotion": {"production_eligible": True},
+        },
+        state_path,
+    )
+    multi = HierarchicalMultiMutationHead(
+        HierarchicalEpistasisConfig(
+            latent_dim=5,
+            element_hidden_dim=7,
+            element_dim=4,
+            set_hidden_dim=6,
+        )
+    ).eval()
+    torch.save(
+        {
+            "schema": MULTI_CHECKPOINT_SCHEMA,
+            "config": multi.config_dict(),
+            "state_dict": multi.state_dict(),
+        },
+        checkpoint_dir / "hierarchy_multi_head.pt",
+    )
+
+    class FakeEmbedder:
+        def encode_hierarchy(
+            self,
+            requests: list[EmbeddingRequest],
+            *,
+            window_radius: int,
+        ) -> list[HierarchicalEmbedding]:
+            values: list[HierarchicalEmbedding] = []
+            width = 2 * window_radius + 1
+            for request in requests:
+                sequence_value = float(
+                    sum((index + 1) * ord(aa) for index, aa in enumerate(request.sequence))
+                    % 31
+                )
+                windows = np.stack(
+                    [
+                        np.full(
+                            (width, 8),
+                            sequence_value + position / 10,
+                            dtype=np.float16,
+                        )
+                        for position in request.positions
+                    ]
+                )
+                values.append(
+                    HierarchicalEmbedding(
+                        global_mean=np.full(
+                            8, sequence_value / 10, dtype=np.float16
+                        ),
+                        windows=windows,
+                        window_mask=np.ones(
+                            (len(request.positions), width), dtype=bool
+                        ),
+                    )
+                )
+            return values
+
+        def masked_marginal_log_probabilities(
+            self,
+            sequence: str,
+            positions: list[int] | tuple[int, ...],
+            **_: object,
+        ) -> np.ndarray:
+            return np.stack(
+                [
+                    np.linspace(-1, 1, len(AMINO_ACIDS), dtype=np.float32)
+                    + position / 100
+                    for position in positions
+                ]
+            )
+
+    forward = predict_hierarchical_mutations(
+        "ACDE",
+        ["A1W", "E4F"],
+        checkpoint_dir,
+        device="cpu",
+        topology="alpha_helical_gpcr",
+        generic_numbering={1: "1.50x50", 4: "2.50x50"},
+        embedder=FakeEmbedder(),
+    )
+    reverse_order = predict_hierarchical_mutations(
+        "ACDE",
+        ["E4F", "A1W"],
+        checkpoint_dir,
+        device="cpu",
+        embedder=FakeEmbedder(),
+    )
+    assert [row["mutation"] for row in forward["mutations"]] == [
+        "A1W",
+        "E4F",
+    ]
+    assert forward["total_ddg"] == pytest.approx(
+        forward["additive_ddg"] + forward["epistasis_ddg"]
+    )
+    assert forward["total_ddg"] == pytest.approx(
+        reverse_order["total_ddg"]
+    )
+    assert "permutation-invariant" in forward["mutation_set_policy"]
+
+    fused = predict_hierarchical_mutations(
+        "ACDE",
+        ["A1W"],
+        checkpoint_dir,
+        device="cpu",
+        embedder=FakeEmbedder(),
+        state_potential_checkpoint=state_path,
+    )
+    fused_row = fused["mutations"][0]
+    assert fused_row["ddg"] == pytest.approx(
+        0.45 * fused_row["hierarchy_ddg"]
+        + 0.55 * fused_row["state_potential_ddg"],
+        abs=1e-6,
+    )
+    assert fused["model"]["state_potential_weight"] == pytest.approx(0.55)
+
+    screen = screen_hierarchical_single_mutants(
+        "ACDE",
+        checkpoint_dir,
+        tmp_path / "screen.csv",
+        positions=[1],
+        device="cpu",
+        top=5,
+        embedder=FakeEmbedder(),
+    )
+    assert screen["rows"] == 19
+    assert len(screen["top"]) == 5
+    assert (tmp_path / "screen.csv").is_file()
+    assert [row["stabilizer_rank"] for row in screen["top"]] == [1, 2, 3, 4, 5]
+
+    state_screen = screen_hierarchical_single_mutants(
+        "ACDE",
+        checkpoint_dir,
+        tmp_path / "state_screen.csv",
+        positions=[1],
+        device="cpu",
+        top=5,
+        embedder=FakeEmbedder(),
+        state_potential_checkpoint=state_path,
+        scan_mode="state-only",
+    )
+    assert state_screen["scan_mode"] == "state-only"
+    assert state_screen["model"]["state_potential_weight"] == pytest.approx(1.0)
+    assert "state_potential_ddg" in state_screen["top"][0]
+    assert "hierarchy_ddg" not in state_screen["top"][0]
+
+    legacy_dir = tmp_path / "legacy"
+    legacy_dir.mkdir()
+    legacy = SingleMutationHead(
+        SingleHeadConfig(
+            embedding_dim=8,
+            hidden_dim=7,
+            latent_dim=4,
+            dropout=0.0,
+        )
+    ).eval()
+    torch.save(
+        {
+            "schema": "protein-stabilizer.auxiliary-head.v1",
+            "config": legacy.config_dict(),
+            "state_dict": legacy.state_dict(),
+        },
+        legacy_dir / "mptherm_dtm_head.pt",
+    )
+    gpcr_screen = screen_hierarchical_single_mutants(
+        "ACDE",
+        checkpoint_dir,
+        tmp_path / "gpcr_screen.csv",
+        positions=[1],
+        device="cpu",
+        top=3,
+        legacy_checkpoint_dir=legacy_dir,
+        embedder=FakeEmbedder(),
+    )
+    assert "0.80 retained MPTherm" in gpcr_screen["ranking_policy"]
+    assert "retained_mptherm_delta_tm" in gpcr_screen["top"][0]
+    assert "masked_marginal_log_odds" in gpcr_screen["top"][0]
+
+
 def test_esmc6b_multiple_mutation_cli_contract() -> None:
     args = build_parser().parse_args(
         [
@@ -326,6 +1208,150 @@ def test_esmc6b_multiple_mutation_cli_contract() -> None:
     assert args.command == "predict-6b"
     assert args.model == "biohub/ESMC-6B"
     assert args.mutations == "A1C,E4W"
+
+
+def test_esmc6b_v2_cache_defaults_to_native_fp32() -> None:
+    development_args = build_parser().parse_args(["embed-v2-context"])
+    assert development_args.storage_dtype == "float32"
+    args = build_parser().parse_args(["embed-v2-context-6b"])
+    assert args.inference_dtype == "float32"
+    assert args.storage_dtype == "float32"
+    assert args.cache.name == "hierarchy_cache_fp32.h5"
+    prediction_args = build_parser().parse_args(
+        [
+            "predict-v2-6b",
+            "--sequence",
+            "ACDE",
+            "--mutations",
+            "A1C",
+        ]
+    )
+    assert prediction_args.checkpoints.name == "esmc_6b_v2"
+    assert prediction_args.state_potential_checkpoint.parent.name == (
+        "esmc_6b_state_potential_fp32"
+    )
+    assert prediction_args.max_batch_size == 2
+    screen_args = build_parser().parse_args(
+        ["screen-v2-6b", "--sequence", "ACDE"]
+    )
+    assert screen_args.checkpoints.name == "esmc_6b_v2"
+    assert screen_args.output.name == "screen_v2_6b.csv"
+    assert screen_args.scan_mode == "exact"
+    assert screen_args.state_potential_checkpoint.parent.name == (
+        "esmc_6b_state_potential_fp32"
+    )
+    structure_args = build_parser().parse_args(["structure-v2"])
+    assert structure_args.storage_dtype == "float32"
+    potential_args = build_parser().parse_args(["train-state-potential"])
+    assert potential_args.cache.name == "hierarchy_cache_fp32.h5"
+    assert potential_args.features.name == "features_v2_600m_fp32"
+    assert potential_args.minimum_epochs == 50
+    gpcr_args = build_parser().parse_args(["train-zero-shot-gpcr"])
+    assert gpcr_args.representations.name == (
+        "features_v2_transfer_6b_state_potential_fp32"
+    )
+    assert gpcr_args.minimum_main_epochs == 50
+
+
+def test_state_potential_scores_all_amino_acids_with_exact_algebra() -> None:
+    config = StatePotentialConfig(
+        embedding_dim=6,
+        window_size=3,
+        structure_dim=4,
+        membrane_dim=2,
+        state_dim=8,
+        amino_acid_dim=5,
+        hidden_dim=12,
+        latent_dim=7,
+    )
+    model = StatePotentialMutationHead(config).eval()
+    generator = torch.Generator().manual_seed(7)
+    wt_window = torch.randn(4, 3, 6, generator=generator)
+    window_mask = torch.ones(4, 3, dtype=torch.bool)
+    wt_global = torch.randn(4, 6, generator=generator)
+    structure = torch.randn(4, 4, generator=generator)
+    structure_mask = torch.ones(4, dtype=torch.bool)
+    membrane = torch.randn(4, 2, generator=generator)
+    wt = torch.tensor([0, 1, 2, 3], dtype=torch.long)
+    mutant = torch.tensor([4, 5, 6, 7], dtype=torch.long)
+    inputs = {
+        "wt_window": wt_window,
+        "window_mask": window_mask,
+        "wt_global": wt_global,
+        "structure": structure,
+        "structure_mask": structure_mask,
+        "membrane": membrane,
+    }
+    with torch.inference_mode():
+        potentials = model.all_potentials(**inputs)
+        forward = model(
+            **inputs,
+            wt_amino_acid=wt,
+            mutant_amino_acid=mutant,
+        )
+        reverse = model(
+            **inputs,
+            wt_amino_acid=mutant,
+            mutant_amino_acid=wt,
+        )
+        self_prediction = model(
+            **inputs,
+            wt_amino_acid=wt,
+            mutant_amino_acid=wt,
+        )
+    assert potentials.shape == (4, len(AMINO_ACIDS))
+    torch.testing.assert_close(
+        potentials.mean(dim=-1),
+        torch.zeros(4),
+        atol=1e-6,
+        rtol=0,
+    )
+    torch.testing.assert_close(forward, -reverse, atol=0, rtol=0)
+    torch.testing.assert_close(
+        self_prediction,
+        torch.zeros_like(self_prediction),
+        atol=0,
+        rtol=0,
+    )
+    cycle = (
+        potentials[:, 1] - potentials[:, 0]
+        + potentials[:, 2] - potentials[:, 1]
+        - (potentials[:, 2] - potentials[:, 0])
+    )
+    torch.testing.assert_close(
+        cycle,
+        torch.zeros_like(cycle),
+        atol=1e-6,
+        rtol=0,
+    )
+
+
+def test_membrane_rank_pairs_follow_positive_delta_tm_direction() -> None:
+    indices = np.arange(6, dtype=np.int64)
+    proteins = np.asarray(["A", "A", "A", "B", "B", "B"])
+    target = np.asarray([-2.0, 0.0, 3.0, -1.0, 1.0, 4.0])
+    higher, lower = _sample_higher_is_better_pairs(
+        indices,
+        proteins,
+        target,
+        np.random.default_rng(3),
+        count=32,
+        minimum_gap=1.0,
+    )
+    assert len(higher) == 32
+    assert np.all(target[higher] > target[lower])
+    assert np.all(proteins[higher] == proteins[lower])
+
+
+def test_truncated_gapped_structure_alignment_preserves_canonical_numbering() -> None:
+    mapping, diagnostics = _aligned_structure_indices(
+        "ACDEFGHIKLMN",
+        "ACD--GHIK",
+    )
+    assert mapping.tolist() == [0, 1, 2, -1, -1, 5, 6, 7, 8]
+    assert diagnostics["identity"] == 1.0
+    assert diagnostics["mapped_residues"] == 7
+    assert diagnostics["target_coverage"] == pytest.approx(7 / 12)
 
 
 def test_long_transfer_sequence_is_cropped_and_remapped() -> None:

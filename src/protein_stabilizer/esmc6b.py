@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import time
 from pathlib import Path
 from typing import Sequence
 
@@ -18,7 +19,14 @@ from .data import (
     apply_mutations,
     normalize_sequence,
 )
-from .embeddings import ESMCProvenance, file_sha256, token_batches
+from .embeddings import (
+    ESMCProvenance,
+    HierarchicalEmbedding,
+    HierarchyEmbeddingWriter,
+    file_sha256,
+    request_manifest_sha256,
+    token_batches,
+)
 from .models import SingleMutationEnsemble
 from .predictor import (
     DUAL_BACKBONE_SCREENING_WEIGHTS,
@@ -77,6 +85,9 @@ class ESMC6BEmbedder:
         self,
         model_name_or_path: str = DEFAULT_ESMC6B_MODEL,
         device: str = "cuda",
+        *,
+        inference_dtype: str = "float32",
+        storage_dtype: str = "float32",
     ) -> None:
         try:
             import transformers
@@ -98,16 +109,34 @@ class ESMC6BEmbedder:
         if device.startswith("cuda") and not torch.cuda.is_available():
             raise RuntimeError("CUDA was requested but is not available")
         self.device = torch.device(device)
+        dtype_by_name = {
+            "bfloat16": torch.bfloat16,
+            "float32": torch.float32,
+        }
+        storage_by_name = {
+            "float16": np.dtype(np.float16),
+            "float32": np.dtype(np.float32),
+        }
+        if inference_dtype not in dtype_by_name:
+            raise ValueError("6B inference dtype must be bfloat16 or float32")
+        if storage_dtype not in storage_by_name:
+            raise ValueError("6B storage dtype must be float16 or float32")
+        self.inference_dtype = dtype_by_name[inference_dtype]
+        self.storage_dtype = storage_by_name[storage_dtype]
+        self.strict_fp32 = self.inference_dtype == torch.float32
+        if self.device.type == "cuda":
+            torch.set_float32_matmul_precision("highest")
+            torch.backends.cuda.matmul.allow_tf32 = False
+            torch.backends.cudnn.allow_tf32 = False
         self.model_name = model_name_or_path
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name_or_path,
             trust_remote_code=True,
         )
-        inference_dtype = torch.bfloat16 if self.device.type == "cuda" else torch.float32
         self.model = AutoModelForMaskedLM.from_pretrained(
             model_name_or_path,
             trust_remote_code=True,
-            dtype=inference_dtype,
+            dtype=self.inference_dtype,
             attn_implementation="sdpa",
         ).to(self.device).eval()
         dimension = getattr(
@@ -124,14 +153,25 @@ class ESMC6BEmbedder:
             embedding_dimension=self.dimension,
             package_version=(
                 f"transformers={transformers.__version__};"
-                f"torch={torch.__version__}"
+                f"torch={torch.__version__};"
+                f"attention={'math' if self.strict_fp32 else 'automatic'};"
+                "tf32=false"
             ),
             checkpoint_path=str(checkpoint.parent),
             checkpoint_sha256=file_sha256(checkpoint),
-            inference_dtype=(
-                "bfloat16" if inference_dtype == torch.bfloat16 else "float32"
-            ),
+            inference_dtype=inference_dtype,
+            storage_dtype=storage_dtype,
         )
+
+    def _forward(self, encoded: dict[str, torch.Tensor]) -> object:
+        """Run strict native-FP32 attention for the accuracy-first 6B path."""
+
+        if self.device.type == "cuda" and self.strict_fp32:
+            from torch.nn.attention import SDPBackend, sdpa_kernel
+
+            with sdpa_kernel(SDPBackend.MATH):
+                return self.model(**encoded)
+        return self.model(**encoded)
 
     def _tokenize(self, sequences: Sequence[str]) -> dict[str, torch.Tensor]:
         normalized = [normalize_sequence(sequence) for sequence in sequences]
@@ -158,14 +198,75 @@ class ESMC6BEmbedder:
             return []
         encoded = self._tokenize([request.sequence for request in requests])
         with torch.inference_mode():
-            output = self.model(**encoded)
+            output = self._forward(encoded)
         hidden = output.last_hidden_state
         results: list[np.ndarray] = []
         for row, request in enumerate(requests):
             selected = hidden[row, list(request.positions)]
             if selected.shape != (len(request.positions), self.dimension):
                 raise RuntimeError("unexpected ESM-C 6B residue embedding shape")
-            results.append(selected.float().cpu().numpy().astype(np.float16))
+            results.append(
+                selected.float().cpu().numpy().astype(self.storage_dtype)
+            )
+        return results
+
+    def encode_hierarchy(
+        self,
+        requests: Sequence[EmbeddingRequest],
+        *,
+        window_radius: int = 4,
+    ) -> list[HierarchicalEmbedding]:
+        """Return 6B whole-protein means and ordered site windows."""
+
+        if not requests:
+            return []
+        if window_radius < 0:
+            raise ValueError("window radius must be non-negative")
+        sequences = [normalize_sequence(request.sequence) for request in requests]
+        encoded = self._tokenize(sequences)
+        with torch.inference_mode():
+            output = self._forward(encoded)
+        hidden = output.last_hidden_state
+        window_size = 2 * window_radius + 1
+        results: list[HierarchicalEmbedding] = []
+        for row, (request, sequence) in enumerate(
+            zip(requests, sequences, strict=True)
+        ):
+            residues = hidden[row, 1 : len(sequence) + 1].float()
+            windows = torch.zeros(
+                (len(request.positions), window_size, self.dimension),
+                dtype=residues.dtype,
+                device=residues.device,
+            )
+            mask = torch.zeros(
+                (len(request.positions), window_size),
+                dtype=torch.bool,
+                device=residues.device,
+            )
+            for site_index, position in enumerate(request.positions):
+                source_start = max(1, position - window_radius)
+                source_stop = min(len(sequence), position + window_radius)
+                destination_start = source_start - (position - window_radius)
+                count = source_stop - source_start + 1
+                windows[
+                    site_index,
+                    destination_start : destination_start + count,
+                ] = residues[source_start - 1 : source_stop]
+                mask[
+                    site_index,
+                    destination_start : destination_start + count,
+                ] = True
+            results.append(
+                HierarchicalEmbedding(
+                    global_mean=residues.mean(dim=0)
+                    .cpu()
+                    .numpy()
+                    .astype(self.storage_dtype),
+                    windows=windows.cpu().numpy().astype(self.storage_dtype),
+                    window_mask=mask.cpu().numpy(),
+                )
+            )
+        del output, hidden
         return results
 
     def masked_marginal_log_probabilities(
@@ -205,13 +306,87 @@ class ESMC6BEmbedder:
             token_positions = torch.tensor(batch_positions, device=self.device)
             encoded["input_ids"][rows, token_positions] = self.tokenizer.mask_token_id
             with torch.inference_mode():
-                output = self.model(**encoded)
+                output = self._forward(encoded)
                 site_logits = output.logits[rows, token_positions]
                 log_probabilities = torch.log_softmax(
                     site_logits.float(), dim=-1
                 )[:, amino_acid_ids]
             results.append(log_probabilities.cpu().numpy().astype(np.float32))
         return np.concatenate(results, axis=0)
+
+
+def build_esmc6b_hierarchy_cache(
+    path: Path,
+    requests: Sequence[EmbeddingRequest],
+    *,
+    model_name_or_path: str = DEFAULT_ESMC6B_MODEL,
+    device: str = "cuda",
+    window_radius: int = 4,
+    max_tokens: int = 4096,
+    max_batch_size: int = 8,
+    inference_dtype: str = "float32",
+    storage_dtype: str = "float32",
+) -> dict[str, object]:
+    """Build the promoted 6B cache with the same schema as 600M discovery."""
+
+    embedder = ESMC6BEmbedder(
+        model_name_or_path,
+        device,
+        inference_dtype=inference_dtype,
+        storage_dtype=storage_dtype,
+    )
+    manifest_hash = request_manifest_sha256(requests)
+    started = time.monotonic()
+    with HierarchyEmbeddingWriter(
+        path, embedder.provenance, window_radius=window_radius
+    ) as writer:
+        missing = writer.missing_requests(requests)
+        initial_sites = len(writer.site_index)
+        batches = list(
+            token_batches(
+                missing,
+                max_tokens=max_tokens,
+                max_batch_size=max_batch_size,
+            )
+        )
+        for batch_number, batch in enumerate(batches, start=1):
+            writer.append(
+                batch,
+                embedder.encode_hierarchy(batch, window_radius=window_radius),
+            )
+            if (
+                batch_number == 1
+                or batch_number % 50 == 0
+                or batch_number == len(batches)
+            ):
+                print(
+                    f"6B hierarchy batch {batch_number}/{len(batches)}; "
+                    f"cached sites={len(writer.site_index):,}",
+                    flush=True,
+                )
+        result = {
+            "schema": str(writer.handle.attrs["schema"]),
+            "path": str(path),
+            "model_provenance": json.loads(
+                embedder.provenance.canonical_json()
+            ),
+            "request_manifest_sha256": manifest_hash,
+            "window_radius": window_radius,
+            "requested_sequences": len(requests),
+            "requested_sites": sum(
+                len(request.positions) for request in requests
+            ),
+            "initial_sites": initial_sites,
+            "embedded_sites": len(writer.site_index) - initial_sites,
+            "cached_sites": len(writer.site_index),
+            "elapsed_seconds": time.monotonic() - started,
+        }
+        writer.handle.attrs["request_manifest_sha256"] = manifest_hash
+        writer.handle.attrs["last_build_manifest"] = json.dumps(
+            result, sort_keys=True, separators=(",", ":")
+        )
+        writer.handle.flush()
+        return result
 
 
 def _torch_prediction(

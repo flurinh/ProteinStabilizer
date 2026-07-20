@@ -312,6 +312,22 @@ def all_embedding_requests(paths: DatasetPaths) -> list[EmbeddingRequest]:
     return merge_embedding_requests(requests)
 
 
+def single_embedding_requests(paths: DatasetPaths) -> list[EmbeddingRequest]:
+    """Return deduplicated WT/mutant requests for MegaScale single mutants."""
+
+    requests: list[EmbeddingRequest] = []
+    for split in ("train", "test"):
+        for row in single_rows(paths.single(split)):
+            position = int(row["position"])
+            requests.extend(
+                [
+                    EmbeddingRequest(str(row["wt_sequence"]), (position,)),
+                    EmbeddingRequest(str(row["mutant_sequence"]), (position,)),
+                ]
+            )
+    return merge_embedding_requests(requests)
+
+
 def gpcr_site_splits(path: Path, seed: int = 20260715) -> pd.DataFrame:
     """Assign whole mutation sites to train/validation/test within each protein."""
 

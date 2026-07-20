@@ -1,11 +1,12 @@
 # ProteinStabilizer
 
 ProteinStabilizer ranks amino-acid substitutions for stability, with a
-GPCR-specific calibration layer. The fast first pass uses a frozen ESM-C 600M
-encoder and compact heads over contextual residue-embedding differences. An
-optional full ESM-C 6B second pass now supplies a stronger general-ddG estimate
-and conservatively reranks GPCR candidates. A separate 6B epistasis head scores
-double mutants and accepts larger mutation sets as an explicit extrapolation.
+GPCR-specific calibration layer. The promoted fast path uses frozen ESM-C 600M
+embeddings with mutation-direction, ordered local, whole-protein, membrane, and
+learned ProteinMPNN context. An optional full ESM-C 6B second pass supplies a
+stronger general-ddG estimate and conservatively reranks GPCR candidates.
+Permutation-invariant epistasis heads score double mutants and accept larger
+mutation sets as an explicit extrapolation.
 Saturation screening also reads the encoder's masked amino-acid probabilities
 as a small sequence-compatibility prior. The current pipeline is intentionally
 optimized for application and screening, rather than for introducing a new
@@ -24,9 +25,50 @@ from the checked-in metric and audit JSON files:
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python scripts/build_model_dashboard.py
 ```
 
+The exact v2 splits, training counts, promotion gates, and transfer caveats are
+recorded in [`docs/v2_training_report.md`](docs/v2_training_report.md).
+
 ## Model
 
-For one substitution at residue `i`:
+### Promoted v2 hierarchy
+
+The v2 single-mutant model receives both WT and complete-mutant final-layer
+ESM-C states. At the mutation site it uses the center residue, an ordered
+radius-four sequence window, and a whole-protein mean. A frozen
+sequence-conditioned ProteinMPNN representation and eight membrane/topology
+features condition the learned fusion. Structure is missing-masked rather than
+imputed when no exact chain match is available.
+
+The directional latent is explicitly antisymmetrized:
+
+```text
+odd(WT, mut) = 0.5 * (f(WT, mut) - f(mut, WT))
+ddG(WT, mut) = linear_without_bias(odd(WT, mut))
+```
+
+Consequently, reversing a mutation negates the prediction exactly and a
+self-mutation is exactly zero. Negative project ddG means stabilizing. Separate
+bias-free projections predict thermodynamic ddG, delta-Tm, and stabilizer
+retrieval; endpoints with different units are never pooled.
+
+Architecture discovery was bounded to the sequence hierarchy versus the same
+hierarchy with learned ProteinMPNN fusion. The selected fusion model was then
+trained as a five-member ensemble with batch size 256, a 50-epoch floor, and
+protein-held-out validation. Its frozen 19,645-row generic test reaches
+Spearman `0.818`, MAE `0.513` kcal/mol, stabilizer average precision `0.386`,
+and 33 stabilizers in the top 50. It passed every prespecified promotion gate
+against the retained 600M baseline.
+
+For double mutants, the v2 head sums the two frozen constituent ddG predictions
+and learns a DeepSets-style epistasis correction from constituent and complete
+joint-mutant latents. It is exactly permutation invariant and always reports
+the additive and epistasis components separately. On the 18,574-row,
+protein-held-out test, it improves the additive baseline from MAE `0.917` to
+`0.754` kcal/mol and from Spearman `0.562` to `0.581`.
+
+### Retained v1 path
+
+For one substitution at residue `i`, the retained v1 scorer uses:
 
 ```text
 delta_i = ESM-C(mutant)[i] - ESM-C(WT)[i]
@@ -149,6 +191,13 @@ python3.12 -m venv .venv-esmc6b
 The 6B checkpoint is downloaded from `biohub/ESMC-6B` on first use unless
 `--model` points to an existing snapshot.
 
+The promoted 6B v2 path is accuracy-first: it loads the checkpoint's native
+FP32 tensors, disables TF32, forces the FP32 math attention backend, stores
+hierarchy vectors as FP32, and trains the downstream head with strict FP32
+matrix multiplication. `embed-v2-context-6b` exposes BF16/FP16 only as explicit
+exploratory options; reduced-precision artifacts are not eligible for the
+definitive 6B promotion comparison.
+
 The `run` command:
 
 1. collects every required WT, single, joint-double, transfer, and GPCR sequence;
@@ -170,6 +219,13 @@ The current deterministic run used seed `20260715`:
 
 | Evaluation | Spearman | Pearson | MAE | RMSE |
 | --- | ---: | ---: | ---: | ---: |
+| **ESM-C 6B v2 native-FP32 hierarchy, single-mutant protein holdout** | **0.837** | **0.827** | **0.504** | **0.692** |
+| **ESM-C 6B v2 native-FP32 double-mutant learned estimate** | **0.689** | **0.707** | **0.620** | **0.831** |
+| ESM-C 6B v2 native-FP32 double-mutant additive baseline | 0.611 | 0.601 | 0.959 | 1.230 |
+| ESM-C 600M v2 native-FP32 retrain | 0.823 | 0.824 | 0.507 | 0.700 |
+| ESM-C 600M v2 hierarchy, single-mutant protein holdout | 0.818 | 0.818 | 0.513 | 0.707 |
+| ESM-C 600M v2 double-mutant learned estimate | 0.581 | 0.593 | 0.754 | 0.992 |
+| ESM-C 600M v2 double-mutant additive baseline | 0.562 | 0.575 | 0.917 | 1.154 |
 | Single-mutant protein holdout | 0.777 | 0.782 | 0.556 | 0.755 |
 | ESM-C 600M double-mutant learned estimate | 0.545 | 0.511 | 0.851 | 1.144 |
 | ESM-C 600M double-mutant additive baseline | 0.601 | 0.562 | 1.135 | 1.441 |
@@ -187,10 +243,12 @@ The current deterministic run used seed `20260715`:
 | ESM-C 6B ProTherm protein holdout | 0.481 | 0.348 | 1.133 | 1.979 |
 | ESM-C 6B MPTherm protein holdout | 0.274 | 0.278 | 3.517 | 4.719 |
 
-For 600M, the learned epistasis correction improves absolute error but reduces
-test-set rank correlation. With 6B, it improves both rank correlation and
-absolute error over the corresponding additive baseline. In both paths the
-constituent additive value and learned correction are returned separately.
+The native-FP32 6B hierarchy is the definitive generic model. It recovers 41
+true stabilizers in the top 50 and reaches stabilizer average precision 0.422
+on the same frozen test, versus 33 and 0.386 for the promoted 600M v2 model.
+Its double-mutant correction improves both absolute error and rank over its
+additive baseline. Every multi-mutant path returns the constituent additive
+value and learned correction separately.
 
 On the 26-row, mutation-site-held-out GPCR workbook test, the calibration
 achieves macro within-assay Spearman `0.601` and MAE `24.34` percentage points.
@@ -212,7 +270,72 @@ The accepted masked-marginal runtime prior and its audit are recorded in
 
 ## Prediction
 
-Score one or more substitutions:
+Score one unordered substitution set with the promoted hierarchy/state-potential
+fusion:
+
+```bash
+.venv/bin/protein-stabilizer predict-v2 \
+  --fasta target_gpcr.fasta \
+  --mutations L72A,A73V \
+  --topology alpha_helical_gpcr \
+  --generic-numbering 72=2.50x50,73=2.51x51
+```
+
+Add `--pdb receptor.pdb` to enable the learned ProteinMPNN context. The PDB
+must contain exactly one chain matching the FASTA sequence; otherwise the
+command fails instead of silently misaligning residues. Without a PDB,
+structure is explicitly missing-masked.
+
+For the highest-accuracy prediction, run the strict-FP32 6B fusion in the
+separate environment. The defaults load the validation-selected state
+potential and, for combinations, the promoted permutation-invariant epistasis
+head:
+
+```bash
+.venv-esmc6b/bin/protein-stabilizer predict-v2-6b \
+  --fasta target_gpcr.fasta \
+  --mutations L72A,A73V \
+  --topology alpha_helical_gpcr
+```
+
+The strict 6B path also supports a site-bounded scan:
+
+```bash
+.venv-esmc6b/bin/protein-stabilizer screen-v2-6b \
+  --fasta target_gpcr.fasta \
+  --positions 72,73,100-110 \
+  --topology alpha_helical_gpcr \
+  --output artifacts/target_gpcr_v2_6b.csv
+```
+
+`--scan-mode exact` is the default and evaluates the full promoted blend.
+`--scan-mode state-only` is a fast pre-screen: it embeds only the WT sequence
+and scores all 20 amino-acid states per site in one head pass. State-only
+scores are explicitly labeled and should be followed by exact rescoring of the
+shortlist.
+
+Native-FP32 6B inference is deliberately expensive. Use 600M to explore a
+broad receptor-wide search and 6B to rescore a bounded set of sites when
+turnaround matters.
+
+Run an independent 19-amino-acid scan over selected sites:
+
+```bash
+.venv/bin/protein-stabilizer screen-v2 \
+  --fasta target_gpcr.fasta \
+  --positions 40-350 \
+  --topology alpha_helical_gpcr \
+  --output artifacts/target_gpcr_v2.csv
+```
+
+For GPCR application, negative generic-model ddG is stabilizing. The retained
+GPCR reranker remains a separate candidate-ordering signal because it beats
+the generic fusion on the independent C5aR scan; its score is not a physical
+unit and never overwrites ddG. For a combination, the JSON reports every
+constituent prediction, additive ddG, learned epistasis, and corrected total;
+sets larger than two are explicitly marked as extrapolations.
+
+The retained v1 application command remains:
 
 ```bash
 .venv/bin/protein-stabilizer predict \
@@ -287,18 +410,14 @@ the top 50. Exact selection, provenance, and caveats are in
 
 ## Limitations
 
-- The encoder is sequence-only; membrane topology and structure are not model
-  inputs. A membrane-only ddG adapter was tested and rejected because it was
-  worse than the frozen ESM-C baseline on two unseen alpha-helical proteins.
-  Official ThermoMPNN predictions, local structure descriptors, and a compact
-  structure/model blend were also evaluated on GPCR-tm and did not pass the
-  development plus within-receptor ranking gates. Sequence-conditioned
-  ProteinMPNN logic was additionally discovered with 600M and scaled to the
-  selected 6B rank; its development-optimal blend reached macro Spearman
-  `0.489` but fell to `-0.500` on the official two-receptor macro check and
-  reduced C5aR top-50 recovery from 15 to 11. GPCRdb construct positives,
-  ProteinGym membrane expression/abundance assays, and a direct C5aR
-  alanine-scan classifier also failed the same untouched-test gate.
+- ESM-C itself is sequence-based. The promoted v2 head adds learned frozen
+  ProteinMPNN context when an exact structure-chain match exists and explicit
+  GPCR/membrane topology priors, but it does not yet distinguish
+  lipid-exposed, solvent-exposed, and buried residue surfaces. The older
+  post-hoc 6B ProteinMPNN likelihood blend is a different experiment: it
+  reached development macro Spearman `0.489` but fell to `-0.500` on the
+  official two-receptor check and reduced C5aR top-50 recovery from 15 to 11,
+  so that blend remains rejected.
 - ProTherm is heterogeneous and replicate measurements can disagree; the
   normalization records replicate count and spread for every mutation.
 - The MPTherm head reaches only Spearman `0.371` on the small leak-free GPCR-tm
@@ -323,19 +442,20 @@ the top 50. Exact selection, provenance, and caveats are in
 
 ## ESM-C 6B status
 
-Full ESM-C 6B retraining is complete. Its separate caches contain 136,466
-Megascale single-mutant sequences, 125,823 Megascale double-mutant sequences,
-and 7,502 focused transfer/GPCR sequences. Its compact application checkpoints
-are under `checkpoints/esmc_6b/`. The generic single-mutant holdout improves
-from Spearman `0.777` and MAE `0.556` with 600M to `0.818` and `0.516` with 6B.
-The deployed double-mutant estimate improves from Spearman `0.545` and MAE
-`0.851` with 600M to `0.623` and `0.741` with 6B. ProTherm and MPTherm
-protein-held-out correlations also improve.
+The definitive ESM-C 6B v2 run is complete in native FP32. The hierarchy cache
+contains 259,830 unique sequences and 384,271 local windows. The generic model
+passes every frozen promotion gate: Spearman `0.837`, MAE `0.504` kcal/mol,
+stabilizer average precision `0.422`, and 41 stabilizers in the top 50. The
+native-FP32 double-mutant model reaches Spearman `0.689`, MAE `0.620`, and
+exact permutation invariance. Application checkpoints are under
+`checkpoints/esmc_6b_v2/`.
 
-A 6B-only GPCR rank did not preserve the small official GPCR-tm receptor test,
-so 6B does not replace the fast production rank. Instead it is an optional
-bounded second-stage prior and a stronger general-ddG diagnostic. The 600M and
-6B caches remain strictly separate. The earlier masked-only/DDGemb experiment
+The ProTherm transfer diagnostic improves to Spearman `0.452`, but the
+receptor-disjoint GPCR delta-Tm and membrane transfers remain weak. The 6B
+generic ddG model is therefore the quality ceiling for stability prediction,
+while GPCR-specific crystallization ranking remains the retained consensus
+plus experimental judgment—not a claimed calibrated GPCR ddG model. The 600M
+and 6B caches remain strictly separate. The earlier masked-only/DDGemb experiment
 is recorded in
 [`docs/esmc6b_ddgemb_transfer_audit.json`](docs/esmc6b_ddgemb_transfer_audit.json);
 the completed full-transfer stage is in
