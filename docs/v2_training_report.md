@@ -136,6 +136,21 @@ members with batch size 256 and a 50-epoch floor. Each member saw 5,215,750
 examples and 20,400 optimizer steps. The frozen test remained the same 19,645
 mutations from 19 source proteins.
 
+The filtered single-mutant corpus contains 136,333 rows: 104,315 training,
+12,373 validation, and 19,645 test rows on disjoint source proteins. The five
+main members therefore performed 102,000 optimizer updates in total and took
+1,848.9 seconds (`30.8` minutes). The subsequent five-member state-potential
+stage performed another 102,000 updates and took 1,478.8 seconds (`24.6`
+minutes). Together these two measured training stages took `55.5` minutes.
+ESM-C was frozen and its contextual vectors were cached, so these timings are
+for downstream-head optimization rather than backpropagation through the 6B
+encoder; embedding generation is a separate preprocessing stage.
+At batch size 256, one epoch is 408 optimizer updates. A literal one million
+updates for one member would therefore require about 2,451 epochs and 256
+million row exposures; that was not used. The actual 50 epochs already expose
+each member to 5.22 million rows, while checkpoint selection remains based on
+protein-held-out validation to limit overfitting.
+
 | Metric | Precision-matched retained 6B | 6B v2 native FP32 |
 | --- | ---: | ---: |
 | Spearman | 0.818 | **0.837** |
@@ -180,6 +195,13 @@ from `0.837` to `0.856`, Pearson from `0.827` to `0.849`, MAE from `0.504` to
 `0.467` kcal/mol, RMSE from `0.692` to `0.640`, and stabilizer average
 precision from `0.422` to `0.442`. Self mutation, reversal, and transitivity
 errors are at numerical zero.
+
+The full, unclipped predicted-versus-experimental scatter contains all 19,645
+test mutations on equal kcal/mol axes. Its least-squares calibration is
+`predicted = 0.680 * experimental + 0.277`, exposing the expected
+regression-to-the-mean rather than hiding it behind rank metrics. The exact
+pairs and checkpoint provenance are in `docs/generic_ddg_scatter.json` and are
+rendered in `docs/model_dashboard.html`.
 
 For doubles, a protein-held-out validation sweep selected state weight `0.50`
 for constituent scores. The retrained unordered-set head improves frozen-test
@@ -266,6 +288,8 @@ assay/receptor overfit. Neither path enters the application model.
   `checkpoints/esmc_6b_v2/hierarchy_transfer_metrics.json`
 - GPCR family-consensus selection and confirmation:
   `docs/gpcr_evolutionary_consensus_audit.json`
+- Frozen generic ddG predicted/experimental pairs:
+  `docs/generic_ddg_scatter.json`
 - Promoted strict-FP32 state-potential single and multi reports:
   `checkpoints/esmc_6b_state_potential_fp32/state_potential_report.json` and
   `checkpoints/esmc_6b_state_potential_fp32/hierarchy_multi_metrics.json`

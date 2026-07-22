@@ -80,6 +80,7 @@ def dashboard_data() -> dict[str, object]:
     evolutionary_gpcr = _load_optional(
         "docs/gpcr_evolutionary_consensus_audit.json"
     )
+    ddg_scatter = _load_optional("docs/generic_ddg_scatter.json")
 
     test_600m = single_600m["test"]
     test_6b = single_6b["test"]
@@ -1059,6 +1060,66 @@ def dashboard_data() -> dict[str, object]:
         data["sources"].append(
             "docs/gpcr_evolutionary_consensus_audit.json"
         )
+    if hierarchy_6b is not None and state_6b is not None:
+        main_training = hierarchy_6b["candidate"]
+        main_members = main_training["members"]
+        state_members = state_6b["members"]
+        main_steps = sum(
+            int(member["optimizer_steps"])
+            for member in main_members
+        )
+        state_steps = sum(
+            int(member["optimizer_steps"])
+            for member in state_members
+        )
+        main_seconds = float(main_training["elapsed_seconds"])
+        state_seconds = float(state_6b["elapsed_seconds"])
+        data["training_scale"] = {
+            "dataset_rows": (
+                int(main_training["train_rows"])
+                + int(main_training["validation_rows"])
+                + int(main_training["test_rows"])
+            ),
+            "train_rows": int(main_training["train_rows"]),
+            "validation_rows": int(
+                main_training["validation_rows"]
+            ),
+            "test_rows": int(main_training["test_rows"]),
+            "batch_size": int(
+                state_6b["training_policy"]["batch_size"]
+            ),
+            "epochs_per_member": len(
+                main_members[0]["history"]
+            ),
+            "ensemble_members": len(main_members),
+            "steps_per_member": int(
+                main_members[0]["optimizer_steps"]
+            ),
+            "examples_per_member": int(
+                main_members[0]["examples_seen"]
+            ),
+            "main_optimizer_steps": main_steps,
+            "state_optimizer_steps": state_steps,
+            "total_optimizer_steps": main_steps + state_steps,
+            "main_minutes": _round(main_seconds / 60.0, 1),
+            "state_minutes": _round(state_seconds / 60.0, 1),
+            "total_minutes": _round(
+                (main_seconds + state_seconds) / 60.0, 1
+            ),
+            "encoder_policy": (
+                "ESM-C embeddings are frozen and cached; these runtimes "
+                "train the downstream heads, not the 6B encoder"
+            ),
+        }
+        data["status"]["training"] = (
+            f"{data['training_scale']['dataset_rows']:,} MegaScale rows · "
+            f"{data['training_scale']['total_optimizer_steps']:,} optimizer "
+            f"updates · {data['training_scale']['total_minutes']:.1f} min "
+            "for the two five-member 6B stages"
+        )
+    if ddg_scatter is not None:
+        data["ddg_scatter"] = ddg_scatter
+        data["sources"].append("docs/generic_ddg_scatter.json")
     return data
 
 
@@ -1151,17 +1212,29 @@ HTML_TEMPLATE = r"""<!doctype html>
     .loss { background: rgba(6,18,15,.45); border: 1px solid var(--line); border-radius: 12px; padding: 13px; }
     .loss b { font-size: 22px; }
     .loss small { color: var(--muted); display: block; line-height: 1.4; margin-top: 6px; }
+    .training-facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+    .training-fact { background: rgba(6,18,15,.45); border: 1px solid var(--line); border-radius: 12px; padding: 13px; }
+    .training-fact span { color: var(--muted); display: block; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+    .training-fact b { display: block; font-size: 22px; margin-top: 5px; }
+    .training-fact small { color: var(--muted); display: block; line-height: 1.35; margin-top: 4px; }
+    .scatter-grid { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 20px; align-items: center; }
+    .scatter-canvas { width: 100%; height: 560px; display: block; border-radius: 12px; background: #07110f; }
+    .scatter-stats { display: grid; gap: 10px; }
+    .scatter-stat { border-top: 1px solid var(--line); padding-top: 10px; }
+    .scatter-stat span { color: var(--muted); display: block; font-size: 11px; text-transform: uppercase; }
+    .scatter-stat b { font-size: 22px; }
     .foot { margin-top: 16px; color: var(--muted); font-size: 12px; }
     .legend { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 11px; }
     .dot { width: 8px; height: 8px; display: inline-block; border-radius: 50%; margin-right: 5px; }
     @media (max-width: 1050px) {
-      .kpis, .model-list { grid-template-columns: repeat(2, 1fr); }
-      .two, .three, header { grid-template-columns: 1fr; }
+      .kpis, .model-list, .training-facts { grid-template-columns: repeat(2, 1fr); }
+      .two, .three, header, .scatter-grid { grid-template-columns: 1fr; }
       .stamp { justify-self: start; text-align: left; }
     }
     @media (max-width: 620px) {
       main { width: min(100% - 22px, 1320px); padding-top: 22px; }
-      .kpis, .model-list, .loss-grid { grid-template-columns: 1fr; }
+      .kpis, .model-list, .loss-grid, .training-facts { grid-template-columns: 1fr; }
+      .scatter-canvas { height: 410px; }
       .bar-row { grid-template-columns: 110px 1fr 42px; }
       .table-wrap { overflow-x: auto; }
     }
@@ -1195,9 +1268,21 @@ HTML_TEMPLATE = r"""<!doctype html>
       </div>
     </div>
     <div class="panel">
-      <h2>Training objective</h2>
+      <h2>Training scale and objective</h2>
+      <div class="training-facts" id="training-facts"></div>
       <div class="loss-grid" id="losses"></div>
       <p class="foot">Huber values are optimization diagnostics. They are not kcal/mol and should not be compared with another model’s published loss.</p>
+    </div>
+  </section>
+
+  <section class="panel section">
+    <h2>Held-out ΔΔG: predicted versus experimental</h2>
+    <div class="scatter-grid">
+      <canvas class="scatter-canvas" id="ddg-scatter"></canvas>
+      <div>
+        <div class="scatter-stats" id="scatter-stats"></div>
+        <p class="foot">Every point is one mutation from the frozen protein-held-out MegaScale test. Both axes use the same unclipped kcal/mol scale; the diagonal is perfect calibration. Negative values are stabilizing.</p>
+      </div>
     </div>
   </section>
 
@@ -1284,9 +1369,110 @@ document.querySelector("#models").innerHTML = DATA.models.map(m => `
   </article>`).join("");
 
 document.querySelector("#rank-bars").innerHTML = DATA.models.map((m, i) => bar(m.name.replace("ESM-C ", ""), m.spearman, 1, i % 2)).join("");
+const t = DATA.training_scale;
+document.querySelector("#training-facts").innerHTML = t ? [
+  ["MegaScale rows", t.dataset_rows.toLocaleString(), `${t.train_rows.toLocaleString()} train · ${t.validation_rows.toLocaleString()} validation · ${t.test_rows.toLocaleString()} test`],
+  ["Batch / epochs", `${t.batch_size} / ${t.epochs_per_member}`, `${(t.examples_per_member / 1e6).toFixed(2)}M row exposures per member`],
+  ["Optimizer updates", t.total_optimizer_steps.toLocaleString(), `${t.main_optimizer_steps.toLocaleString()} main + ${t.state_optimizer_steps.toLocaleString()} state`],
+  ["Measured training", `${fmt(t.total_minutes, 1)} min`, `${fmt(t.main_minutes, 1)} main + ${fmt(t.state_minutes, 1)} state`],
+].map(([label, value, note]) => `<div class="training-fact"><span>${label}</span><b>${value}</b><small>${note}</small></div>`).join("") : "";
 document.querySelector("#losses").innerHTML = DATA.losses.map(l => `
   <div class="loss"><h3>${l.model}</h3><b>${fmt(l.final_median, 4)}</b>
   <small>final train ${l.objective}${l.final_range ? ` · range ${fmt(l.final_range[0],4)}–${fmt(l.final_range[1],4)}` : ""}<br>${l.note}</small></div>`).join("");
+
+const scatter = DATA.ddg_scatter;
+if (scatter) {
+  const m = scatter.metrics;
+  document.querySelector("#scatter-stats").innerHTML = [
+    ["Held-out mutations", scatter.rows.toLocaleString()],
+    ["Pearson r", fmt(m.pearson)],
+    ["Spearman ρ", fmt(m.spearman)],
+    ["MAE", `${fmt(m.mae)} kcal/mol`],
+    ["RMSE", `${fmt(m.rmse)} kcal/mol`],
+    ["Calibration", `slope ${fmt(scatter.calibration.slope)} · intercept ${fmt(scatter.calibration.intercept)}`],
+  ].map(([label, value]) => `<div class="scatter-stat"><span>${label}</span><b>${value}</b></div>`).join("");
+
+  const canvas = document.querySelector("#ddg-scatter");
+  const drawScatter = () => {
+    const rect = canvas.getBoundingClientRect();
+    const ratio = window.devicePixelRatio || 1;
+    canvas.width = Math.max(1, Math.round(rect.width * ratio));
+    canvas.height = Math.max(1, Math.round(rect.height * ratio));
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    const width = rect.width;
+    const height = rect.height;
+    const margin = {left: 68, right: 22, top: 24, bottom: 62};
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+    const minimum = scatter.axes.minimum;
+    const maximum = scatter.axes.maximum;
+    const span = maximum - minimum;
+    const x = value => margin.left + (value - minimum) / span * plotWidth;
+    const y = value => margin.top + (maximum - value) / span * plotHeight;
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = "#07110f";
+    ctx.fillRect(0, 0, width, height);
+    ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    for (let index = 0; index <= 8; index++) {
+      const value = minimum + span * index / 8;
+      const px = x(value);
+      const py = y(value);
+      ctx.strokeStyle = "rgba(146,170,161,.14)";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(px, margin.top); ctx.lineTo(px, margin.top + plotHeight); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(margin.left, py); ctx.lineTo(margin.left + plotWidth, py); ctx.stroke();
+      ctx.fillStyle = "#92aaa1";
+      ctx.fillText(value.toFixed(1), px, margin.top + plotHeight + 9);
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      ctx.fillText(value.toFixed(1), margin.left - 9, py);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+    }
+    if (minimum <= 0 && maximum >= 0) {
+      ctx.strokeStyle = "rgba(244,188,92,.38)";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x(0), margin.top); ctx.lineTo(x(0), margin.top + plotHeight); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(margin.left, y(0)); ctx.lineTo(margin.left + plotWidth, y(0)); ctx.stroke();
+    }
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(margin.left, margin.top, plotWidth, plotHeight);
+    ctx.clip();
+    ctx.fillStyle = "rgba(103,216,222,.14)";
+    for (let index = 0; index < scatter.rows; index++) {
+      ctx.fillRect(x(scatter.experimental_ddg[index]) - .8, y(scatter.predicted_ddg[index]) - .8, 1.6, 1.6);
+    }
+    ctx.strokeStyle = "rgba(184,242,107,.88)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([7, 5]);
+    ctx.beginPath(); ctx.moveTo(x(minimum), y(minimum)); ctx.lineTo(x(maximum), y(maximum)); ctx.stroke();
+    ctx.setLineDash([]);
+    const fitStart = scatter.calibration.slope * minimum + scatter.calibration.intercept;
+    const fitStop = scatter.calibration.slope * maximum + scatter.calibration.intercept;
+    ctx.strokeStyle = "rgba(244,188,92,.88)";
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x(minimum), y(fitStart)); ctx.lineTo(x(maximum), y(fitStop)); ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = "#edf7f2";
+    ctx.font = "12px ui-sans-serif, system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Experimental ΔΔG (kcal/mol)", margin.left + plotWidth / 2, height - 25);
+    ctx.save();
+    ctx.translate(18, margin.top + plotHeight / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText("Predicted ΔΔG (kcal/mol)", 0, 0);
+    ctx.restore();
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#b8f26b"; ctx.fillText("— perfect", margin.left + 8, margin.top + 8);
+    ctx.fillStyle = "#f4bc5c"; ctx.fillText("— fitted", margin.left + 78, margin.top + 8);
+  };
+  drawScatter();
+  new ResizeObserver(drawScatter).observe(canvas);
+}
 
 document.querySelector("#ddg-callout").innerHTML =
   `<strong>Operational expectation: roughly ±1 kcal/mol for a new GPCR.</strong><p>${e.interpretation}</p>`;

@@ -18,8 +18,9 @@ Solubility is deliberately not part of the current model.
 
 Open [`docs/model_dashboard.html`](docs/model_dashboard.html) for the current
 model roles, training losses, held-out performance, expected ddG error scale,
-GPCR screening evidence, and external-method context. It is generated directly
-from the checked-in metric and audit JSON files:
+the full 19,645-point predicted-versus-experimental kcal/mol scatter, GPCR
+screening evidence, and external-method context. It is generated directly from
+the checked-in metric and audit JSON files:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python scripts/build_model_dashboard.py

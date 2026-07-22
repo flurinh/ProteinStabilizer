@@ -5,6 +5,13 @@
 - Generic production model: strict-FP32 ESM-C 6B hierarchy/state fusion.
   Frozen protein-held-out Spearman `0.856`, Pearson `0.849`, MAE `0.467`
   kcal/mol, RMSE `0.640`, stabilizer AP `0.442`.
+- Single-mutant corpus: 136,333 protein-disjoint rows (104,315 train, 12,373
+  validation, 19,645 test). The five-member main and state stages each ran 50
+  epochs and 102,000 optimizer updates, taking 30.8 and 24.6 minutes
+  respectively (`55.5` minutes combined). ESM-C remained frozen/cached.
+- Full held-out predicted/experimental pairs are rendered on equal unclipped
+  kcal/mol axes in `docs/model_dashboard.html`; fitted slope `0.680`, intercept
+  `0.277`.
 - Double-mutant production model: permutation-invariant fused constituent
   scores plus learned epistasis. Spearman `0.749`, MAE `0.585`, epistasis
   Spearman `0.556`; mutation-order delta `0.0`.
