@@ -194,6 +194,40 @@ reranker (`0.696`, `0.317`, and 15/50). The production policy therefore uses
 the fusion for signed generic ddG and keeps GPCR reranking separate and
 unitless.
 
+## GPCR family-consensus promotion
+
+The application GPCR rank now combines three deliberately separate signals:
+50% of the retained dual-backbone GPCR rank, 40% of the strict-FP32 6B
+hierarchy/state-potential favorable-stability percentile, and 10% of a
+target-excluded GPCRdb parent-family log-odds percentile. The evolutionary
+term is `log((mutant count + 0.5) / (WT count + 0.5))`; the target sequence is
+removed before counting. It is an orthogonal evolutionary prior, not an
+additional trained stability head.
+
+Weights were selected on 82 GPCR-tm development mutations. Macro
+within-receptor Spearman is `0.338`, versus `0.115` for the retained GPCR rank
+and `0.311` for the strict-6B generic score. A nested leave-one-receptor
+reselection diagnostic reaches `0.241`. On the 12-row official confirmation
+the selected consensus reaches macro Spearman `0.900`, versus `1.000` for the
+retained rank. On the 277-row C5aR scan it improves AUC from `0.696` to
+`0.718`, average precision from `0.317` to `0.377`, and top-50 stabilizer
+recovery from 15/34 to 17/34. A 10,000-sample paired stratified bootstrap
+places the AP difference at median `+0.056`, 95% interval `[-0.005, 0.119]`,
+with probability of a positive difference `0.965`.
+
+This is the promoted application ranking policy, not evidence of a calibrated
+GPCR ddG model. Evolutionary preference also reflects function, expression,
+and phylogeny. The official split and C5aR scan were consulted during earlier
+experiments, so no untouched GPCR benchmark remains. Fifty C5aR positions
+outside the alignment receive a neutral evolutionary score. Exact evidence is
+in `docs/gpcr_evolutionary_consensus_audit.json`.
+
+Two adjacent ideas were rejected. An explicit rigid-body-invariant GPCR bundle
+geometry prior produced nested development macro Spearman `0.058`, below the
+retained `0.115`. A phenotype-aware latent fit to the small GPCR workbook
+looked strong on the development assays but collapsed on C5aR, indicating
+assay/receptor overfit. Neither path enters the application model.
+
 ## Provenance and artifacts
 
 - ESM-C 600M hierarchy cache:
@@ -230,3 +264,8 @@ unitless.
   `checkpoints/esmc_6b_v2/hierarchy_scale_report.json`,
   `checkpoints/esmc_6b_v2/hierarchy_multi_metrics.json`, and
   `checkpoints/esmc_6b_v2/hierarchy_transfer_metrics.json`
+- GPCR family-consensus selection and confirmation:
+  `docs/gpcr_evolutionary_consensus_audit.json`
+- Promoted strict-FP32 state-potential single and multi reports:
+  `checkpoints/esmc_6b_state_potential_fp32/state_potential_report.json` and
+  `checkpoints/esmc_6b_state_potential_fp32/hierarchy_multi_metrics.json`

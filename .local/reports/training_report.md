@@ -1,5 +1,21 @@
 # ProteinStabilizer training report
 
+## Current milestone — 2026-07-22
+
+- Generic production model: strict-FP32 ESM-C 6B hierarchy/state fusion.
+  Frozen protein-held-out Spearman `0.856`, Pearson `0.849`, MAE `0.467`
+  kcal/mol, RMSE `0.640`, stabilizer AP `0.442`.
+- Double-mutant production model: permutation-invariant fused constituent
+  scores plus learned epistasis. Spearman `0.749`, MAE `0.585`, epistasis
+  Spearman `0.556`; mutation-order delta `0.0`.
+- GPCR application rank: 50% retained dual-backbone rank + 40% strict-6B
+  favorable-stability percentile + 10% target-excluded GPCRdb family prior.
+  GPCR-tm development macro Spearman `0.338`, official confirmation `0.900`;
+  C5aR AUC `0.718`, AP `0.377`, top-50 recovery 17/34.
+- Limitation: the GPCR score is rank-only. The official and C5aR checks have
+  been consulted during development, so no untouched GPCR benchmark remains.
+- Dashboard: `docs/model_dashboard.html`.
+
 Date: 2026-07-16
 Seed: `20260715`
 

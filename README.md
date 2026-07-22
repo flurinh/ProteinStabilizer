@@ -219,8 +219,10 @@ The current deterministic run used seed `20260715`:
 
 | Evaluation | Spearman | Pearson | MAE | RMSE |
 | --- | ---: | ---: | ---: | ---: |
-| **ESM-C 6B v2 native-FP32 hierarchy, single-mutant protein holdout** | **0.837** | **0.827** | **0.504** | **0.692** |
-| **ESM-C 6B v2 native-FP32 double-mutant learned estimate** | **0.689** | **0.707** | **0.620** | **0.831** |
+| **ESM-C 6B strict-FP32 hierarchy/state fusion, single-mutant protein holdout** | **0.856** | **0.849** | **0.467** | **0.640** |
+| **ESM-C 6B strict-FP32 fused double-mutant estimate** | **0.749** | **0.747** | **0.585** | **0.782** |
+| ESM-C 6B v2 native-FP32 hierarchy before state fusion | 0.837 | 0.827 | 0.504 | 0.692 |
+| ESM-C 6B v2 native-FP32 double before state fusion | 0.689 | 0.707 | 0.620 | 0.831 |
 | ESM-C 6B v2 native-FP32 double-mutant additive baseline | 0.611 | 0.601 | 0.959 | 1.230 |
 | ESM-C 600M v2 native-FP32 retrain | 0.823 | 0.824 | 0.507 | 0.700 |
 | ESM-C 600M v2 hierarchy, single-mutant protein holdout | 0.818 | 0.818 | 0.513 | 0.707 |
@@ -243,12 +245,12 @@ The current deterministic run used seed `20260715`:
 | ESM-C 6B ProTherm protein holdout | 0.481 | 0.348 | 1.133 | 1.979 |
 | ESM-C 6B MPTherm protein holdout | 0.274 | 0.278 | 3.517 | 4.719 |
 
-The native-FP32 6B hierarchy is the definitive generic model. It recovers 41
-true stabilizers in the top 50 and reaches stabilizer average precision 0.422
-on the same frozen test, versus 33 and 0.386 for the promoted 600M v2 model.
-Its double-mutant correction improves both absolute error and rank over its
-additive baseline. Every multi-mutant path returns the constituent additive
-value and learned correction separately.
+The strict-FP32 6B hierarchy/state fusion is the definitive generic model. It
+recovers 41 true stabilizers in the top 50 and reaches stabilizer average
+precision `0.442` on the same frozen test, versus 33 and `0.386` for the
+promoted 600M v2 model. Its double-mutant correction improves both absolute
+error and rank over its additive baseline. Every multi-mutant path returns the
+constituent additive value and learned correction separately.
 
 On the 26-row, mutation-site-held-out GPCR workbook test, the calibration
 achieves macro within-assay Spearman `0.601` and MAE `24.34` percentage points.
@@ -408,6 +410,50 @@ precision improved from `0.255` to `0.317`, with 15 rather than 13 positives in
 the top 50. Exact selection, provenance, and caveats are in
 [`docs/esmc6b_full_transfer_audit.json`](docs/esmc6b_full_transfer_audit.json).
 
+For the promoted GPCR-specific experimental ordering, run the strict-FP32
+`screen-v2-6b` command over exactly the same positions, pin the target's
+GPCRdb parent-family alignment, and combine the two CSVs:
+
+```bash
+python scripts/download_gpcrdb_evolutionary.py \
+  --entry-name c5ar1_human \
+  --output data/raw/gpcrdb_evolutionary/c5ar1_human
+
+.venv-esmc6b/bin/protein-stabilizer screen-v2-6b \
+  --fasta target_gpcr.fasta \
+  --positions 45-60,72,73,100-120 \
+  --topology alpha_helical_gpcr \
+  --output artifacts/target_gpcr_generic_6b.csv
+
+.venv/bin/protein-stabilizer rank-gpcr-consensus \
+  --fasta target_gpcr.fasta \
+  --accession P21730 \
+  --retained-input artifacts/target_gpcr_screen_6b.csv \
+  --generic-6b-input artifacts/target_gpcr_generic_6b.csv \
+  --gpcrdb-cache data/raw/gpcrdb_evolutionary/c5ar1_human \
+  --output artifacts/target_gpcr_gpcr_consensus.csv
+```
+
+Replace the example entry name and accession with the target receptor. The
+FASTA must match the pinned GPCRdb canonical sequence, and both input CSVs
+must contain the identical mutation set; the command fails on mismatches.
+The output retains the signed generic ddG and all source ranks, then adds
+`gpcr_screening_rank_score`:
+
+- 50% retained GPCR dual-backbone rank;
+- 40% strict-FP32 6B generic favorable-stability percentile; and
+- 10% target-excluded GPCRdb family log-odds percentile.
+
+This selection reached development macro Spearman `0.338` (retained `0.115`,
+generic 6B `0.311`), official macro Spearman `0.900` (retained `1.000`), and
+C5aR AUC `0.718`, AP `0.377`, with 17/34 stabilizers in the top 50 (retained:
+`0.696`, `0.317`, and 15/34). It is the current GPCR screening policy, but its
+score is only a within-scan rank—not ddG, delta-Tm, percent stability, or
+crystallization probability. The 12-row official set and C5aR scan were
+consulted during model development, so no untouched GPCR benchmark remains.
+Full selection and bootstrap evidence are in
+[`docs/gpcr_evolutionary_consensus_audit.json`](docs/gpcr_evolutionary_consensus_audit.json).
+
 ## Limitations
 
 - ESM-C itself is sequence-based. The promoted v2 head adds learned frozen
@@ -423,10 +469,12 @@ the top 50. Exact selection, provenance, and caveats are in
 - The MPTherm head reaches only Spearman `0.371` on the small leak-free GPCR-tm
   test. Its delta-Tm output is an auxiliary ranking signal, not a calibrated
   universal GPCR stability measurement.
-- The optional 6B rerank is supported by only 82 GPCR-tm development rows, a
-  12-row confirmation set, and one independent C5aR scan. The confirmation set
-  has been consulted in earlier project stages, so it is not a fresh untouched
-  benchmark. Keep the original 600M rank visible when selecting experiments.
+- The promoted GPCR consensus is supported by only 82 GPCR-tm development
+  rows, a 12-row confirmation set, and one C5aR scan. The confirmation and
+  C5aR sets have both been consulted during project development, so neither is
+  a fresh untouched benchmark. Its C5aR AP improvement over the retained rank
+  has a paired-bootstrap 95% interval of `-0.005` to `0.119`; keep every
+  component visible and test a diverse experimental panel.
 - Masked-marginal log odds measure sequence compatibility, not kcal/mol,
   delta-Tm, expression, activity, or crystallizability. The 20% weight improved
   the independent C5aR scan while preserving the GPCR-tm within-receptor test
@@ -443,20 +491,20 @@ the top 50. Exact selection, provenance, and caveats are in
 ## ESM-C 6B status
 
 The definitive ESM-C 6B v2 run is complete in native FP32. The hierarchy cache
-contains 259,830 unique sequences and 384,271 local windows. The generic model
-passes every frozen promotion gate: Spearman `0.837`, MAE `0.504` kcal/mol,
-stabilizer average precision `0.422`, and 41 stabilizers in the top 50. The
-native-FP32 double-mutant model reaches Spearman `0.689`, MAE `0.620`, and
-exact permutation invariance. Application checkpoints are under
-`checkpoints/esmc_6b_v2/`.
+contains 259,830 unique sequences and 384,271 local windows. The promoted
+hierarchy/state-potential fusion reaches held-out Spearman `0.856`, MAE
+`0.467` kcal/mol, stabilizer average precision `0.442`, and 41 stabilizers in
+the top 50. The fused native-FP32 double-mutant model reaches Spearman `0.749`,
+MAE `0.585`, and exact permutation invariance. Application checkpoints are
+under `checkpoints/esmc_6b_state_potential_fp32/`.
 
 The ProTherm transfer diagnostic improves to Spearman `0.452`, but the
 receptor-disjoint GPCR delta-Tm and membrane transfers remain weak. The 6B
 generic ddG model is therefore the quality ceiling for stability prediction,
-while GPCR-specific crystallization ranking remains the retained consensus
+while GPCR-specific experimental ordering uses the promoted family consensus
 plus experimental judgment—not a claimed calibrated GPCR ddG model. The 600M
-and 6B caches remain strictly separate. The earlier masked-only/DDGemb experiment
-is recorded in
+and 6B caches remain strictly separate. The earlier masked-only/DDGemb
+experiment is recorded in
 [`docs/esmc6b_ddgemb_transfer_audit.json`](docs/esmc6b_ddgemb_transfer_audit.json);
 the completed full-transfer stage is in
 [`docs/esmc6b_full_transfer_audit.json`](docs/esmc6b_full_transfer_audit.json).
@@ -474,5 +522,6 @@ recorded in
 - MPTherm-Pred dataset: https://web.iitm.ac.in/bioinfo2/mpthermpred/dataset_details.html
 - mCSM-membrane dataset: https://biosig.lab.uq.edu.au/mcsm_membrane/data
 - GPCR-tm dataset: https://biosig.lab.uq.edu.au/gpcr_tm/data
+- GPCRdb web services: https://docs.gpcrdb.org/web_services.html
 - DDGemb S2450, S669, and ptMUL-NR datasets: https://ddgemb.biocomp.unibo.it/datasets/
 - Biohub ESM-C 6B checkpoint: https://huggingface.co/biohub/ESMC-6B

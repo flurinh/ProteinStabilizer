@@ -26,6 +26,12 @@ def test_model_dashboard_is_generated_from_recorded_metrics(tmp_path) -> None:
     )
     assert data["gpcr"]["c5ar"]["rerank_ap"] == 0.318
     assert data["gpcr"]["c5ar"]["fusion_ap"] == 0.256
+    assert data["gpcr"]["development"]["consensus_macro_spearman"] == 0.338
+    assert data["gpcr"]["official_test"]["consensus_macro_spearman"] == 0.9
+    assert data["gpcr"]["c5ar"]["consensus_auc"] == 0.718
+    assert data["gpcr"]["c5ar"]["consensus_ap"] == 0.377
+    assert data["gpcr"]["c5ar"]["consensus_top50"] == 17
+    assert "Promoted GPCR evolutionary consensus" in html
     assert data["structure_scale"]["status"] == "rejected_for_production"
     assert data["structure_scale"]["development_candidate"] == 0.489
     assert data["structure_scale"]["official_candidate"] == -0.5

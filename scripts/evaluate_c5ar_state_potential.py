@@ -256,13 +256,16 @@ def evaluate(args: argparse.Namespace) -> dict[str, object]:
     baseline.eval()
     state.eval()
     with torch.inference_mode():
+        baseline_latent = baseline.latent(**baseline_tensors)
+        state_latent = state.latent(**state_tensors)
         baseline_ddg = baseline(**baseline_tensors)
         state_ddg = state(**state_tensors)
     state_weight = float(state_payload["state_potential_weight"])
-    candidate_score = -(
+    blended_ddg = (
         (1.0 - state_weight) * baseline_ddg
         + state_weight * state_ddg
-    ).float().cpu().numpy()
+    )
+    candidate_score = -blended_ddg.float().cpu().numpy()
     comparators = pd.read_csv(args.comparators)
     expected = [str(mutation) for mutation in mutations]
     if comparators["mutation"].astype(str).tolist() != expected:
@@ -271,6 +274,62 @@ def evaluate(args: argparse.Namespace) -> dict[str, object]:
     fast_score = comparators["mptherm_delta_tm"].to_numpy(
         dtype=np.float32
     )
+    score_frame = pd.DataFrame(
+        {
+            "mutation": expected,
+            "target": target,
+            "candidate_score": candidate_score,
+            "retained_rank6b": retained_score,
+            "retained_fast_mptherm": fast_score,
+        }
+    )
+    if args.scores_output is not None:
+        args.scores_output.parent.mkdir(parents=True, exist_ok=True)
+        score_frame.to_csv(args.scores_output, index=False)
+    if args.representations_output is not None:
+        args.representations_output.parent.mkdir(
+            parents=True, exist_ok=True
+        )
+        partial = args.representations_output.with_suffix(
+            args.representations_output.suffix + ".partial"
+        )
+        partial.unlink(missing_ok=True)
+        with h5py.File(partial, "w", libver="latest") as handle:
+            handle.attrs["schema"] = (
+                "protein-stabilizer.c5ar-transfer-representations.v1"
+            )
+            handle.attrs["favorable_direction"] = "positive"
+            handle.attrs["state_potential_weight"] = state_weight
+            handle.attrs["state_checkpoint_sha256"] = file_sha256(
+                args.state_checkpoint
+            )
+            handle.attrs["baseline_checkpoint_sha256"] = file_sha256(
+                baseline_path
+            )
+            handle.attrs["hierarchy_cache_sha256"] = file_sha256(
+                args.cache
+            )
+            handle.attrs["labels_source_sha256"] = source_sha256
+            handle.create_dataset(
+                "base_latent",
+                data=torch.cat(
+                    [baseline_latent, state_latent], dim=-1
+                )
+                .float()
+                .cpu()
+                .numpy(),
+            )
+            handle.create_dataset(
+                "base_ddg",
+                data=blended_ddg.float().cpu().numpy(),
+            )
+            handle.create_dataset("target", data=target)
+            handle.create_dataset(
+                "mutation",
+                data=np.asarray(expected, dtype=object),
+                dtype=h5py.string_dtype(encoding="utf-8"),
+            )
+        partial.replace(args.representations_output)
     result = {
         "schema": "protein-stabilizer.c5ar-state-potential-audit.v1",
         "candidate": (
@@ -318,6 +377,20 @@ def evaluate(args: argparse.Namespace) -> dict[str, object]:
             "baseline_checkpoint_sha256": file_sha256(baseline_path),
         },
     }
+    if args.scores_output is not None:
+        result["artifacts"]["scores"] = str(
+            args.scores_output.resolve()
+        )
+        result["artifacts"]["scores_sha256"] = file_sha256(
+            args.scores_output
+        )
+    if args.representations_output is not None:
+        result["artifacts"]["representations"] = str(
+            args.representations_output.resolve()
+        )
+        result["artifacts"]["representations_sha256"] = file_sha256(
+            args.representations_output
+        )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(result, indent=2, sort_keys=True),
@@ -371,6 +444,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         type=Path,
         default=ROOT / "docs/esmc6b_state_potential_c5ar_audit.json",
+    )
+    parser.add_argument(
+        "--scores-output",
+        type=Path,
+        default=Path(
+            "/data/fast/tmp/protein-stabilizer/proteinmpnn-gpcr/"
+            "esmc6b_state_potential_c5ar_scores.csv"
+        ),
+    )
+    parser.add_argument(
+        "--representations-output",
+        type=Path,
+        default=Path(
+            "/data/fast/tmp/protein-stabilizer/proteinmpnn-gpcr/"
+            "esmc6b_state_potential_c5ar_representations.h5"
+        ),
     )
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--max-tokens", type=int, default=1024)

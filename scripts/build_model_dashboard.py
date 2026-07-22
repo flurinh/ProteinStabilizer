@@ -77,6 +77,9 @@ def dashboard_data() -> dict[str, object]:
     c5ar_state = _load_optional(
         "docs/esmc6b_state_potential_c5ar_audit.json"
     )
+    evolutionary_gpcr = _load_optional(
+        "docs/gpcr_evolutionary_consensus_audit.json"
+    )
 
     test_600m = single_600m["test"]
     test_6b = single_6b["test"]
@@ -964,6 +967,98 @@ def dashboard_data() -> dict[str, object]:
         data["sources"].append(
             "docs/esmc6b_state_potential_c5ar_audit.json"
         )
+    if evolutionary_gpcr is not None:
+        development = evolutionary_gpcr["development_selection"]
+        confirmation = evolutionary_gpcr["frozen_confirmation"]
+        official = confirmation["official_gpcr_tm"]
+        c5_candidate = confirmation["c5ar"]["candidate"]
+        bootstrap = confirmation["c5ar"]["paired_stratified_bootstrap"]
+        weights = development["selected"]
+        data["status"].update(
+            {
+                "headline": (
+                    "Strict-FP32 6B hierarchy/state fusion leads generic "
+                    "ΔΔG; GPCRdb evolutionary consensus is the promoted "
+                    "GPCR screening rank"
+                ),
+                "gpcr_path": (
+                    "50% retained GPCR rank + 40% strict-FP32 6B generic "
+                    "stability + 10% target-excluded GPCR family prior"
+                ),
+            }
+        )
+        data["gpcr"]["development"].update(
+            {
+                "generic_6b_macro_spearman": _round(
+                    development["generic_6b_macro_spearman"]
+                ),
+                "consensus_macro_spearman": _round(
+                    development["candidate_macro_spearman"]
+                ),
+                "nested_consensus_macro_spearman": _round(
+                    development["nested_reselected_macro_spearman"]
+                ),
+            }
+        )
+        data["gpcr"]["official_test"]["consensus_macro_spearman"] = _round(
+            official["candidate_macro_spearman"]
+        )
+        data["gpcr"]["c5ar"].update(
+            {
+                "consensus_auc": _round(c5_candidate["roc_auc"]),
+                "consensus_ap": _round(
+                    c5_candidate["average_precision"]
+                ),
+                "consensus_top50": int(
+                    c5_candidate["positives_in_top50"]
+                ),
+                "consensus_ap_difference_ci95": [
+                    _round(value)
+                    for value in bootstrap[
+                        "average_precision_difference"
+                    ]["ci95"]
+                ],
+                "consensus_ap_probability_positive": _round(
+                    bootstrap["average_precision_difference"][
+                        "probability_positive"
+                    ],
+                    4,
+                ),
+            }
+        )
+        data["same_project_comparisons"].insert(
+            0,
+            {
+                "model": "Promoted GPCR evolutionary consensus",
+                "input": (
+                    "Retained GPCR rank + strict-6B stability + "
+                    "target-excluded family alignment"
+                ),
+                "benchmark": (
+                    "GPCR-tm development/confirmation + C5aR scan"
+                ),
+                "metric": (
+                    f"dev macro ρ {_round(development['candidate_macro_spearman'])} · "
+                    f"official {_round(official['candidate_macro_spearman'])} · "
+                    f"C5 AUC {_round(c5_candidate['roc_auc'])}/"
+                    f"AP {_round(c5_candidate['average_precision'])}/"
+                    f"top-50 {int(c5_candidate['positives_in_top50'])}/34"
+                ),
+                "decision": (
+                    "Promoted for rank-only GPCR screening; no untouched "
+                    "GPCR benchmark remains"
+                ),
+                "tone": "good",
+            },
+        )
+        data["gpcr"]["consensus_weights"] = {
+            "retained": float(weights["retained_weight"]),
+            "generic_6b": float(weights["generic_6b_weight"]),
+            "evolutionary": float(weights["evolutionary_weight"]),
+        }
+        data["sources"].append(
+            "docs/gpcr_evolutionary_consensus_audit.json"
+        )
     return data
 
 
@@ -1134,8 +1229,8 @@ HTML_TEMPLATE = r"""<!doctype html>
     <div class="panel">
       <h2>My assessment</h2>
       <div class="callout">
-        <strong>Use v2 now for broad screening, not for believing a GPCR decimal.</strong>
-        <p>The 600M hierarchy combines mutation direction, ordered local and global ESM-C context, membrane priors, and learned ProteinMPNN features. It passed every prespecified generic promotion gate and approximately matches the retained 6B baseline. The separate GPCR and membrane transfer heads did not generalize strongly enough to claim calibrated magnitudes, so receptor ranking remains more trustworthy than absolute ΔΔG.</p>
+        <strong>Use the consensus to choose GPCR experiments, not to believe a GPCR decimal.</strong>
+        <p>The strict-FP32 6B hierarchy/state fusion is the best signed generic ΔΔG model. GPCR screening adds the retained receptor rank and a small target-excluded GPCRdb family prior. This improves the local GPCR checks, but it remains a within-scan ordering score rather than calibrated stability or crystallization probability.</p>
       </div>
       <p><strong>Practical target:</strong> rank a broad single-mutant scan, retain general-ΔΔG support, and test a diverse panel rather than only near-duplicate top hits.</p>
     </div>
@@ -1171,7 +1266,7 @@ document.querySelector("#kpis").innerHTML = [
   ["Best generic ρ", fmt(DATA.models[0].spearman), "600M v2 · protein-held-out"],
   ["Typical |ΔΔG error|", `${fmt(e.generic_mae, 2)} kcal/mol`, "Megascale holdout"],
   ["Experimental transfer", `${fmt(e.experimental_mae, 2)} kcal/mol`, "ProTherm holdout"],
-  ["C5aR rerank AP", fmt(DATA.gpcr.c5ar.rerank_ap), `${DATA.gpcr.c5ar.rerank_top50}/34 positives in top 50`],
+  ["C5aR GPCR AP", fmt(DATA.gpcr.c5ar.consensus_ap ?? DATA.gpcr.c5ar.rerank_ap), `${DATA.gpcr.c5ar.consensus_top50 ?? DATA.gpcr.c5ar.rerank_top50}/34 positives in top 50`],
 ].map(([label, value, note]) => `<div class="kpi"><div class="label">${label}</div><div class="value accent">${value}</div><div class="note">${note}</div></div>`).join("");
 
 document.querySelector("#models").innerHTML = DATA.models.map(m => `
@@ -1207,14 +1302,22 @@ document.querySelector("#gpcr").innerHTML =
   `<h3>Within-receptor rank</h3>` +
   bar("Fast development", g.development.fast_macro_spearman, 1) +
   bar("6B development", g.development.rerank_macro_spearman, 1, true) +
+  (g.development.consensus_macro_spearman == null ? "" :
+    bar("Promoted consensus development", g.development.consensus_macro_spearman, 1, true)) +
   bar("Fast official test", g.official_test.fast_macro_spearman, 1) +
   bar("6B official test", g.official_test.rerank_macro_spearman, 1, true) +
+  (g.official_test.consensus_macro_spearman == null ? "" :
+    bar("Promoted consensus official", g.official_test.consensus_macro_spearman, 1, true)) +
   `<h3 style="margin-top:20px">Independent C5aR scan</h3>` +
   bar("Fast AUC", g.c5ar.fast_auc, 1) +
   bar("6B rerank AUC", g.c5ar.rerank_auc, 1, true) +
+  (g.c5ar.consensus_auc == null ? "" :
+    bar("Promoted consensus AUC", g.c5ar.consensus_auc, 1, true)) +
   bar("Fast AP", g.c5ar.fast_ap, 1) +
   bar("6B rerank AP", g.c5ar.rerank_ap, 1, true) +
-  `<p class="foot">${g.c5ar.rows} substitutions · ${g.c5ar.positives} reported thermostable. The 12-row official test is confirmatory, not untouched.</p>` +
+  (g.c5ar.consensus_ap == null ? "" :
+    bar("Promoted consensus AP", g.c5ar.consensus_ap, 1, true)) +
+  `<p class="foot">${g.c5ar.rows} substitutions · ${g.c5ar.positives} reported thermostable. The promoted 50/40/10 rank reaches top-50 ${g.c5ar.consensus_top50 ?? g.c5ar.rerank_top50}/34; its paired AP-difference interval is ${g.c5ar.consensus_ap_difference_ci95 ? `[${fmt(g.c5ar.consensus_ap_difference_ci95[0])}, ${fmt(g.c5ar.consensus_ap_difference_ci95[1])}]` : "not available"}. The 12-row official test and C5aR scan have both been consulted, so neither is untouched.</p>` +
   `<h3 style="margin-top:20px">ProteinMPNN logic scaled to 6B</h3>` +
   bar("Development", s.development_candidate, 1) +
   bar("Official check", s.official_candidate, 1, true) +

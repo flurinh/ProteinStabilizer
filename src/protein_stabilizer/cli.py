@@ -17,6 +17,7 @@ from .esmc6b import (
     rerank_esmc6b_screen,
 )
 from .features import build_feature_files
+from .gpcr_evolutionary import rank_gpcr_screening_consensus
 from .gpcr_ranking import train_zero_shot_membrane_ranker
 from .predictor import predict_mutations, screen_single_mutants
 from .structure import (
@@ -680,6 +681,25 @@ def command_rerank_esmc6b(args: argparse.Namespace) -> dict[str, object]:
         device=args.device,
         max_tokens=args.max_tokens,
         max_batch_size=args.max_batch_size,
+        top=args.top,
+    )
+
+
+def command_rank_gpcr_consensus(
+    args: argparse.Namespace,
+) -> dict[str, object]:
+    sequence = (
+        args.sequence
+        if args.sequence is not None
+        else _read_fasta(args.fasta)
+    )
+    return rank_gpcr_screening_consensus(
+        sequence,
+        args.accession,
+        args.retained_input,
+        args.generic_6b_input,
+        args.output,
+        args.gpcrdb_cache,
         top=args.top,
     )
 
@@ -1349,6 +1369,33 @@ def build_parser() -> argparse.ArgumentParser:
     rerank.add_argument("--device", default="cuda")
     rerank.add_argument("--max-tokens", type=int, default=4096)
     rerank.add_argument("--max-batch-size", type=int, default=16)
+    gpcr_consensus = subparsers.add_parser("rank-gpcr-consensus")
+    gpcr_consensus.add_argument("--sequence")
+    gpcr_consensus.add_argument("--fasta", type=Path)
+    gpcr_consensus.add_argument("--accession", required=True)
+    gpcr_consensus.add_argument(
+        "--retained-input",
+        type=Path,
+        required=True,
+        help="CSV produced by rerank-6b",
+    )
+    gpcr_consensus.add_argument(
+        "--generic-6b-input",
+        type=Path,
+        required=True,
+        help="CSV produced by strict-FP32 screen-v2-6b",
+    )
+    gpcr_consensus.add_argument(
+        "--gpcrdb-cache",
+        type=Path,
+        default=ROOT / "data/raw/gpcrdb_evolutionary",
+    )
+    gpcr_consensus.add_argument(
+        "--output",
+        type=Path,
+        default=ROOT / "artifacts/gpcr_consensus.csv",
+    )
+    gpcr_consensus.add_argument("--top", type=int, default=50)
     predict_6b = subparsers.add_parser("predict-6b")
     predict_6b.add_argument("--sequence")
     predict_6b.add_argument("--fasta", type=Path)
@@ -1376,6 +1423,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "screen-v2",
         "screen-v2-6b",
         "rerank-6b",
+        "rank-gpcr-consensus",
         "predict-6b",
     } and (
         args.sequence is None
@@ -1418,6 +1466,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "screen-v2": command_screen_v2,
         "screen-v2-6b": command_screen_v2_6b,
         "rerank-6b": command_rerank_esmc6b,
+        "rank-gpcr-consensus": command_rank_gpcr_consensus,
         "predict-6b": command_predict_esmc6b,
     }
     _json(commands[args.command](args))

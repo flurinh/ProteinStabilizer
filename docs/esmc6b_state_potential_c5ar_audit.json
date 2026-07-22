@@ -3,7 +3,7 @@
     "baseline_checkpoint": "/data/fast/projects/ProteinStabilizer/checkpoints/esmc_6b_v2/hierarchy_selected_ensemble.pt",
     "baseline_checkpoint_sha256": "be9ff05c745eda74ef615abe04222245e436448079e6159c4a7a3673f47b37f5",
     "cache": "/data/fast/projects/ProteinStabilizer/embeddings/esmc_6b/c5ar_state_potential_cache_fp32.h5",
-    "cache_sha256": "7492fa4f0b16cca296574d7844637fe6c7835b6acf10ca34e31d4fcc0d6df8b6",
+    "cache_sha256": "d37a3aefd787cc9cc252bb1eef17b500e9d664a78aa3d68ebacac5115d6d5be5",
     "comparators": "/data/fast/tmp/protein-stabilizer/proteinmpnn-gpcr/esmc6b_proteinmpnn_c5ar_components.csv",
     "comparators_sha256": "2c38926c07e2d15006d313e51f57dab5c06c64ef0f5b17e5079a7ebfc9797c37",
     "labels": "/data/fast/projects/ProteinStabilizer/artifacts/features_esmc_6b/c5ar.h5",
@@ -11,6 +11,10 @@
     "labels_source_sha256": "d152cdd76a2a318f81a7ed938f574985da39737e80f43dcec7b67acd399e3789",
     "pdb": "/data/fast/tmp/protein-stabilizer/proteinmpnn-gpcr/input/c5ar/AF-P21730-F1-model_v6.pdb",
     "pdb_sha256": "cea32c64bc50462613a7fa08bf90d45c28a6eb461c5a99de82fde48ddeb3096c",
+    "representations": "/data/fast/tmp/protein-stabilizer/proteinmpnn-gpcr/esmc6b_state_potential_c5ar_representations.h5",
+    "representations_sha256": "2867b0ab59d7b8957d76945b721d361b627a2d1e1490f99d7f5e19e1f60861a6",
+    "scores": "/data/fast/tmp/protein-stabilizer/proteinmpnn-gpcr/esmc6b_state_potential_c5ar_scores.csv",
+    "scores_sha256": "3b83454bb2da3a69640f2bd938ef3437a2a410a6f1ade1ae43a15ea3faf1cbd9",
     "state_checkpoint": "/data/fast/projects/ProteinStabilizer/checkpoints/esmc_6b_state_potential_fp32/state_potential_ensemble.pt",
     "state_checkpoint_sha256": "ccef3d204ec5d9808e2abb36b1e4ba0241b2d9d403b93d48efa6e5ee01d87b7e"
   },
@@ -62,9 +66,9 @@
     "tf32": false
   },
   "runtime": {
-    "elapsed_seconds": 46.635410130998935,
-    "embedding_cache_initial_sites": 0,
-    "embedding_cache_new_sites": 554
+    "elapsed_seconds": 12.186967180001375,
+    "embedding_cache_initial_sites": 554,
+    "embedding_cache_new_sites": 0
   },
   "schema": "protein-stabilizer.c5ar-state-potential-audit.v1"
 }

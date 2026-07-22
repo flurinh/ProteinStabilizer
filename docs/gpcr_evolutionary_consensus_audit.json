@@ -1,0 +1,609 @@
+{
+  "decision": {
+    "interpretation": "The output is a within-scan GPCR mutation ranking score, not delta-delta-G, delta-Tm, or percent stability.",
+    "promotion_gates": {
+      "c5ar_auc_improves": true,
+      "c5ar_average_precision_improves": true,
+      "c5ar_top50_improves": true,
+      "development_beats_generic_6b": true,
+      "development_beats_retained": true,
+      "official_within_0_10_of_retained": true
+    },
+    "status": "promoted_gpcr_screening_consensus"
+  },
+  "development_selection": {
+    "candidate_macro_spearman": 0.3381585298868225,
+    "generic_6b_macro_spearman": 0.3114159758995341,
+    "nested_folds": [
+      {
+        "heldout_receptor": "O14842",
+        "rows": 10,
+        "selected": {
+          "evolutionary_weight": 0.1,
+          "generic_6b_weight": 0.4,
+          "macro_spearman": 0.4149078349114068,
+          "pooled_spearman": 0.19409177804850877,
+          "retained_weight": 0.5
+        }
+      },
+      {
+        "heldout_receptor": "P08172",
+        "rows": 1,
+        "selected": {
+          "evolutionary_weight": 0.1,
+          "generic_6b_weight": 0.4,
+          "macro_spearman": 0.3381585298868225,
+          "pooled_spearman": 0.13418600879230497,
+          "retained_weight": 0.5
+        }
+      },
+      {
+        "heldout_receptor": "P21554",
+        "rows": 3,
+        "selected": {
+          "evolutionary_weight": 0.1,
+          "generic_6b_weight": 0.4,
+          "macro_spearman": 0.3201761443186916,
+          "pooled_spearman": 0.15364108031180432,
+          "retained_weight": 0.5
+        }
+      },
+      {
+        "heldout_receptor": "P24530",
+        "rows": 5,
+        "selected": {
+          "evolutionary_weight": 0.3,
+          "generic_6b_weight": 0.4,
+          "macro_spearman": 0.3403303975893038,
+          "pooled_spearman": 0.12843216669823435,
+          "retained_weight": 0.3
+        }
+      },
+      {
+        "heldout_receptor": "P25024",
+        "rows": 3,
+        "selected": {
+          "evolutionary_weight": 0.1,
+          "generic_6b_weight": 0.4,
+          "macro_spearman": 0.3201761443186916,
+          "pooled_spearman": 0.15106122907912567,
+          "retained_weight": 0.5
+        }
+      },
+      {
+        "heldout_receptor": "P28335",
+        "rows": 28,
+        "selected": {
+          "evolutionary_weight": 0.35,
+          "generic_6b_weight": 0.3,
+          "macro_spearman": 0.33492011421267254,
+          "pooled_spearman": 0.04367136916963469,
+          "retained_weight": 0.35
+        }
+      },
+      {
+        "heldout_receptor": "P29274",
+        "rows": 21,
+        "selected": {
+          "evolutionary_weight": 0.25,
+          "generic_6b_weight": 0.35,
+          "macro_spearman": 0.3908413675414255,
+          "pooled_spearman": 0.1986617524181351,
+          "retained_weight": 0.4
+        }
+      },
+      {
+        "heldout_receptor": "P35408",
+        "rows": 2,
+        "selected": {
+          "evolutionary_weight": 0.1,
+          "generic_6b_weight": 0.4,
+          "macro_spearman": 0.2646205887631361,
+          "pooled_spearman": 0.12990446221483742,
+          "retained_weight": 0.5
+        }
+      },
+      {
+        "heldout_receptor": "P48039",
+        "rows": 4,
+        "selected": {
+          "evolutionary_weight": 0.35,
+          "generic_6b_weight": 0.25,
+          "macro_spearman": 0.29764746664748576,
+          "pooled_spearman": 0.08114261259503454,
+          "retained_weight": 0.4
+        }
+      },
+      {
+        "heldout_receptor": "P49286",
+        "rows": 3,
+        "selected": {
+          "evolutionary_weight": 0.1,
+          "generic_6b_weight": 0.4,
+          "macro_spearman": 0.2646205887631361,
+          "pooled_spearman": 0.14746485088474517,
+          "retained_weight": 0.5
+        }
+      },
+      {
+        "heldout_receptor": "P51677",
+        "rows": 2,
+        "selected": {
+          "evolutionary_weight": 0.1,
+          "generic_6b_weight": 0.4,
+          "macro_spearman": 0.4868428109853583,
+          "pooled_spearman": 0.15650222045681378,
+          "retained_weight": 0.5
+        }
+      }
+    ],
+    "nested_reselected_macro_spearman": 0.24103993318739175,
+    "per_receptor": {
+      "candidate": {
+        "O14842": {
+          "rows": 10,
+          "spearman": -0.3525852153344375
+        },
+        "P21554": {
+          "rows": 3,
+          "spearman": 0.5
+        },
+        "P24530": {
+          "rows": 5,
+          "spearman": 0.6
+        },
+        "P25024": {
+          "rows": 3,
+          "spearman": 0.5
+        },
+        "P28335": {
+          "rows": 28,
+          "spearman": 0.4147947696272586
+        },
+        "P29274": {
+          "rows": 21,
+          "spearman": -0.08062425542459639
+        },
+        "P35408": {
+          "rows": 2,
+          "spearman": 0.9999999999999999
+        },
+        "P48039": {
+          "rows": 4,
+          "spearman": 0.7999999999999999
+        },
+        "P49286": {
+          "rows": 3,
+          "spearman": 1.0
+        },
+        "P51677": {
+          "rows": 2,
+          "spearman": -0.9999999999999999
+        }
+      },
+      "generic_6b": {
+        "O14842": {
+          "rows": 10,
+          "spearman": -0.2127669402880226
+        },
+        "P21554": {
+          "rows": 3,
+          "spearman": 0.5
+        },
+        "P24530": {
+          "rows": 5,
+          "spearman": 0.19999999999999998
+        },
+        "P25024": {
+          "rows": 3,
+          "spearman": 0.5
+        },
+        "P28335": {
+          "rows": 28,
+          "spearman": 0.13863022023209567
+        },
+        "P29274": {
+          "rows": 21,
+          "spearman": -0.011703520948731734
+        },
+        "P35408": {
+          "rows": 2,
+          "spearman": 0.9999999999999999
+        },
+        "P48039": {
+          "rows": 4,
+          "spearman": 1.0
+        },
+        "P49286": {
+          "rows": 3,
+          "spearman": 1.0
+        },
+        "P51677": {
+          "rows": 2,
+          "spearman": -0.9999999999999999
+        }
+      },
+      "nested_reselected": {
+        "O14842": {
+          "rows": 10,
+          "spearman": -0.3525852153344375
+        },
+        "P21554": {
+          "rows": 3,
+          "spearman": 0.5
+        },
+        "P24530": {
+          "rows": 5,
+          "spearman": 0.19999999999999998
+        },
+        "P25024": {
+          "rows": 3,
+          "spearman": 0.5
+        },
+        "P28335": {
+          "rows": 28,
+          "spearman": 0.3060275810261875
+        },
+        "P29274": {
+          "rows": 21,
+          "spearman": -0.14304303381783232
+        },
+        "P35408": {
+          "rows": 2,
+          "spearman": 0.9999999999999999
+        },
+        "P48039": {
+          "rows": 4,
+          "spearman": 0.39999999999999997
+        },
+        "P49286": {
+          "rows": 3,
+          "spearman": 1.0
+        },
+        "P51677": {
+          "rows": 2,
+          "spearman": -0.9999999999999999
+        }
+      },
+      "retained": {
+        "O14842": {
+          "rows": 10,
+          "spearman": -0.34650615989763683
+        },
+        "P21554": {
+          "rows": 3,
+          "spearman": 0.5
+        },
+        "P24530": {
+          "rows": 5,
+          "spearman": 0.6
+        },
+        "P25024": {
+          "rows": 3,
+          "spearman": 0.5
+        },
+        "P28335": {
+          "rows": 28,
+          "spearman": 0.4301372445936566
+        },
+        "P29274": {
+          "rows": 21,
+          "spearman": -0.08192464664112215
+        },
+        "P35408": {
+          "rows": 2,
+          "spearman": 0.9999999999999999
+        },
+        "P48039": {
+          "rows": 4,
+          "spearman": -0.9486832980505139
+        },
+        "P49286": {
+          "rows": 3,
+          "spearman": 0.5
+        },
+        "P51677": {
+          "rows": 2,
+          "spearman": -0.9999999999999999
+        }
+      }
+    },
+    "receptors": 11,
+    "retained_macro_spearman": 0.11530231400043837,
+    "rows": 82,
+    "selected": {
+      "evolutionary_weight": 0.1,
+      "generic_6b_weight": 0.4,
+      "macro_spearman": 0.3381585298868225,
+      "pooled_spearman": 0.14788387605597558,
+      "retained_weight": 0.5
+    },
+    "weight_candidates": 231,
+    "weight_grid_step": 0.05
+  },
+  "evolutionary_prior": {
+    "c5ar_observed_rows": 227,
+    "c5ar_rows": 277,
+    "formula": "log((family mutant count + 0.5) / (family WT count + 0.5))",
+    "gpcr_tm_observed_rows": 88,
+    "gpcr_tm_rows": 94,
+    "scope": "GPCRdb family alignment",
+    "target_sequence_excluded": true
+  },
+  "frozen_confirmation": {
+    "c5ar": {
+      "candidate": {
+        "average_precision": 0.3774479185711873,
+        "positives": 34,
+        "positives_in_top20": 9,
+        "positives_in_top50": 17,
+        "roc_auc": 0.7178649237472766,
+        "rows": 277
+      },
+      "paired_stratified_bootstrap": {
+        "average_precision_difference": {
+          "ci95": [
+            -0.005084892237208457,
+            0.11888915496816968
+          ],
+          "median": 0.05606965879132436,
+          "probability_positive": 0.9646
+        },
+        "roc_auc_difference": {
+          "ci95": [
+            -0.018760590656015434,
+            0.062218591140159554
+          ],
+          "median": 0.02166545630597927,
+          "probability_positive": 0.854
+        },
+        "samples": 10000,
+        "seed": 20260722
+      },
+      "retained": {
+        "average_precision": 0.31740979075734455,
+        "positives": 34,
+        "positives_in_top20": 9,
+        "positives_in_top50": 15,
+        "roc_auc": 0.6963205035100459,
+        "rows": 277
+      }
+    },
+    "official_gpcr_tm": {
+      "candidate_macro_spearman": 0.8999999999999999,
+      "candidate_per_receptor": {
+        "P29274": {
+          "rows": 4,
+          "spearman": 1.0
+        },
+        "P48039": {
+          "rows": 4,
+          "spearman": 0.7999999999999999
+        }
+      },
+      "retained_macro_spearman": 1.0,
+      "retained_per_receptor": {
+        "P29274": {
+          "rows": 4,
+          "spearman": 1.0
+        },
+        "P48039": {
+          "rows": 4,
+          "spearman": 1.0
+        }
+      },
+      "rows": 12
+    }
+  },
+  "limitations": [
+    "The 12-row official GPCR-tm split and C5aR scan have been consulted by prior project experiments; no untouched GPCR benchmark remains.",
+    "C5aR is one binary thermostability scan and is not a calibrated thermodynamic endpoint.",
+    "Evolutionary preference mixes folding, expression, function, and phylogeny; it is an orthogonal ranking prior, not stability physics.",
+    "Fifty C5aR scan positions lie outside the family alignment and receive a neutral evolutionary prior."
+  ],
+  "provenance": {
+    "base_checkpoint_sha256": "ccef3d204ec5d9808e2abb36b1e4ba0241b2d9d403b93d48efa6e5ee01d87b7e",
+    "c5ar_gpcrdb": {
+      "accession": "P21730",
+      "alignment_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/df6a123ae799f13a6a5d0702424df475de5599022fc02a1e63df11c2b27fb115.json",
+      "alignment_sequences": 21,
+      "alignment_sha256": "7a3df0dc5487ff31a85035ab3359b96ae69b091acba32f75202a9abe2eca73d9",
+      "entry_name": "c5ar1_human",
+      "family": "001_002_006_002",
+      "mapped_residues": 228,
+      "metadata_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/5f0abc8253ac65c4591b5fdf17635f2daef4fd49cc5b49458285ec79f4eb861b.json",
+      "metadata_sha256": "d05500ed1eecdb67544b49f666d9770e2de477e9ab62a1459a679b1c32349abf",
+      "pseudocount": 0.5,
+      "schema": "protein-stabilizer.gpcrdb-evolutionary.v1",
+      "sequence_scope": "family",
+      "target_coverage": 0.6514285714285715,
+      "target_excluded": true
+    },
+    "c5ar_scores_sha256": "3b83454bb2da3a69640f2bd938ef3437a2a410a6f1ade1ae43a15ea3faf1cbd9",
+    "gpcr_tm_components_sha256": "96a90ec900f336a1cc20a08f85d94c09b3ea6c4460223c20a2de41fad97e8713",
+    "gpcr_tm_representations_sha256": "943b3592b437f3fe20be0cb583115c6d917585f7f4a702adb10a407062303a37",
+    "gpcr_tm_source": {
+      "path": "/data/fast/projects/ProteinStabilizer/data/curated/gpcr_tm_dtm.csv",
+      "sha256": "3c158828162136c8a61c0e894c99f9651f85333a1d8aa132cb46ac1373d0a4db"
+    },
+    "gpcrdb": {
+      "O14842": {
+        "accession": "O14842",
+        "alignment_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/20cdd1892881f855c35d899fb7ec22de48eb7bafa9e7ea4209298833becfbfb3.json",
+        "alignment_sequences": 15,
+        "alignment_sha256": "33d849e57e43dce13234cdd066874b119a49d01aee0e7960d0ff68f57499aeeb",
+        "entry_name": "ffar1_human",
+        "family": "001_004_001_001",
+        "mapped_residues": 225,
+        "metadata_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/ed235411f9667862ed16e1c4ac954f06fe7547821cab8878ebed321c786e8b56.json",
+        "metadata_sha256": "5e1b780ef3938b3e3c6133bb5f3cf747dcc6b0a3e7d4f52741a0541a242a3790",
+        "pseudocount": 0.5,
+        "schema": "protein-stabilizer.gpcrdb-evolutionary.v1",
+        "sequence_scope": "family",
+        "target_coverage": 0.75,
+        "target_excluded": true
+      },
+      "P08172": {
+        "accession": "P08172",
+        "alignment_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/e052dbdbc719dbad6376c7d9195cf3a9076c2d00a9f50210dec8df2c0561f2cc.json",
+        "alignment_sequences": 35,
+        "alignment_sha256": "6fa52df66ddc7ee34a80378b259c1cbf8e65ca200da800717018aa006438c9f1",
+        "entry_name": "acm2_human",
+        "family": "001_001_002_002",
+        "mapped_residues": 238,
+        "metadata_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/f604e8ac21d7d49a50226cb3a6860356f0b46b610ce6e9bb739df63989eea78c.json",
+        "metadata_sha256": "3fd51f6ca482ac0cc58a97bb9c7fa0f9b463c31f68d8113694f1600b62e5dc42",
+        "pseudocount": 0.5,
+        "schema": "protein-stabilizer.gpcrdb-evolutionary.v1",
+        "sequence_scope": "family",
+        "target_coverage": 0.5107296137339056,
+        "target_excluded": true
+      },
+      "P21554": {
+        "accession": "P21554",
+        "alignment_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/0e8b8be296229c0d1f10065386e5b79bc63b6e24808cc76ef1f361ab5fb94d36.json",
+        "alignment_sequences": 12,
+        "alignment_sha256": "cb5268ba9b2d7ab30de8e9b27e48aa8d2faa3d61e5b64a26a6d54637e66ad710",
+        "entry_name": "cnr1_human",
+        "family": "001_004_005_001",
+        "mapped_residues": 233,
+        "metadata_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/22df0ce928c55f84fa33a552bb7bc678164f558383337a1bcef5b05dd1938612.json",
+        "metadata_sha256": "2e85bbdd121c7f03c08a1fda66755f0ede3aaeab320e12cb82b72423e62780a5",
+        "pseudocount": 0.5,
+        "schema": "protein-stabilizer.gpcrdb-evolutionary.v1",
+        "sequence_scope": "family",
+        "target_coverage": 0.4936440677966102,
+        "target_excluded": true
+      },
+      "P24530": {
+        "accession": "P24530",
+        "alignment_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/88b7ba563ef75c0a379c69cb2f0e2724897b80308327bc6b2d81361d013bfe93.json",
+        "alignment_sequences": 15,
+        "alignment_sha256": "5df2dc44917d95eaa766c4da59248297e5d38df53f40e06ab109a69147865acf",
+        "entry_name": "ednrb_human",
+        "family": "001_002_007_002",
+        "mapped_residues": 249,
+        "metadata_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/1336630a915d77ad9c9f23717b283b56f5d5fe51e4568fa7fbde4d013c9a0340.json",
+        "metadata_sha256": "be5ede03cf0fb820869a8235f8deb45e077501ce2eb35e02c27bba611c077b7e",
+        "pseudocount": 0.5,
+        "schema": "protein-stabilizer.gpcrdb-evolutionary.v1",
+        "sequence_scope": "family",
+        "target_coverage": 0.5633484162895928,
+        "target_excluded": true
+      },
+      "P25024": {
+        "accession": "P25024",
+        "alignment_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/991a2650501289bd250671eeac461b31c1293bc8ec0bec68310060004d0b1c95.json",
+        "alignment_sequences": 165,
+        "alignment_sha256": "0fa3bab8fe96b395c0f3520c908576b997d015432ba806ea70cec97e5954a21f",
+        "entry_name": "cxcr1_human",
+        "family": "001_003_002_011",
+        "mapped_residues": 230,
+        "metadata_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/5c8dddf19c519672ae1875bce2376a5db4079142e27ef388af3cfa383d0e4344.json",
+        "metadata_sha256": "49131c0315fe8a177ba2bde838243bb8fd005241eba6f914a7f90c271d1fa07c",
+        "pseudocount": 0.5,
+        "schema": "protein-stabilizer.gpcrdb-evolutionary.v1",
+        "sequence_scope": "family",
+        "target_coverage": 0.6571428571428571,
+        "target_excluded": true
+      },
+      "P28335": {
+        "accession": "P28335",
+        "alignment_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/780e1ea0617fed8158503a6649cc5fcba2f1a0e4b7b46df1701277772d986d42.json",
+        "alignment_sequences": 74,
+        "alignment_sha256": "23c2a92803d576eea94e54bb7f7dcb847a16be85cc15df89009c2c7293d2f5d3",
+        "entry_name": "5ht2c_human",
+        "family": "001_001_001_008",
+        "mapped_residues": 234,
+        "metadata_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/710ac8ccede2242815ff27ae20f1be1f107f30981d02e201c9413b1d6d1b0e46.json",
+        "metadata_sha256": "14d1d8b625deaeb92651ca8220c4fdc1448e1614d82fda671c35623bce602518",
+        "pseudocount": 0.5,
+        "schema": "protein-stabilizer.gpcrdb-evolutionary.v1",
+        "sequence_scope": "family",
+        "target_coverage": 0.5109170305676856,
+        "target_excluded": true
+      },
+      "P29274": {
+        "accession": "P29274",
+        "alignment_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/e505424e352114577b974e2c3e3c146d6e2bd3bae3fd54416e01f71cc57ea28b.json",
+        "alignment_sequences": 28,
+        "alignment_sha256": "7cd9df4cb82435f26c8e9bf14d8692e138178870c307ebde329276b887e0e008",
+        "entry_name": "aa2ar_human",
+        "family": "001_006_001_002",
+        "mapped_residues": 235,
+        "metadata_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/6ed0ac3671148572f8577e123ecd02f746980108229fc68f523605c170b3d643.json",
+        "metadata_sha256": "b647695b7ef1056445ef3daf0424c1ce01638ba5d52c485acb551e4edcc17c8b",
+        "pseudocount": 0.5,
+        "schema": "protein-stabilizer.gpcrdb-evolutionary.v1",
+        "sequence_scope": "family",
+        "target_coverage": 0.5703883495145631,
+        "target_excluded": true
+      },
+      "P35408": {
+        "accession": "P35408",
+        "alignment_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/b1b5399759c1c9ccbc1f8930caf7febe9cf6cc6e6e2e7f14bdc276ecfefb417f.json",
+        "alignment_sequences": 41,
+        "alignment_sha256": "d017157713c1b55e4a6ac9705e4332a06aae3009f091747ca2af570933533f81",
+        "entry_name": "pe2r4_human",
+        "family": "001_004_008_006",
+        "mapped_residues": 227,
+        "metadata_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/f2cd5d07719e62a784db659b18f80712c8c76f33a7a77c756c6d40d78e65a489.json",
+        "metadata_sha256": "8d5f057cb450790259e6c39a101aab16f7637f6c7421bf76240d98cf2933be57",
+        "pseudocount": 0.5,
+        "schema": "protein-stabilizer.gpcrdb-evolutionary.v1",
+        "sequence_scope": "family",
+        "target_coverage": 0.4651639344262295,
+        "target_excluded": true
+      },
+      "P48039": {
+        "accession": "P48039",
+        "alignment_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/5efb384b085ac8a885923dfbac936acf84f8a7024212761c01e10318e313919c.json",
+        "alignment_sequences": 7,
+        "alignment_sha256": "36ef01a04b6fe0ff7435118f119e86412fa8c6664381be1e61d2c30af057e139",
+        "entry_name": "mtr1a_human",
+        "family": "001_005_001_001",
+        "mapped_residues": 230,
+        "metadata_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/2f350f253f5e26033a28d73b6f9f59de0169fade12a8b172efca8a12f9e16e4c.json",
+        "metadata_sha256": "1c064a34e5fb759eaa90ecdc9acbb097f7f5abcfffe734cbc657af8963a12540",
+        "pseudocount": 0.5,
+        "schema": "protein-stabilizer.gpcrdb-evolutionary.v1",
+        "sequence_scope": "family",
+        "target_coverage": 0.6571428571428571,
+        "target_excluded": true
+      },
+      "P49286": {
+        "accession": "P49286",
+        "alignment_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/5efb384b085ac8a885923dfbac936acf84f8a7024212761c01e10318e313919c.json",
+        "alignment_sequences": 7,
+        "alignment_sha256": "36ef01a04b6fe0ff7435118f119e86412fa8c6664381be1e61d2c30af057e139",
+        "entry_name": "mtr1b_human",
+        "family": "001_005_001_002",
+        "mapped_residues": 228,
+        "metadata_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/bc34d127415ea6814b5215b24a64261cf544d0778cbd9c519786cce6e2e3a2a9.json",
+        "metadata_sha256": "eec23bc0622290cee0ee6b93df5653dd59fb05fc0e445142da7e86d266efb834",
+        "pseudocount": 0.5,
+        "schema": "protein-stabilizer.gpcrdb-evolutionary.v1",
+        "sequence_scope": "family",
+        "target_coverage": 0.6298342541436464,
+        "target_excluded": true
+      },
+      "P51677": {
+        "accession": "P51677",
+        "alignment_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/991a2650501289bd250671eeac461b31c1293bc8ec0bec68310060004d0b1c95.json",
+        "alignment_sequences": 165,
+        "alignment_sha256": "0fa3bab8fe96b395c0f3520c908576b997d015432ba806ea70cec97e5954a21f",
+        "entry_name": "ccr3_human",
+        "family": "001_003_002_003",
+        "mapped_residues": 241,
+        "metadata_path": "/data/fast/projects/ProteinStabilizer/data/raw/gpcrdb_evolutionary/4fcdea91a79615f8fb5bcb5d3a2985c8c6696d7500acdaf72d197e0cee1b39ca.json",
+        "metadata_sha256": "bad370998ba324314d225ffbecb56abbc26dd2755b868977b505a2c6bc782f8c",
+        "pseudocount": 0.5,
+        "schema": "protein-stabilizer.gpcrdb-evolutionary.v1",
+        "sequence_scope": "family",
+        "target_coverage": 0.6788732394366197,
+        "target_excluded": true
+      }
+    }
+  },
+  "schema": "protein-stabilizer.gpcr-evolutionary-consensus.v1"
+}
