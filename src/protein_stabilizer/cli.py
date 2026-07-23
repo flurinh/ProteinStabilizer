@@ -60,6 +60,7 @@ from .v2_transfer import (
 )
 from .v2_predictor import (
     predict_hierarchical_mutations,
+    screen_hierarchical_double_mutants,
     screen_hierarchical_single_mutants,
 )
 
@@ -750,6 +751,72 @@ def command_screen_v2_6b(args: argparse.Namespace) -> dict[str, object]:
     )
 
 
+def _command_screen_v2_pairs(
+    args: argparse.Namespace,
+    *,
+    embedder: ESMCEmbedder,
+) -> dict[str, object]:
+    sequence = args.sequence if args.sequence is not None else _read_fasta(args.fasta)
+    protected = _protected_mask(
+        sequence,
+        args.protected_positions,
+        args.protected_mask,
+    )
+    return screen_hierarchical_double_mutants(
+        sequence,
+        args.single_screen,
+        args.checkpoints,
+        args.output,
+        model_name=args.model,
+        device=args.device,
+        topology=args.topology,
+        generic_numbering=_parse_generic_numbering(args.generic_numbering),
+        pdb_path=args.pdb,
+        proteinmpnn_repository=args.proteinmpnn_repository,
+        max_tokens=args.max_tokens,
+        max_batch_size=args.max_batch_size,
+        top=args.top,
+        single_limit=args.single_limit,
+        single_ddg_ceiling=args.single_ddg_ceiling,
+        require_component_agreement=args.require_component_agreement,
+        pair_rerank_top=args.pair_rerank_top,
+        max_pairs_per_site=args.max_pairs_per_site,
+        min_position_separation=args.min_position_separation,
+        protected_positions=tuple(protected),
+        protected_reasons=protected,
+        embedding_cache=args.embedding_cache,
+        embedder=embedder,
+        state_potential_checkpoint=args.state_potential_checkpoint,
+    )
+
+
+def command_screen_v2_pairs(args: argparse.Namespace) -> dict[str, object]:
+    """Design bounded double mutants with the promoted ESM-C 600M heads."""
+
+    return _command_screen_v2_pairs(
+        args,
+        embedder=ESMCEmbedder(
+            model_name=args.model,
+            device=args.device,
+            storage_dtype="float32",
+        ),
+    )
+
+
+def command_screen_v2_pairs_6b(args: argparse.Namespace) -> dict[str, object]:
+    """Design bounded double mutants with native-FP32 ESM-C 6B."""
+
+    return _command_screen_v2_pairs(
+        args,
+        embedder=ESMC6BEmbedder(
+            args.model,
+            args.device,
+            inference_dtype="float32",
+            storage_dtype="float32",
+        ),
+    )
+
+
 def command_rerank_esmc6b(args: argparse.Namespace) -> dict[str, object]:
     sequence = args.sequence if args.sequence is not None else _read_fasta(args.fasta)
     return rerank_esmc6b_screen(
@@ -812,6 +879,118 @@ def _common_pipeline_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--single-epochs", type=int, default=30)
     parser.add_argument("--ensemble-size", type=int, default=5)
     parser.add_argument("--multi-epochs", type=int, default=25)
+
+
+def _pair_screen_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    output: Path,
+    checkpoints: Path,
+    state_potential_checkpoint: Path,
+    model: str,
+    embedding_cache: Path,
+    max_tokens: int,
+    max_batch_size: int,
+) -> None:
+    """Register the shared bounded double-mutant application contract."""
+
+    parser.add_argument("--sequence")
+    parser.add_argument("--fasta", type=Path)
+    parser.add_argument(
+        "--single-screen",
+        type=Path,
+        required=True,
+        help="exact single-screen CSV or its exact-reranked shortlist",
+    )
+    parser.add_argument("--output", type=Path, default=output)
+    parser.add_argument("--top", type=int, default=20)
+    parser.add_argument(
+        "--single-limit",
+        type=int,
+        default=20,
+        help="best exact single candidates admitted to pair generation",
+    )
+    parser.add_argument(
+        "--single-ddg-ceiling",
+        type=float,
+        default=0.0,
+        help="largest exact single ddG admitted; default keeps stabilizers only",
+    )
+    parser.add_argument(
+        "--require-component-agreement",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "require hierarchy and state-potential components to both predict "
+            "stabilization for every constituent"
+        ),
+    )
+    parser.add_argument(
+        "--pair-rerank-top",
+        type=int,
+        default=64,
+        help="additive-prescreened joint sequences embedded for exact epistasis",
+    )
+    parser.add_argument(
+        "--max-pairs-per-site",
+        type=int,
+        default=4,
+        help="maximum shortlist combinations containing any one residue site",
+    )
+    parser.add_argument(
+        "--min-position-separation",
+        type=int,
+        default=1,
+        help="minimum absolute sequence distance between paired sites",
+    )
+    parser.add_argument(
+        "--protected-positions",
+        help="one-based positions/ranges that are never mutated",
+    )
+    parser.add_argument(
+        "--protected-mask",
+        type=Path,
+        help=(
+            "text mask with one position/range and optional tab-separated "
+            "reason per line"
+        ),
+    )
+    parser.add_argument("--checkpoints", type=Path, default=checkpoints)
+    parser.add_argument(
+        "--state-potential-checkpoint",
+        type=Path,
+        default=state_potential_checkpoint,
+    )
+    parser.add_argument("--model", default=model)
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--topology",
+        choices=[
+            "membrane",
+            "alpha_helical",
+            "beta_barrel",
+            "alpha_helical_gpcr",
+            "unknown",
+        ],
+    )
+    parser.add_argument(
+        "--generic-numbering",
+        help="comma-separated position=generic-number entries",
+    )
+    parser.add_argument("--pdb", type=Path)
+    parser.add_argument(
+        "--proteinmpnn-repository",
+        type=Path,
+        default=DEFAULT_PROTEINMPNN_REPOSITORY,
+    )
+    parser.add_argument("--max-tokens", type=int, default=max_tokens)
+    parser.add_argument("--max-batch-size", type=int, default=max_batch_size)
+    parser.add_argument(
+        "--embedding-cache",
+        type=Path,
+        default=embedding_cache,
+        help="persistent provenance-checked target embedding cache",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1490,6 +1669,34 @@ def build_parser() -> argparse.ArgumentParser:
             "only a bounded state-potential shortlist exactly"
         ),
     )
+    screen_v2_pairs = subparsers.add_parser("screen-v2-pairs")
+    _pair_screen_arguments(
+        screen_v2_pairs,
+        output=ROOT / "artifacts/screen_v2_pairs.csv",
+        checkpoints=DEFAULT_FP32_V2_CHECKPOINTS,
+        state_potential_checkpoint=(
+            DEFAULT_STATE_POTENTIAL_CHECKPOINTS
+            / "state_potential_ensemble.pt"
+        ),
+        model="esmc_600m",
+        embedding_cache=DEFAULT_APPLICATION_600M_CACHE,
+        max_tokens=8192,
+        max_batch_size=128,
+    )
+    screen_v2_pairs_6b = subparsers.add_parser("screen-v2-pairs-6b")
+    _pair_screen_arguments(
+        screen_v2_pairs_6b,
+        output=ROOT / "artifacts/screen_v2_pairs_6b.csv",
+        checkpoints=DEFAULT_ESMC6B_V2_CHECKPOINTS,
+        state_potential_checkpoint=(
+            DEFAULT_ESMC6B_STATE_CHECKPOINTS
+            / "state_potential_ensemble.pt"
+        ),
+        model=DEFAULT_ESMC6B_MODEL,
+        embedding_cache=DEFAULT_APPLICATION_6B_CACHE,
+        max_tokens=4096,
+        max_batch_size=2,
+    )
     rerank = subparsers.add_parser("rerank-6b")
     rerank.add_argument("--sequence")
     rerank.add_argument("--fasta", type=Path)
@@ -1562,6 +1769,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         "screen",
         "screen-v2",
         "screen-v2-6b",
+        "screen-v2-pairs",
+        "screen-v2-pairs-6b",
         "rerank-6b",
         "rank-gpcr-consensus",
         "predict-6b",
@@ -1605,6 +1814,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         "screen": command_screen,
         "screen-v2": command_screen_v2,
         "screen-v2-6b": command_screen_v2_6b,
+        "screen-v2-pairs": command_screen_v2_pairs,
+        "screen-v2-pairs-6b": command_screen_v2_pairs_6b,
         "rerank-6b": command_rerank_esmc6b,
         "rank-gpcr-consensus": command_rank_gpcr_consensus,
         "predict-6b": command_predict_esmc6b,

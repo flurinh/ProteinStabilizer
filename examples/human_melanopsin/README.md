@@ -30,6 +30,22 @@ For a short pipeline smoke test, reduce the expensive exact rerank:
 RERANK_TOP=16 TOP=10 bash examples/human_melanopsin/run_screen.sh 600m
 ```
 
+After the exact single screen, design bounded double-mutant combinations:
+
+```bash
+bash examples/human_melanopsin/run_pairs.sh 6b
+```
+
+This admits the best 20 exact, individually stabilizing singles, ranks their
+valid unordered pairs by additive single-mutant ddG, and embeds only the best
+64 joint sequences for the learned permutation-invariant epistasis correction.
+WT and single-mutant embeddings are reused from the application cache. For a
+quick integration test:
+
+```bash
+PAIR_RERANK_TOP=2 TOP=2 bash examples/human_melanopsin/run_pairs.sh 6b
+```
+
 The default mask leaves 270 mutable positions and 5,130 single-substitution
 candidates. Two-stage screening embeds the WT once, then embeds at most 128
 mutant sequences instead of all 5,130. Identical reruns reuse the application
@@ -39,5 +55,8 @@ Default outputs are written below
 `artifacts/examples/human_melanopsin/`. The full `*_screen.csv` includes every
 allowed state-potential candidate and its scoring stage. The adjacent
 `*_screen.shortlist.csv` contains only exact-reranked, site-diverse suggestions.
+The pair workflow similarly writes `*_pairs.csv` with every additive-prescreen
+pair and `*_pairs.shortlist.csv` with exact epistasis-reranked, site-diverse
+double mutants.
 Negative exact ddG is the model's stabilizing direction and is reported in
 kcal/mol; it is a screening estimate, not proof that function is preserved.

@@ -357,6 +357,35 @@ cache hits, avoided mutant embeddings, and the applied protected positions.
 A pinned, directly runnable human melanopsin example is under
 [`examples/human_melanopsin/`](examples/human_melanopsin/README.md).
 
+Convert an exact single-mutant shortlist into a bounded double-mutant design
+set without repeatedly embedding the same constituent mutants:
+
+```bash
+.venv-esmc6b/bin/protein-stabilizer screen-v2-pairs-6b \
+  --fasta target_gpcr.fasta \
+  --single-screen artifacts/target_gpcr_suggestions.shortlist.csv \
+  --protected-mask target_gpcr.protected.txt \
+  --single-limit 20 \
+  --single-ddg-ceiling 0 \
+  --pair-rerank-top 64 \
+  --max-pairs-per-site 4 \
+  --topology alpha_helical_gpcr \
+  --output artifacts/target_gpcr_pairs.csv
+```
+
+Pair generation accepts only suggestion-eligible `exact` or `exact-reranked`
+single rows, requires both hierarchy and state-potential components to agree
+on the stabilizing direction by default, and reapplies the hard protected
+mask. Use `--no-require-component-agreement` only when consuming an exact
+screen without both component columns. It prescreens all valid unordered pairs
+by the sum of their input single ddGs, then computes fresh constituent
+predictions and one joint-sequence embedding for only the bounded rerank set.
+The full pair CSV separates input additive prescreen, exact
+constituent ddGs, additive ddG, learned epistasis, and corrected total ddG.
+The adjacent shortlist is ranked by corrected total and bounds reuse of any
+one residue site. The epistasis head was trained only on double mutants; this
+command deliberately does not extrapolate it to triples.
+
 Native-FP32 6B inference is deliberately expensive. Use 600M to explore a
 broad receptor-wide search and 6B to rescore a bounded set of sites when
 turnaround matters.

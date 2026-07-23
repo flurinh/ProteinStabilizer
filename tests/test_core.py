@@ -84,6 +84,7 @@ from protein_stabilizer.v2_features import (
 from protein_stabilizer.v2_multi import MULTI_CHECKPOINT_SCHEMA
 from protein_stabilizer.v2_predictor import (
     predict_hierarchical_mutations,
+    screen_hierarchical_double_mutants,
     screen_hierarchical_single_mutants,
 )
 from protein_stabilizer.v2_training import (
@@ -1290,6 +1291,71 @@ def test_v2_application_predicts_unordered_sets_and_screens(
     assert cached_two_stage["embedding_cost"]["sequence_embeddings_computed"] == 0
     assert cached_two_stage["embedding_cost"]["cache_hits"] == 3
 
+    pair_screen = screen_hierarchical_double_mutants(
+        "ACDE",
+        tmp_path / "two_stage.shortlist.csv",
+        checkpoint_dir,
+        tmp_path / "pairs.csv",
+        device="cpu",
+        top=1,
+        single_limit=2,
+        single_ddg_ceiling=None,
+        require_component_agreement=False,
+        pair_rerank_top=1,
+        max_pairs_per_site=1,
+        protected_positions=[2],
+        protected_reasons={2: "ligand contact"},
+        embedder=FakeEmbedder(),
+        state_potential_checkpoint=state_path,
+        embedding_cache=application_cache,
+    )
+    assert pair_screen["rows"] == 1
+    assert pair_screen["exact_pairs"] == 1
+    assert pair_screen["embedding_cost"]["sequence_embedding_requests"] == 4
+    assert pair_screen["embedding_cost"]["sequence_embeddings_computed"] == 1
+    assert pair_screen["embedding_cost"]["cache_hits"] == 3
+    assert pair_screen["embedding_cost"]["joint_pair_embeddings_requested"] == 1
+    assert pair_screen["protected_mask"]["position_ranges"] == ["2"]
+    pair = pair_screen["top"][0]
+    assert pair["score_stage"] == "exact-pair-reranked"
+    assert pair["suggestion_eligible"] is True
+    assert pair["position_1"] < pair["position_2"]
+    assert pair["total_ddg"] == pytest.approx(
+        pair["additive_ddg"] + pair["epistasis_ddg"]
+    )
+    assert (tmp_path / "pairs.csv").is_file()
+    assert (tmp_path / "pairs.shortlist.csv").is_file()
+
+    reversed_singles = tmp_path / "two_stage_reversed.csv"
+    pd.read_csv(tmp_path / "two_stage.shortlist.csv").iloc[::-1].to_csv(
+        reversed_singles, index=False
+    )
+    reversed_pair_screen = screen_hierarchical_double_mutants(
+        "ACDE",
+        reversed_singles,
+        checkpoint_dir,
+        tmp_path / "pairs_reversed.csv",
+        device="cpu",
+        top=1,
+        single_limit=2,
+        single_ddg_ceiling=None,
+        require_component_agreement=False,
+        pair_rerank_top=1,
+        max_pairs_per_site=1,
+        protected_positions=[2],
+        embedder=FakeEmbedder(),
+        state_potential_checkpoint=state_path,
+        embedding_cache=application_cache,
+    )
+    assert reversed_pair_screen["top"][0]["mutation_set"] == pair["mutation_set"]
+    assert reversed_pair_screen["top"][0]["total_ddg"] == pytest.approx(
+        pair["total_ddg"]
+    )
+    assert (
+        reversed_pair_screen["embedding_cost"]["sequence_embeddings_computed"]
+        == 0
+    )
+
     legacy_dir = tmp_path / "legacy"
     legacy_dir.mkdir()
     legacy = SingleMutationHead(
@@ -1386,6 +1452,24 @@ def test_esmc6b_v2_cache_defaults_to_native_fp32() -> None:
     assert staged_args.scan_mode == "two-stage"
     assert staged_args.protected_positions == "2-3"
     assert staged_args.max_per_site == 2
+    pair_args = build_parser().parse_args(
+        [
+            "screen-v2-pairs-6b",
+            "--sequence",
+            "ACDE",
+            "--single-screen",
+            "singles.csv",
+        ]
+    )
+    assert pair_args.checkpoints.name == "esmc_6b_v2"
+    assert pair_args.output.name == "screen_v2_pairs_6b.csv"
+    assert pair_args.single_limit == 20
+    assert pair_args.single_ddg_ceiling == pytest.approx(0.0)
+    assert pair_args.require_component_agreement is True
+    assert pair_args.pair_rerank_top == 64
+    assert pair_args.max_pairs_per_site == 4
+    assert pair_args.embedding_cache.name == "esmc_6b_targets_fp32.h5"
+    assert pair_args.max_batch_size == 2
     structure_args = build_parser().parse_args(["structure-v2"])
     assert structure_args.storage_dtype == "float32"
     potential_args = build_parser().parse_args(["train-state-potential"])

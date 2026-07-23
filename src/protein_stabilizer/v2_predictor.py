@@ -1209,3 +1209,697 @@ def screen_hierarchical_single_mutants(
             ),
         },
     }
+
+
+def _single_screen_candidates(
+    path: Path,
+    sequence: str,
+    *,
+    protected_positions: set[int],
+    limit: int,
+    ddg_ceiling: float | None,
+    require_component_agreement: bool,
+) -> tuple[list[Mutation], np.ndarray, dict[str, int]]:
+    """Load exact, suggestion-eligible singles for combination design."""
+
+    path = Path(path)
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        required = {
+            "mutation",
+            "ddg",
+            "score_stage",
+            "suggestion_eligible",
+        }
+        if require_component_agreement:
+            required.update({"hierarchy_ddg", "state_potential_ddg"})
+        missing = required.difference(reader.fieldnames or ())
+        if missing:
+            raise ValueError(
+                "single-screen CSV is missing required columns: "
+                + ", ".join(sorted(missing))
+            )
+        raw_rows = list(reader)
+    accepted: dict[Mutation, float] = {}
+    excluded_non_exact = 0
+    excluded_ineligible = 0
+    excluded_protected = 0
+    excluded_ceiling = 0
+    excluded_component_disagreement = 0
+    for row in raw_rows:
+        if str(row["score_stage"]).strip() not in {"exact", "exact-reranked"}:
+            excluded_non_exact += 1
+            continue
+        if str(row["suggestion_eligible"]).strip().lower() not in {
+            "1",
+            "true",
+            "yes",
+        }:
+            excluded_ineligible += 1
+            continue
+        mutation = Mutation.parse(str(row["mutation"]))
+        if (
+            mutation.position < 1
+            or mutation.position > len(sequence)
+            or sequence[mutation.position - 1] != mutation.wt
+        ):
+            raise ValueError(
+                f"single-screen mutation {mutation} does not match the target sequence"
+            )
+        if mutation.position in protected_positions:
+            excluded_protected += 1
+            continue
+        ddg = float(row["ddg"])
+        if not np.isfinite(ddg):
+            raise ValueError(f"single-screen mutation {mutation} has non-finite ddG")
+        if ddg_ceiling is not None and ddg > ddg_ceiling:
+            excluded_ceiling += 1
+            continue
+        if require_component_agreement:
+            hierarchy_ddg = float(row["hierarchy_ddg"])
+            state_potential_ddg = float(row["state_potential_ddg"])
+            if not np.isfinite(hierarchy_ddg) or not np.isfinite(
+                state_potential_ddg
+            ):
+                raise ValueError(
+                    f"single-screen mutation {mutation} has non-finite "
+                    "component ddG"
+                )
+            if hierarchy_ddg > 0.0 or state_potential_ddg > 0.0:
+                excluded_component_disagreement += 1
+                continue
+        previous = accepted.get(mutation)
+        if previous is None or ddg < previous:
+            accepted[mutation] = ddg
+    ordered = sorted(
+        accepted.items(),
+        key=lambda item: (
+            item[1],
+            item[0].position,
+            item[0].mutant,
+        ),
+    )[:limit]
+    mutations = [item[0] for item in ordered]
+    if len({mutation.position for mutation in mutations}) < 2:
+        raise ValueError(
+            "combination screening requires eligible singles at two distinct sites"
+        )
+    return (
+        mutations,
+        np.asarray([item[1] for item in ordered], dtype=np.float32),
+        {
+            "rows": len(raw_rows),
+            "accepted_before_limit": len(accepted),
+            "selected": len(mutations),
+            "excluded_non_exact": excluded_non_exact,
+            "excluded_ineligible": excluded_ineligible,
+            "excluded_protected": excluded_protected,
+            "excluded_ddg_ceiling": excluded_ceiling,
+            "excluded_component_disagreement": (
+                excluded_component_disagreement
+            ),
+        },
+    )
+
+
+def _bounded_pair_indices(
+    order: Sequence[int],
+    pairs: Sequence[tuple[Mutation, Mutation]],
+    limit: int,
+    *,
+    max_pairs_per_site: int | None,
+) -> list[int]:
+    """Take a score-ordered pair shortlist with bounded site reuse."""
+
+    if limit < 1:
+        raise ValueError("pair candidate limit must be positive")
+    if max_pairs_per_site is not None and max_pairs_per_site < 1:
+        raise ValueError("maximum pairs per site must be positive")
+    selected: list[int] = []
+    per_site: dict[int, int] = {}
+    for raw_index in order:
+        index = int(raw_index)
+        positions = tuple(mutation.position for mutation in pairs[index])
+        if (
+            max_pairs_per_site is not None
+            and any(
+                per_site.get(position, 0) >= max_pairs_per_site
+                for position in positions
+            )
+        ):
+            continue
+        selected.append(index)
+        for position in positions:
+            per_site[position] = per_site.get(position, 0) + 1
+        if len(selected) == limit:
+            break
+    return selected
+
+
+def screen_hierarchical_double_mutants(
+    sequence: str,
+    single_screen_path: Path,
+    checkpoint_dir: Path,
+    output_path: Path,
+    *,
+    model_name: str = "esmc_600m",
+    device: str = "cuda",
+    topology: str | None = None,
+    generic_numbering: Mapping[int, str] | None = None,
+    pdb_path: Path | None = None,
+    proteinmpnn_repository: Path | None = None,
+    max_tokens: int = 8192,
+    max_batch_size: int = 128,
+    top: int = 20,
+    single_limit: int = 20,
+    single_ddg_ceiling: float | None = 0.0,
+    require_component_agreement: bool = True,
+    pair_rerank_top: int = 64,
+    max_pairs_per_site: int | None = 4,
+    min_position_separation: int = 1,
+    protected_positions: Sequence[int] | None = None,
+    protected_reasons: Mapping[int, str] | None = None,
+    embedding_cache: Path | None = None,
+    embedder: ESMCEmbedder | None = None,
+    state_potential_checkpoint: Path | None = None,
+) -> dict[str, object]:
+    """Design and exactly rerank bounded double-mutant combinations.
+
+    The input must be an exact single-mutant screen. Candidate pairs are
+    prescreened by the input additive ddG. Only ``pair_rerank_top`` joint
+    sequences receive new contextual embeddings; WT and constituent singles
+    are embedded once and reuse the persistent application cache.
+    """
+
+    wt_sequence = normalize_sequence(sequence)
+    if top < 1:
+        raise ValueError("top must be positive")
+    if single_limit < 2:
+        raise ValueError("single limit must be at least two")
+    if pair_rerank_top < 1:
+        raise ValueError("pair rerank top must be positive")
+    if min_position_separation < 1:
+        raise ValueError("minimum position separation must be positive")
+    protected = tuple(
+        sorted(set(int(position) for position in (protected_positions or ())))
+    )
+    if any(position < 1 or position > len(wt_sequence) for position in protected):
+        raise ValueError("protected positions must be within the sequence")
+    protected_set = set(protected)
+    normalized_reasons = {
+        int(position): str(reason)
+        for position, reason in (protected_reasons or {}).items()
+    }
+    if not set(normalized_reasons).issubset(protected_set):
+        raise ValueError("protected reasons contain an unmasked position")
+
+    singles, input_single_ddg, input_stats = _single_screen_candidates(
+        single_screen_path,
+        wt_sequence,
+        protected_positions=protected_set,
+        limit=single_limit,
+        ddg_ceiling=single_ddg_ceiling,
+        require_component_agreement=require_component_agreement,
+    )
+    pair_candidates: list[tuple[Mutation, Mutation]] = []
+    pair_input_additive: list[float] = []
+    for first_index, first in enumerate(singles):
+        for second_index in range(first_index + 1, len(singles)):
+            second = singles[second_index]
+            if first.position == second.position:
+                continue
+            if (
+                abs(first.position - second.position)
+                < min_position_separation
+            ):
+                continue
+            pair = tuple(
+                sorted((first, second), key=lambda mutation: mutation.position)
+            )
+            pair_candidates.append(pair)
+            pair_input_additive.append(
+                float(input_single_ddg[first_index] + input_single_ddg[second_index])
+            )
+    if not pair_candidates:
+        raise ValueError("the selected singles produce no valid mutation pairs")
+    pair_input_additive_array = np.asarray(
+        pair_input_additive, dtype=np.float32
+    )
+    pair_order = sorted(
+        range(len(pair_candidates)),
+        key=lambda index: (
+            float(pair_input_additive_array[index]),
+            str(pair_candidates[index][0]),
+            str(pair_candidates[index][1]),
+        ),
+    )
+    exact_indices = pair_order[: min(pair_rerank_top, len(pair_order))]
+    exact_pairs = [pair_candidates[index] for index in exact_indices]
+    unique_mutations = sorted(
+        {mutation for pair in exact_pairs for mutation in pair},
+        key=lambda mutation: (mutation.position, mutation.mutant),
+    )
+    mutation_index = {
+        mutation: index for index, mutation in enumerate(unique_mutations)
+    }
+    positions = tuple(
+        sorted({mutation.position for mutation in unique_mutations})
+    )
+
+    requests = [EmbeddingRequest(wt_sequence, positions)]
+    requests.extend(
+        EmbeddingRequest(
+            apply_mutations(wt_sequence, [mutation]),
+            (mutation.position,),
+        )
+        for mutation in unique_mutations
+    )
+    requests.extend(
+        EmbeddingRequest(
+            apply_mutations(wt_sequence, list(pair)),
+            tuple(mutation.position for mutation in pair),
+        )
+        for pair in exact_pairs
+    )
+    active_embedder = embedder or ESMCEmbedder(
+        model_name=model_name, device=device
+    )
+    embedded, embedding_stats = _embed_requests_cached(
+        active_embedder,
+        requests,
+        window_radius=4,
+        max_tokens=max_tokens,
+        max_batch_size=max_batch_size,
+        cache_path=embedding_cache,
+    )
+    wt = embedded[0]
+    single_embeddings = embedded[1 : 1 + len(unique_mutations)]
+    joint_embeddings = embedded[1 + len(unique_mutations) :]
+    wt_position_index = {
+        position: index for index, position in enumerate(positions)
+    }
+    single_arrays = (
+        np.stack(
+            [
+                wt.windows[wt_position_index[mutation.position]]
+                for mutation in unique_mutations
+            ]
+        ),
+        np.concatenate(
+            [value.windows for value in single_embeddings], axis=0
+        ),
+        np.stack(
+            [
+                wt.window_mask[wt_position_index[mutation.position]]
+                for mutation in unique_mutations
+            ]
+        ),
+        np.repeat(wt.global_mean[None], len(unique_mutations), axis=0),
+        np.stack([value.global_mean for value in single_embeddings]),
+    )
+    structure, structure_mask, membrane, structure_provenance = (
+        _annotation_rows(
+            wt_sequence,
+            unique_mutations,
+            topology=topology,
+            generic_numbering=generic_numbering,
+            pdb_path=pdb_path,
+            proteinmpnn_repository=proteinmpnn_repository,
+            device=device,
+        )
+    )
+    torch_device = _device(device)
+    base_path = Path(checkpoint_dir) / "hierarchy_selected_ensemble.pt"
+    base, base_payload = load_hierarchical_ensemble(base_path, torch_device)
+    single_tensors = _torch_state(
+        single_arrays,
+        structure=structure,
+        structure_mask=structure_mask,
+        membrane=membrane,
+        device=torch_device,
+    )
+    with torch.inference_mode():
+        single_heads = base.predict_heads(**single_tensors)
+        baseline_single_latent = base.latent(**single_tensors).float()
+    baseline_single_ddg = single_heads["ddg"].float()
+
+    state_single_ddg: torch.Tensor | None = None
+    state_single_latent: torch.Tensor | None = None
+    state_weight: float | None = None
+    state_checkpoint_sha256: str | None = None
+    state_payload: dict[str, object] | None = None
+    if state_potential_checkpoint is not None:
+        state_model, state_payload, state_weight = (
+            _load_promoted_state_potential(
+                state_potential_checkpoint,
+                base_path,
+                torch_device,
+            )
+        )
+        wt_amino_acid, mutant_amino_acid = _amino_acid_indices(
+            unique_mutations, torch_device
+        )
+        with torch.inference_mode():
+            state_single_ddg = state_model(
+                single_tensors["wt_window"],
+                single_tensors["window_mask"],
+                single_tensors["wt_global"],
+                wt_amino_acid,
+                mutant_amino_acid,
+                structure=single_tensors["structure"],
+                structure_mask=single_tensors["structure_mask"],
+                membrane=single_tensors["membrane"],
+            ).float()
+            state_single_latent = state_model.latent(
+                single_tensors["wt_window"],
+                single_tensors["window_mask"],
+                single_tensors["wt_global"],
+                wt_amino_acid,
+                mutant_amino_acid,
+                structure=single_tensors["structure"],
+                structure_mask=single_tensors["structure_mask"],
+                membrane=single_tensors["membrane"],
+            ).float()
+        state_checkpoint_sha256 = file_sha256(
+            Path(state_potential_checkpoint)
+        )
+
+    pair_mutation_indices = np.asarray(
+        [
+            [mutation_index[mutation] for mutation in pair]
+            for pair in exact_pairs
+        ],
+        dtype=np.int64,
+    )
+    flattened_mutation_indices = pair_mutation_indices.reshape(-1)
+    joint_arrays = (
+        np.stack(
+            [
+                wt.windows[wt_position_index[mutation.position]]
+                for pair in exact_pairs
+                for mutation in pair
+            ]
+        ),
+        np.concatenate(
+            [value.windows for value in joint_embeddings], axis=0
+        ),
+        np.stack(
+            [
+                wt.window_mask[wt_position_index[mutation.position]]
+                for pair in exact_pairs
+                for mutation in pair
+            ]
+        ),
+        np.repeat(wt.global_mean[None], 2 * len(exact_pairs), axis=0),
+        np.repeat(
+            np.stack([value.global_mean for value in joint_embeddings]),
+            2,
+            axis=0,
+        ),
+    )
+    joint_tensors = _torch_state(
+        joint_arrays,
+        structure=structure[flattened_mutation_indices],
+        structure_mask=structure_mask[flattened_mutation_indices],
+        membrane=membrane[flattened_mutation_indices],
+        device=torch_device,
+    )
+    with torch.inference_mode():
+        baseline_joint_latent = base.latent(**joint_tensors).float().reshape(
+            len(exact_pairs), 2, -1
+        )
+
+    multi_path = Path(checkpoint_dir) / "hierarchy_multi_head.pt"
+    if not multi_path.is_file():
+        raise FileNotFoundError(multi_path)
+    if state_potential_checkpoint is not None:
+        candidate_multi = (
+            Path(state_potential_checkpoint).parent
+            / "hierarchy_multi_head.pt"
+        )
+        if candidate_multi.is_file():
+            _, candidate_payload = load_hierarchical_multi_checkpoint(
+                candidate_multi, torch_device
+            )
+            if bool(
+                candidate_payload.get("promotion", {}).get(
+                    "production_eligible"
+                )
+            ):
+                if (
+                    str(
+                        candidate_payload.get(
+                            "state_potential_checkpoint_sha256", ""
+                        )
+                    )
+                    != state_checkpoint_sha256
+                ):
+                    raise RuntimeError(
+                        "multi-mutant head uses a different state-potential "
+                        "checkpoint"
+                    )
+                multi_path = candidate_multi
+    multi, multi_payload = load_hierarchical_multi_checkpoint(
+        multi_path, torch_device
+    )
+    pair_index_tensor = torch.from_numpy(pair_mutation_indices).to(torch_device)
+    multi_single_ddg = baseline_single_ddg
+    multi_single_latent = baseline_single_latent
+    multi_joint_latent = baseline_joint_latent
+    multi_state_weight: float | None = None
+    if multi_payload.get("base_candidate") == "hierarchy_state_potential_blend":
+        if state_single_ddg is None or state_single_latent is None:
+            raise RuntimeError(
+                "promoted multi-mutant head requires state-potential features"
+            )
+        multi_state_weight = float(multi_payload["state_potential_weight"])
+        multi_single_ddg = (
+            (1.0 - multi_state_weight) * baseline_single_ddg
+            + multi_state_weight * state_single_ddg
+        )
+        multi_single_latent = torch.cat(
+            [baseline_single_latent, state_single_latent], dim=-1
+        )
+        pair_state_latent = state_single_latent[pair_index_tensor]
+        multi_joint_latent = torch.cat(
+            [baseline_joint_latent, pair_state_latent], dim=-1
+        )
+    with torch.inference_mode():
+        total_values, additive_values, epistasis_values = multi(
+            multi_single_ddg[pair_index_tensor],
+            multi_single_latent[pair_index_tensor],
+            multi_joint_latent,
+        )
+    total_exact = total_values.float().cpu().numpy()
+    additive_exact = additive_values.float().cpu().numpy()
+    epistasis_exact = epistasis_values.float().cpu().numpy()
+    constituent_exact = (
+        multi_single_ddg[pair_index_tensor].float().cpu().numpy()
+    )
+    baseline_constituent = (
+        baseline_single_ddg[pair_index_tensor].float().cpu().numpy()
+    )
+    state_constituent = (
+        None
+        if state_single_ddg is None
+        else state_single_ddg[pair_index_tensor].float().cpu().numpy()
+    )
+    exact_lookup = {
+        candidate_index: exact_index
+        for exact_index, candidate_index in enumerate(exact_indices)
+    }
+    exact_total_order = sorted(
+        exact_indices,
+        key=lambda candidate_index: (
+            float(total_exact[exact_lookup[candidate_index]]),
+            str(pair_candidates[candidate_index][0]),
+            str(pair_candidates[candidate_index][1]),
+        ),
+    )
+    exact_rank = {
+        candidate_index: rank
+        for rank, candidate_index in enumerate(exact_total_order, start=1)
+    }
+    prescreen_rank = {
+        candidate_index: rank
+        for rank, candidate_index in enumerate(pair_order, start=1)
+    }
+    input_ddg_by_mutation = {
+        mutation: float(ddg)
+        for mutation, ddg in zip(singles, input_single_ddg, strict=True)
+    }
+    rows: list[dict[str, object]] = []
+    for candidate_index in pair_order:
+        first, second = pair_candidates[candidate_index]
+        exact_index = exact_lookup.get(candidate_index)
+        row: dict[str, object] = {
+            "mutation_set": f"{first},{second}",
+            "mutation_1": str(first),
+            "mutation_2": str(second),
+            "position_1": first.position,
+            "position_2": second.position,
+            "input_single_1_ddg": input_ddg_by_mutation[first],
+            "input_single_2_ddg": input_ddg_by_mutation[second],
+            "pair_prescreen_additive_ddg": float(
+                pair_input_additive_array[candidate_index]
+            ),
+            "pair_prescreen_rank": prescreen_rank[candidate_index],
+            "constituent_1_ddg": "",
+            "constituent_2_ddg": "",
+            "additive_ddg": "",
+            "epistasis_ddg": "",
+            "total_ddg": "",
+            "retrieval_score": "",
+            "total_ddg_rank": "",
+            "score_stage": "additive-prescreen",
+            "suggestion_eligible": False,
+            "constituent_1_hierarchy_ddg": "",
+            "constituent_2_hierarchy_ddg": "",
+            "constituent_1_state_potential_ddg": "",
+            "constituent_2_state_potential_ddg": "",
+        }
+        if exact_index is not None:
+            row.update(
+                {
+                    "constituent_1_ddg": float(
+                        constituent_exact[exact_index, 0]
+                    ),
+                    "constituent_2_ddg": float(
+                        constituent_exact[exact_index, 1]
+                    ),
+                    "additive_ddg": float(additive_exact[exact_index]),
+                    "epistasis_ddg": float(epistasis_exact[exact_index]),
+                    "total_ddg": float(total_exact[exact_index]),
+                    "retrieval_score": float(-total_exact[exact_index]),
+                    "total_ddg_rank": exact_rank[candidate_index],
+                    "score_stage": "exact-pair-reranked",
+                    "suggestion_eligible": True,
+                    "constituent_1_hierarchy_ddg": float(
+                        baseline_constituent[exact_index, 0]
+                    ),
+                    "constituent_2_hierarchy_ddg": float(
+                        baseline_constituent[exact_index, 1]
+                    ),
+                }
+            )
+            if state_constituent is not None:
+                row["constituent_1_state_potential_ddg"] = float(
+                    state_constituent[exact_index, 0]
+                )
+                row["constituent_2_state_potential_ddg"] = float(
+                    state_constituent[exact_index, 1]
+                )
+        rows.append(row)
+
+    row_index_by_candidate = {
+        candidate_index: row_index
+        for row_index, candidate_index in enumerate(pair_order)
+    }
+    shortlist_candidate_indices = _bounded_pair_indices(
+        exact_total_order,
+        pair_candidates,
+        min(top, len(exact_total_order)),
+        max_pairs_per_site=max_pairs_per_site,
+    )
+    shortlist = [
+        rows[row_index_by_candidate[candidate_index]]
+        for candidate_index in shortlist_candidate_indices
+    ]
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    shortlist_path = output_path.with_name(
+        f"{output_path.stem}.shortlist{output_path.suffix or '.csv'}"
+    )
+    with shortlist_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(shortlist)
+
+    positions_by_reason: dict[str, list[int]] = {}
+    for position, reason in normalized_reasons.items():
+        positions_by_reason.setdefault(reason, []).append(position)
+    return {
+        "output": str(output_path.resolve()),
+        "shortlist_output": str(shortlist_path.resolve()),
+        "rows": len(rows),
+        "exact_pairs": len(exact_pairs),
+        "top": shortlist,
+        "ranking_policy": (
+            "input exact-single additive prescreen followed by promoted "
+            "permutation-invariant double-mutant epistasis; ascending total "
+            "ddG, negative is stabilizing"
+        ),
+        "ddg_units": "kcal/mol",
+        "sign_convention": "negative is stabilizing",
+        "single_screen": {
+            "path": str(Path(single_screen_path).resolve()),
+            "sha256": file_sha256(Path(single_screen_path)),
+            "limit": single_limit,
+            "ddg_ceiling": single_ddg_ceiling,
+            "require_component_agreement": require_component_agreement,
+            **input_stats,
+        },
+        "pair_search": {
+            "candidate_pairs": len(pair_candidates),
+            "pair_rerank_top": pair_rerank_top,
+            "min_position_separation": min_position_separation,
+            "max_pairs_per_site": max_pairs_per_site,
+        },
+        "embedding_cost": {
+            "cache": (
+                None
+                if embedding_cache is None
+                else str(Path(embedding_cache).resolve())
+            ),
+            "sequence_embedding_requests": embedding_stats["requested"],
+            "sequence_embeddings_computed": embedding_stats["computed"],
+            "cache_hits": embedding_stats["cache_hits"],
+            "unique_single_mutant_embeddings": len(unique_mutations),
+            "joint_pair_embeddings_requested": len(exact_pairs),
+            "joint_pair_embeddings_avoided": (
+                len(pair_candidates) - len(exact_pairs)
+            ),
+            "constituent_embeddings_reused": (
+                2 * len(exact_pairs) - len(unique_mutations)
+            ),
+            "naive_exact_pair_mutant_embeddings": 3 * len(exact_pairs),
+            "optimized_exact_pair_mutant_embeddings": (
+                len(unique_mutations) + len(exact_pairs)
+            ),
+        },
+        "protected_mask": {
+            "policy": "hard exclusion before pair generation and embedding",
+            "position_ranges": _compact_position_ranges(protected),
+            "count": len(protected),
+            "reasons": [
+                {
+                    "reason": reason,
+                    "position_ranges": _compact_position_ranges(positions),
+                }
+                for reason, positions in positions_by_reason.items()
+            ],
+        },
+        "topology": topology,
+        "structure_provenance": structure_provenance,
+        "model": {
+            "name": model_name,
+            "candidate": base_payload["candidate"],
+            "checkpoint": str(base_path.resolve()),
+            "checkpoint_sha256": file_sha256(base_path),
+            "multi_checkpoint": str(multi_path.resolve()),
+            "multi_checkpoint_sha256": file_sha256(multi_path),
+            "multi_state_potential_weight": multi_state_weight,
+            "state_potential_checkpoint": (
+                None
+                if state_potential_checkpoint is None
+                else str(Path(state_potential_checkpoint).resolve())
+            ),
+            "state_potential_checkpoint_sha256": state_checkpoint_sha256,
+            "state_potential_weight": state_weight,
+            "multi_training_scope": "double mutants",
+        },
+    }
