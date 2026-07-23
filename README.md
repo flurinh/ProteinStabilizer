@@ -210,6 +210,61 @@ The `run` command:
 5. selects the GPCR calibration on the mutation-site-held-out validation split; and
 6. evaluates each held-out test split after model selection.
 
+### Docker GPU runtimes
+
+The project has two CUDA 12.8 image targets because the validated ESM-C 600M
+and 6B dependency stacks conflict. Build the image that matches the backbone;
+neither image contains model weights, datasets, embeddings, or trained heads.
+Those generated assets remain on the host and are mounted by Compose.
+
+```bash
+cp .env.docker.example .env.docker
+sed -i "s/^HOST_UID=.*/HOST_UID=$(id -u)/; s/^HOST_GID=.*/HOST_GID=$(id -g)/" \
+  .env.docker
+
+docker compose --env-file .env.docker build protein-stabilizer-600m
+docker compose --env-file .env.docker build protein-stabilizer-6b
+```
+
+Run the human melanopsin two-stage screen with the 6B image:
+
+```bash
+docker compose --env-file .env.docker run --rm protein-stabilizer-6b \
+  screen-v2-6b \
+  --fasta examples/human_melanopsin/Q9UHM6.fasta \
+  --protected-mask examples/human_melanopsin/protected_positions.txt \
+  --scan-mode two-stage \
+  --rerank-top 128 \
+  --max-per-site 2 \
+  --top 50 \
+  --topology alpha_helical_gpcr \
+  --output artifacts/examples/human_melanopsin/6b_screen.csv
+```
+
+Use service `protein-stabilizer-600m` with command `screen-v2` for the 600M
+path. Compose gives the container GPU access and mounts `artifacts/`,
+`checkpoints/`, `data/`, and `embeddings/` at their normal project paths. It
+also reuses the host Hugging Face cache, so already downloaded ESM-C weights
+are not copied into the image or downloaded again. For another machine, edit
+the three cache/temp host paths in `.env.docker`; they should point to its
+large-volume filesystem.
+
+The equivalent direct builds are:
+
+```bash
+docker build --target runtime-600m --build-arg APP_UID="$(id -u)" \
+  --build-arg APP_GID="$(id -g)" -t protein-stabilizer:600m .
+docker build --file Dockerfile.6b --target runtime-6b \
+  --build-arg APP_UID="$(id -u)" \
+  --build-arg APP_GID="$(id -g)" -t protein-stabilizer:6b .
+```
+
+The host needs an NVIDIA driver, Docker's NVIDIA runtime, and enough GPU memory
+for the selected backbone. The strict-FP32 6B screen is intended for the
+32 GB-class GPU used by this project. If a PDB is supplied, additionally mount
+ProteinMPNN read-only and pass its container path with
+`--proteinmpnn-repository`.
+
 Generated embeddings and features stay under `embeddings/` and `artifacts/`.
 The compact trained heads and their metric records are in
 `checkpoints/esmc_600m/`. `single_ensemble.pt` is the production scorer;

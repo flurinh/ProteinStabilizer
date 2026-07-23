@@ -1,0 +1,32 @@
+.git
+.gitignore
+.idea
+.local
+.pytest_cache
+.venv
+.venv-*
+graphify-out
+
+# Generated and external bulk state is mounted at runtime.
+artifacts
+checkpoints
+data
+embeddings
+.docker-cache
+
+__pycache__
+*.egg-info
+*.py[cod]
+*.h5
+*.joblib
+*.parquet
+*.pt
+*.pth
+*.safetensors
+*.tar
+*.tar.gz
+*.xlsx
+
+# Development-only material.
+tests
+AGENTS.md

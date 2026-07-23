@@ -1,0 +1,63 @@
+# syntax=docker/dockerfile:1
+
+# ESM-C 6B uses a different Transformers stack from ESM-C 600M.  Keeping this
+# runtime in its own Dockerfile also prevents legacy Docker builders from
+# building and discarding the 600M stage first.
+
+FROM python:3.12-slim-bookworm@sha256:72d3d75f2639ab82b34b29390ad3d6e0827c775befee94edda8e9976818f488d AS runtime-6b
+
+ARG APP_UID=1000
+ARG APP_GID=1000
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    HOME=/home/protein \
+    HF_HOME=/cache/huggingface \
+    TORCH_HOME=/cache/torch \
+    TMPDIR=/scratch
+
+RUN mkdir -p /scratch \
+    && apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+COPY requirements-esmc6b-lock.txt ./
+RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && python -m pip install --no-cache-dir --requirement requirements-esmc6b-lock.txt
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+RUN python -m pip install --no-cache-dir --no-deps --editable . \
+    && python -c "import protein_stabilizer, torch, transformers; assert torch.__version__.startswith('2.9.1'); assert transformers.__version__ == '4.57.6'"
+
+COPY docs ./docs
+COPY examples ./examples
+COPY scripts ./scripts
+
+RUN getent group "${APP_GID}" >/dev/null || groupadd --gid "${APP_GID}" protein \
+    && (getent passwd "${APP_UID}" >/dev/null \
+        || useradd --create-home --uid "${APP_UID}" --gid "${APP_GID}" protein) \
+    && mkdir -p artifacts checkpoints data embeddings \
+        /cache/huggingface /cache/torch /scratch /home/protein \
+    && chown -R "${APP_UID}:${APP_GID}" \
+        /workspace /cache /scratch /home/protein
+
+# The validated 6B environment predates Hugging Face's `hub/` cache nesting.
+# Point both readers at the mounted legacy cache so a 24 GB checkpoint is not
+# downloaded a second time.
+ENV HF_HUB_CACHE=/cache/huggingface \
+    HUGGINGFACE_HUB_CACHE=/cache/huggingface
+
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.title="ProteinStabilizer ESM-C 6B" \
+      org.opencontainers.image.description="ESM-C residue-delta protein stability screening (6B runtime)" \
+      org.opencontainers.image.source="https://github.com/flurinh/ProteinStabilizer" \
+      org.opencontainers.image.revision="${VCS_REF}"
+
+USER ${APP_UID}:${APP_GID}
+ENTRYPOINT ["protein-stabilizer"]
+CMD ["--help"]

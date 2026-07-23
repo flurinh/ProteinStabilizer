@@ -1,0 +1,43 @@
+x-protein-stabilizer-runtime: &protein-stabilizer-runtime
+  gpus: all
+  shm_size: "8gb"
+  working_dir: /workspace
+  environment:
+    HF_HOME: /cache/huggingface
+    TORCH_HOME: /cache/torch
+    TMPDIR: /scratch
+    PYTHONDONTWRITEBYTECODE: "1"
+  volumes:
+    - ./artifacts:/workspace/artifacts
+    - ./checkpoints:/workspace/checkpoints
+    - ./data:/workspace/data
+    - ./embeddings:/workspace/embeddings
+    - ${HF_CACHE_HOST:-/data/fast/cache/huggingface}:/cache/huggingface
+    - ${TORCH_CACHE_HOST:-/data/fast/cache/torch}:/cache/torch
+    - ${PROTEIN_STABILIZER_TMP_HOST:-/data/fast/tmp/protein-stabilizer-docker}:/scratch
+
+services:
+  protein-stabilizer-600m:
+    <<: *protein-stabilizer-runtime
+    image: protein-stabilizer:600m
+    build:
+      context: .
+      target: runtime-600m
+      args:
+        APP_UID: ${HOST_UID:-1000}
+        APP_GID: ${HOST_GID:-1000}
+        VCS_REF: ${VCS_REF:-unknown}
+    profiles: [600m]
+
+  protein-stabilizer-6b:
+    <<: *protein-stabilizer-runtime
+    image: protein-stabilizer:6b
+    build:
+      context: .
+      dockerfile: Dockerfile.6b
+      target: runtime-6b
+      args:
+        APP_UID: ${HOST_UID:-1000}
+        APP_GID: ${HOST_GID:-1000}
+        VCS_REF: ${VCS_REF:-unknown}
+    profiles: [6b]

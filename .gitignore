@@ -1,5 +1,8 @@
 .idea/
 .venv/
+.venv-*/
+.env.docker
+.docker-cache/
 graphify-out/
 
 # Reproducible external datasets and generated model artifacts.
