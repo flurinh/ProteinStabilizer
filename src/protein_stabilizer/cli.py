@@ -9,6 +9,14 @@ from typing import Sequence
 
 import numpy as np
 
+from .accuracy_data import build_masked_marginal_cache
+from .accuracy_training import (
+    cross_validate_accuracy_ensemble,
+    evaluate_accuracy_outer,
+    prospective_shadow_evaluation,
+    train_final_accuracy_ensemble,
+)
+from .accuracy_predictor import screen_accuracy_single_mutants
 from .alphafold import fetch_alphafold_structure
 from .data import DatasetPaths, all_embedding_requests, single_embedding_requests
 from .embeddings import (
@@ -130,6 +138,30 @@ DEFAULT_FULL_STRUCTURE_DATA = (
 )
 DEFAULT_FULL_STRUCTURE_CHECKPOINTS = (
     ROOT / "checkpoints/esmc_600m_full_structure_fp32"
+)
+DEFAULT_ACCURACY_CHECKPOINTS = (
+    ROOT / "checkpoints/esmc_600m_accuracy_fp32"
+)
+DEFAULT_ACCURACY_FINAL = DEFAULT_ACCURACY_CHECKPOINTS / "promoted"
+DEFAULT_MASKED_MARGINALS = Path(
+    "/data/fast/tmp/protein-stabilizer/study/"
+    "esmc600m_masked_marginals.h5"
+)
+DEFAULT_6B_FULL_SEQUENCE_EMBEDDINGS = (
+    ROOT / "embeddings/esmc_6b/full_structure_wt_fp32.h5"
+)
+DEFAULT_6B_FULL_STRUCTURE_DATA = (
+    ROOT / "artifacts/full_structure/megascale_6b_fp32.h5"
+)
+DEFAULT_6B_FULL_STRUCTURE_CHECKPOINTS = (
+    ROOT / "checkpoints/esmc_6b_full_structure_fp32"
+)
+DEFAULT_6B_ACCURACY_CHECKPOINTS = (
+    ROOT / "checkpoints/esmc_6b_accuracy_fp32"
+)
+DEFAULT_6B_MASKED_MARGINALS = Path(
+    "/data/fast/tmp/protein-stabilizer/study/"
+    "esmc6b_masked_marginals_fp32.h5"
 )
 
 
@@ -273,6 +305,21 @@ def command_embed_full_structure(
     )
 
 
+def command_cache_masked_marginals(
+    args: argparse.Namespace,
+) -> dict[str, object]:
+    return build_masked_marginal_cache(
+        args.root,
+        args.output,
+        model_name=args.model,
+        device=args.device,
+        inference_dtype=args.inference_dtype,
+        storage_dtype="float32",
+        max_tokens=args.max_tokens,
+        max_batch_size=args.max_batch_size,
+    )
+
+
 def command_features_full_structure(
     args: argparse.Namespace,
 ) -> dict[str, object]:
@@ -326,6 +373,81 @@ def command_evaluate_full_structure_outer(
         args.output,
         protein_batch_size=args.protein_batch_size,
         row_batch_size=args.row_batch_size,
+        device=args.device,
+    )
+
+
+def _accuracy_row_paths(args: argparse.Namespace) -> list[Path]:
+    return [args.train_rows, args.test_rows]
+
+
+def command_cross_validate_accuracy(
+    args: argparse.Namespace,
+) -> dict[str, object]:
+    return cross_validate_accuracy_ensemble(
+        args.data,
+        _accuracy_row_paths(args),
+        args.masked_marginals,
+        args.state_cv,
+        args.proteinmpnn_repository,
+        args.output,
+        protein_batch_size=args.protein_batch_size,
+        device=args.device,
+    )
+
+
+def command_evaluate_accuracy_shadow(
+    args: argparse.Namespace,
+) -> dict[str, object]:
+    return prospective_shadow_evaluation(
+        args.data,
+        _accuracy_row_paths(args),
+        args.masked_marginals,
+        args.proteinmpnn_repository,
+        args.output,
+        shadow_salt=args.shadow_salt,
+        shadow_fraction=args.shadow_fraction,
+        sequence_epochs=args.sequence_epochs,
+        structure_epochs=args.structure_epochs,
+        protein_batch_size=args.protein_batch_size,
+        learning_rate=args.learning_rate,
+        structure_learning_rate=args.structure_learning_rate,
+        weight_decay=args.weight_decay,
+        seed=args.seed,
+        device=args.device,
+    )
+
+
+def command_train_accuracy(
+    args: argparse.Namespace,
+) -> dict[str, object]:
+    return train_final_accuracy_ensemble(
+        args.data,
+        _accuracy_row_paths(args),
+        args.masked_marginals,
+        args.sequence_checkpoint,
+        args.proteinmpnn_repository,
+        args.output,
+        structure_epochs=args.structure_epochs,
+        protein_batch_size=args.protein_batch_size,
+        structure_learning_rate=args.structure_learning_rate,
+        weight_decay=args.weight_decay,
+        seed=args.seed,
+        device=args.device,
+    )
+
+
+def command_evaluate_accuracy_outer(
+    args: argparse.Namespace,
+) -> dict[str, object]:
+    return evaluate_accuracy_outer(
+        args.data,
+        _accuracy_row_paths(args),
+        args.masked_marginals,
+        args.checkpoint,
+        args.proteinmpnn_repository,
+        args.output,
+        protein_batch_size=args.protein_batch_size,
         device=args.device,
     )
 
@@ -837,6 +959,52 @@ def command_screen_v2(args: argparse.Namespace) -> dict[str, object]:
     )
 
 
+def command_screen_accuracy(args: argparse.Namespace) -> dict[str, object]:
+    sequence = (
+        args.sequence
+        if args.sequence is not None
+        else _read_fasta(args.fasta)
+    )
+    protected = _protected_mask(
+        sequence,
+        args.protected_positions,
+        args.protected_mask,
+    )
+    pdb_path, structure_residue_mask, structure_provenance = (
+        _resolve_structure(args, sequence)
+    )
+    if pdb_path is None:
+        raise ValueError(
+            "screen-accuracy requires --pdb or --uniprot because the "
+            "promoted model uses backbone geometry"
+        )
+    embedder = ESMCEmbedder(
+        model_name=args.model,
+        device=args.device,
+        storage_dtype="float32",
+    )
+    return screen_accuracy_single_mutants(
+        sequence,
+        args.accuracy_checkpoint,
+        args.output,
+        pdb_path=pdb_path,
+        proteinmpnn_repository=args.proteinmpnn_repository,
+        positions=_parse_positions(args.positions),
+        protected_positions=tuple(protected),
+        protected_reasons=protected,
+        structure_residue_mask=structure_residue_mask,
+        structure_source_provenance=structure_provenance,
+        model_name=args.model,
+        device=args.device,
+        max_tokens=args.max_tokens,
+        max_batch_size=args.max_batch_size,
+        top=args.top,
+        max_per_site=args.max_per_site,
+        require_component_agreement=args.require_component_agreement,
+        embedder=embedder,
+    )
+
+
 def command_screen_v2_6b(args: argparse.Namespace) -> dict[str, object]:
     """Screen selected sites with the promoted native-FP32 ESM-C 6B head."""
 
@@ -1224,6 +1392,30 @@ def build_parser() -> argparse.ArgumentParser:
     embed_full_structure.add_argument(
         "--max-batch-size", type=int, default=64
     )
+    cache_masked_marginals = subparsers.add_parser(
+        "cache-masked-marginals"
+    )
+    cache_masked_marginals.add_argument(
+        "--root", type=Path, default=ROOT
+    )
+    cache_masked_marginals.add_argument(
+        "--output", type=Path, default=DEFAULT_MASKED_MARGINALS
+    )
+    cache_masked_marginals.add_argument(
+        "--model", default="esmc_600m"
+    )
+    cache_masked_marginals.add_argument("--device", default="cuda")
+    cache_masked_marginals.add_argument(
+        "--inference-dtype",
+        choices=["float32", "bfloat16"],
+        default="float32",
+    )
+    cache_masked_marginals.add_argument(
+        "--max-tokens", type=int, default=8192
+    )
+    cache_masked_marginals.add_argument(
+        "--max-batch-size", type=int, default=128
+    )
     features_full_structure = subparsers.add_parser(
         "features-full-structure"
     )
@@ -1356,6 +1548,119 @@ def build_parser() -> argparse.ArgumentParser:
         "--row-batch-size", type=int, default=4096
     )
     evaluate_full_structure.add_argument("--device", default="cuda")
+    accuracy_parent = argparse.ArgumentParser(add_help=False)
+    accuracy_parent.add_argument(
+        "--data", type=Path, default=DEFAULT_FULL_STRUCTURE_DATA
+    )
+    accuracy_parent.add_argument(
+        "--train-rows",
+        type=Path,
+        default=DEFAULT_FP32_V2_FEATURES / "single_train.h5",
+    )
+    accuracy_parent.add_argument(
+        "--test-rows",
+        type=Path,
+        default=DEFAULT_FP32_V2_FEATURES / "single_test.h5",
+    )
+    accuracy_parent.add_argument(
+        "--masked-marginals",
+        type=Path,
+        default=DEFAULT_MASKED_MARGINALS,
+    )
+    accuracy_parent.add_argument(
+        "--proteinmpnn-repository",
+        type=Path,
+        default=DEFAULT_PROTEINMPNN_REPOSITORY,
+    )
+    accuracy_parent.add_argument(
+        "--protein-batch-size", type=int, default=8
+    )
+    accuracy_parent.add_argument("--device", default="cuda")
+    cross_validate_accuracy = subparsers.add_parser(
+        "cross-validate-accuracy",
+        parents=[accuracy_parent],
+    )
+    cross_validate_accuracy.add_argument(
+        "--state-cv",
+        type=Path,
+        default=DEFAULT_FULL_STRUCTURE_CHECKPOINTS
+        / "cv"
+        / "full_structure",
+    )
+    cross_validate_accuracy.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_ACCURACY_CHECKPOINTS / "cv",
+    )
+    evaluate_accuracy_shadow = subparsers.add_parser(
+        "evaluate-accuracy-shadow",
+        parents=[accuracy_parent],
+    )
+    evaluate_accuracy_shadow.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_ACCURACY_CHECKPOINTS / "shadow",
+    )
+    evaluate_accuracy_shadow.add_argument(
+        "--shadow-salt",
+        default="protein-stabilizer-accuracy-shadow-v1",
+    )
+    evaluate_accuracy_shadow.add_argument(
+        "--shadow-fraction", type=float, default=0.20
+    )
+    evaluate_accuracy_shadow.add_argument(
+        "--sequence-epochs", type=int, default=70
+    )
+    evaluate_accuracy_shadow.add_argument(
+        "--structure-epochs", type=int, default=22
+    )
+    evaluate_accuracy_shadow.add_argument(
+        "--learning-rate", type=float, default=3.0e-4
+    )
+    evaluate_accuracy_shadow.add_argument(
+        "--structure-learning-rate", type=float, default=1.0e-4
+    )
+    evaluate_accuracy_shadow.add_argument(
+        "--weight-decay", type=float, default=1.0e-4
+    )
+    evaluate_accuracy_shadow.add_argument(
+        "--seed", type=int, default=20260724
+    )
+    train_accuracy = subparsers.add_parser(
+        "train-accuracy",
+        parents=[accuracy_parent],
+    )
+    train_accuracy.add_argument(
+        "--sequence-checkpoint",
+        type=Path,
+        default=DEFAULT_FULL_STRUCTURE_CHECKPOINTS
+        / "full_structure_selected.pt",
+    )
+    train_accuracy.add_argument(
+        "--output", type=Path, default=DEFAULT_ACCURACY_FINAL
+    )
+    train_accuracy.add_argument(
+        "--structure-epochs", type=int, default=22
+    )
+    train_accuracy.add_argument(
+        "--structure-learning-rate", type=float, default=1.0e-4
+    )
+    train_accuracy.add_argument(
+        "--weight-decay", type=float, default=1.0e-4
+    )
+    train_accuracy.add_argument("--seed", type=int, default=20260724)
+    evaluate_accuracy = subparsers.add_parser(
+        "evaluate-accuracy-outer",
+        parents=[accuracy_parent],
+    )
+    evaluate_accuracy.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=DEFAULT_ACCURACY_FINAL / "accuracy_ensemble.pt",
+    )
+    evaluate_accuracy.add_argument(
+        "--output", type=Path, default=DEFAULT_ACCURACY_FINAL
+    )
     structure_v2 = subparsers.add_parser("structure-v2")
     structure_v2.add_argument("--base-features", type=Path, default=DEFAULT_FEATURES)
     structure_v2.add_argument(
@@ -1908,6 +2213,58 @@ def build_parser() -> argparse.ArgumentParser:
             "only a bounded state-potential shortlist exactly"
         ),
     )
+    screen_accuracy = subparsers.add_parser("screen-accuracy")
+    screen_accuracy.add_argument("--sequence")
+    screen_accuracy.add_argument("--fasta", type=Path)
+    screen_accuracy.add_argument(
+        "--positions", help="comma-separated positions/ranges; default all"
+    )
+    screen_accuracy.add_argument(
+        "--protected-positions",
+        help="one-based positions/ranges that are never mutated",
+    )
+    screen_accuracy.add_argument(
+        "--protected-mask",
+        type=Path,
+        help=(
+            "text mask with one position/range and optional tab-separated "
+            "reason per line"
+        ),
+    )
+    screen_accuracy.add_argument(
+        "--output",
+        type=Path,
+        default=ROOT / "artifacts/screen_accuracy.csv",
+    )
+    screen_accuracy.add_argument("--top", type=int, default=50)
+    screen_accuracy.add_argument(
+        "--max-per-site",
+        type=int,
+        help="maximum substitutions from one site in the returned shortlist",
+    )
+    screen_accuracy.add_argument(
+        "--require-component-agreement",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "only suggest mutations whose state score and general ddG "
+            "ensemble both predict stabilization"
+        ),
+    )
+    screen_accuracy.add_argument(
+        "--accuracy-checkpoint",
+        type=Path,
+        default=DEFAULT_ACCURACY_FINAL / "accuracy_ensemble.pt",
+    )
+    screen_accuracy.add_argument(
+        "--model", default="esmc_600m", choices=["esmc_600m"]
+    )
+    screen_accuracy.add_argument("--device", default="cuda")
+    _add_structure_arguments(screen_accuracy)
+    screen_accuracy.add_argument("--max-tokens", type=int, default=8192)
+    screen_accuracy.add_argument(
+        "--max-batch-size", type=int, default=128
+    )
     screen_v2_6b = subparsers.add_parser("screen-v2-6b")
     screen_v2_6b.add_argument("--sequence")
     screen_v2_6b.add_argument("--fasta", type=Path)
@@ -2092,6 +2449,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "rerank-6b",
         "rank-gpcr-consensus",
         "predict-6b",
+        "screen-accuracy",
     } and (
         args.sequence is None
     ) == (
@@ -2103,11 +2461,16 @@ def main(argv: Sequence[str] | None = None) -> None:
         "embed-v2-context": command_embed_v2_context,
         "embed-v2-context-6b": command_embed_v2_context_6b,
         "embed-full-structure": command_embed_full_structure,
+        "cache-masked-marginals": command_cache_masked_marginals,
         "features-full-structure": command_features_full_structure,
         "train-full-structure": command_train_full_structure,
         "evaluate-full-structure-outer": (
             command_evaluate_full_structure_outer
         ),
+        "cross-validate-accuracy": command_cross_validate_accuracy,
+        "evaluate-accuracy-shadow": command_evaluate_accuracy_shadow,
+        "train-accuracy": command_train_accuracy,
+        "evaluate-accuracy-outer": command_evaluate_accuracy_outer,
         "structure-v2": command_structure_v2,
         "structure-v2-aligned": command_structure_v2_aligned,
         "features-v2": command_features_v2,
@@ -2137,6 +2500,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "predict-v2-6b": command_predict_v2_6b,
         "screen": command_screen,
         "screen-v2": command_screen_v2,
+        "screen-accuracy": command_screen_accuracy,
         "screen-v2-6b": command_screen_v2_6b,
         "screen-v2-pairs": command_screen_v2_pairs,
         "screen-v2-pairs-6b": command_screen_v2_pairs_6b,

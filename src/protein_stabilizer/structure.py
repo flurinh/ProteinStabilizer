@@ -280,6 +280,62 @@ class ProteinMPNNBackboneEmbedder:
             result[~active_mask] = 0.0
         return result
 
+    def backbone_coordinates(
+        self,
+        pdb_path: Path,
+        target_sequence: str,
+    ) -> tuple[np.ndarray, np.ndarray, str]:
+        """Return exact-chain N/CA/C/O coordinates in sequence order."""
+
+        records = self.module.parse_PDB(str(pdb_path), ca_only=False)
+        if len(records) != 1:
+            raise ValueError(f"expected one parsed structure in {pdb_path}")
+        record = records[0]
+        chains = {
+            key.removeprefix("seq_chain_"): str(value)
+            for key, value in record.items()
+            if key.startswith("seq_chain_")
+        }
+        matching = [
+            chain
+            for chain, sequence in chains.items()
+            if sequence == target_sequence
+        ]
+        if len(matching) != 1:
+            raise ValueError(
+                f"{Path(pdb_path).name} has {len(matching)} exact chains "
+                "for target sequence"
+            )
+        chain = matching[0]
+        coordinate_record = record[f"coords_chain_{chain}"]
+        coordinates = np.stack(
+            [
+                np.asarray(
+                    coordinate_record[f"{atom}_chain_{chain}"],
+                    dtype=np.float32,
+                )
+                for atom in ("N", "CA", "C", "O")
+            ],
+            axis=1,
+        )
+        expected = (len(target_sequence), 4, 3)
+        if coordinates.shape != expected:
+            raise RuntimeError(
+                f"{Path(pdb_path).name} backbone shape is "
+                f"{coordinates.shape}, expected {expected}"
+            )
+        mask = np.isfinite(coordinates).all(axis=(1, 2))
+        return (
+            np.nan_to_num(
+                coordinates,
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
+            ),
+            mask,
+            chain,
+        )
+
     def encode_aligned(
         self,
         pdb_path: Path,

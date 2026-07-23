@@ -22,6 +22,12 @@ def test_model_dashboard_is_generated_from_recorded_metrics(tmp_path) -> None:
     assert data["expected_ddg"]["generic_mae"] == 0.467
     assert data["expected_ddg"]["generic_mae_ci95"] == [0.4267, 0.5092]
     assert data["expected_ddg"]["target_mae"] == 0.3
+    assert data["expected_ddg"]["family_shadow_mae"] == 0.4763
+    assert data["expected_ddg"]["family_shadow_mae_ci95"] == [
+        0.4317,
+        0.5227,
+    ]
+    assert data["expected_ddg"]["family_shadow_spearman"] == 0.7623
     assert data["training_scale"]["dataset_rows"] == 136333
     assert data["training_scale"]["train_rows"] == 104315
     assert data["training_scale"]["batch_size"] == 256
@@ -59,6 +65,16 @@ def test_model_dashboard_is_generated_from_recorded_metrics(tmp_path) -> None:
         row["candidate"] == "Sub-0.30 kcal/mol objective"
         for row in data["optimization_audits"]
     )
+    assert any(
+        row["candidate"] == "Portable masked/geometry accuracy ensemble"
+        for row in data["optimization_audits"]
+    )
+    assert any(
+        row["name"] == "ESM-C 600M portable accuracy ensemble"
+        and row["mae"] == 0.476
+        and row["spearman"] == 0.762
+        for row in data["models"]
+    )
     assert any(row["model"] == "SPURS" for row in data["literature_context"])
     assert any(
         row["model"] == "JanusDDG" for row in data["literature_context"]
@@ -68,3 +84,5 @@ def test_model_dashboard_is_generated_from_recorded_metrics(tmp_path) -> None:
     assert data["structure_scale"]["official_candidate"] == -0.5
     assert data["structure_scale"]["c5ar_candidate_top50"] == 11
     assert "Sub-0.30 is not supported" in html
+    assert "strict-FP32 6B scaling is pending GPU headroom" in html
+    assert "docs/accuracy_optimization_audit.json" in data["sources"]

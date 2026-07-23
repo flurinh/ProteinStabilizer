@@ -21,6 +21,9 @@ checkpoints/esmc_600m_state_potential_fp32/
 checkpoints/esmc_6b_v2/
 checkpoints/esmc_6b_state_potential_fp32/
 checkpoints/esmc_600m_full_structure_fp32/
+checkpoints/esmc_600m_accuracy_fp32/
+checkpoints/esmc_6b_full_structure_fp32/
+checkpoints/esmc_6b_accuracy_fp32/
 
 __pycache__/
 *.py[cod]

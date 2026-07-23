@@ -64,6 +64,50 @@ protein-stabilizer evaluate-full-structure-outer
 The outer command is intentionally one-shot per output directory and refuses
 to overwrite an existing report. Negative ddG means stabilizing.
 
+### Promoted portable accuracy ensemble
+
+The follow-up accuracy path keeps the full-protein state model and adds a
+portable 216-feature expert: masked ESM-C amino-acid probabilities, mutation
+direction, raw backbone geometry, and the pinned static ProteinMPNN residue
+vector. A frozen 60/40 state/expert blend predicts expected ddG. Stabilizer
+screening continues to rank by the exact state score because it retained
+higher average precision.
+
+On five family-held-out development folds, the blend improves MAE from
+`0.53081` to `0.48501` kcal/mol, RMSE from `0.72138` to `0.66299`, Spearman
+from `0.69937` to `0.74602`, and direction accuracy from `78.45%` to `79.47%`.
+All five folds improve. A target-free 20% family-shadow resplit confirms MAE
+`0.52498` to `0.47635`, RMSE `0.72636` to `0.65956`, and Spearman `0.72174`
+to `0.76228`. This is a real improvement, but it does not support the
+sub-`0.30` target.
+
+Training and evaluation are reproducible with:
+
+```bash
+protein-stabilizer cache-masked-marginals
+protein-stabilizer cross-validate-accuracy
+protein-stabilizer evaluate-accuracy-shadow
+protein-stabilizer train-accuracy
+protein-stabilizer evaluate-accuracy-outer
+```
+
+Application screening needs a PDB or UniProt accession:
+
+```bash
+protein-stabilizer screen-accuracy \
+  --fasta target.fasta --uniprot Q9UHM6 \
+  --protected-mask protected_positions.txt \
+  --output artifacts/accuracy_screen.csv
+```
+
+This uses one WT embedding, one masked context per allowed site (batched), one
+structure encoding, and zero mutant-sequence embeddings. The shortlist
+requires state/ensemble agreement by default. Quantitative ddG is trained on
+30–72-residue MegaScale proteins without membrane labels, so the command marks
+GPCR runs as out of domain and does not present them as GPCR-calibrated
+kcal/mol. Durable metrics and artifact hashes are recorded in
+[`docs/accuracy_optimization_audit.json`](docs/accuracy_optimization_audit.json).
+
 ### Promoted v2 hierarchy
 
 The v2 single-mutant model receives both WT and complete-mutant final-layer
@@ -310,6 +354,9 @@ The current deterministic run used seed `20260715`:
 
 | Evaluation | Spearman | Pearson | MAE | RMSE |
 | --- | ---: | ---: | ---: | ---: |
+| **600M portable accuracy ensemble, target-free family-shadow** | **0.762** | **0.791** | **0.476** | **0.660** |
+| 600M portable accuracy ensemble, five family-fold OOF | 0.746 | 0.772 | 0.485 | 0.663 |
+| 600M full-structure state baseline, five family-fold OOF | 0.699 | 0.731 | 0.531 | 0.721 |
 | **ESM-C 6B strict-FP32 hierarchy/state fusion, single-mutant protein holdout** | **0.856** | **0.849** | **0.467** | **0.640** |
 | **ESM-C 6B strict-FP32 fused double-mutant estimate** | **0.749** | **0.747** | **0.585** | **0.782** |
 | ESM-C 6B v2 native-FP32 hierarchy before state fusion | 0.837 | 0.827 | 0.504 | 0.692 |

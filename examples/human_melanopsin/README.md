@@ -22,6 +22,25 @@ Run the fast 600M development screen from the repository root:
 bash examples/human_melanopsin/run_screen.sh 600m
 ```
 
+Run the promoted low-cost general-ddG/state screen:
+
+```bash
+bash examples/human_melanopsin/run_accuracy_screen.sh
+```
+
+This path uses one full WT ESM-C pass plus batched masked-site contexts; it
+never embeds mutant sequences. It reports two deliberately separate outputs:
+the 60/40 ensemble is the expected general-domain ddG, while the exact state
+component determines stabilizer rank. By default, the shortlist requires both
+components to predict negative ddG. On the supplied 270-site mask, 5,130
+substitutions are evaluated in one WT batch plus 16 masked batches.
+
+Melanopsin is 478 residues, whereas this quantitative head was trained on
+30–72-residue MegaScale proteins with no membrane labels. Its ddG field is
+therefore a domain-shift extrapolation, not GPCR-calibrated kcal/mol. Use the
+shortlist as orthogonal agreement evidence alongside the strict-FP32 6B GPCR
+screen, then validate experimentally.
+
 Run the highest-accuracy strict-FP32 6B screen:
 
 ```bash

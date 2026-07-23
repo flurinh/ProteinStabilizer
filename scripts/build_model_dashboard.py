@@ -93,6 +93,9 @@ def dashboard_data() -> dict[str, object]:
     full_structure = _load_optional(
         "docs/full_structure_training_audit.json"
     )
+    accuracy_optimization = _load_optional(
+        "docs/accuracy_optimization_audit.json"
+    )
 
     test_600m = single_600m["test"]
     test_6b = single_6b["test"]
@@ -1500,6 +1503,171 @@ def dashboard_data() -> dict[str, object]:
         data["sources"].append(
             "docs/full_structure_training_audit.json"
         )
+    if accuracy_optimization is not None:
+        development = accuracy_optimization["development_oof"]
+        shadow = accuracy_optimization["family_shadow"]
+        shadow_state = shadow["state"]
+        shadow_blend = shadow["blend"]
+        training = accuracy_optimization["training"]
+        decision = accuracy_optimization["decision"]
+        attempt_6b = decision["6b_attempt"]
+        interval = shadow_blend[
+            "protein_cluster_bootstrap_mae_95_ci"
+        ]
+        shadow_rows = accuracy_optimization["selection_protocol"][
+            "target_free_family_shadow"
+        ]["shadow_rows"]
+        data["status"].update(
+            {
+                "headline": (
+                    "The portable 600M ensemble improves family-shadow MAE "
+                    f"to {_round(shadow_blend['mae'], 3)} kcal/mol; exact "
+                    "state scoring remains the stabilizer-ranking route, "
+                    "historical 6B remains operational, and strict-FP32 6B "
+                    "scaling is pending GPU headroom"
+                ),
+                "best_ddg": (
+                    "600M portable ensemble · frozen-design family-shadow "
+                    "magnitude estimate; historical 6B remains operational"
+                ),
+                "training": (
+                    f"{development['rows']:,} family-fold OOF mutations · "
+                    f"{shadow_rows:,} family-shadow mutations · 22-epoch "
+                    "structure refinement + 600-tree portable prior · "
+                    "historical 204,000 optimizer updates retained for "
+                    "continuity"
+                ),
+                "structure_audit": (
+                    "Sub-0.30 is not supported; the ensemble reduced OOF "
+                    f"MAE by {development['relative_mae_improvement']:.1%} "
+                    "and family-shadow MAE by "
+                    f"{shadow['mae_improvement']:.3f}, but quantitative GPCR "
+                    "ddG remains out of domain"
+                ),
+            }
+        )
+        data["expected_ddg"].update(
+            {
+                "family_shadow_mae": _round(shadow_blend["mae"], 4),
+                "family_shadow_rmse": _round(shadow_blend["rmse"], 4),
+                "family_shadow_mae_ci95": [
+                    _round(value, 4) for value in interval
+                ],
+                "family_shadow_spearman": _round(
+                    shadow_blend["spearman"], 4
+                ),
+                "family_shadow_state_ap": _round(
+                    shadow_state["average_precision"], 4
+                ),
+                "family_shadow_blend_ap": _round(
+                    shadow_blend["average_precision"], 4
+                ),
+                "interpretation": (
+                    "The latest frozen-design family-shadow magnitude "
+                    "estimate is 0.476 kcal/mol MAE (95% protein-bootstrap "
+                    "CI 0.432–0.523). These families appeared in earlier "
+                    "cross-validation reports, so this is confirmation of "
+                    "the frozen design rather than a never-seen benchmark. "
+                    "For a GPCR, treat the values as orthogonal screening "
+                    "evidence and require experimental confirmation."
+                ),
+            }
+        )
+        data["losses"].insert(
+            0,
+            {
+                "model": "600M portable accuracy state refinement",
+                "objective": "Huber + rank + stabilizer retrieval",
+                "members": 1,
+                "final_median": _round(
+                    training["final_train_objective"], 4
+                ),
+                "final_range": None,
+                "note": (
+                    "22 native-FP32 epochs with TF32 disabled; the frozen "
+                    "ESM-C encoder is not fine-tuned. The 600-tree prior is "
+                    "fit after target-independent feature caching."
+                ),
+            },
+        )
+        data["models"].insert(
+            2,
+            {
+                "name": "ESM-C 600M portable accuracy ensemble",
+                "role": (
+                    "Expected-ddG magnitude from state + portable prior; "
+                    "exact state component used for stabilizer ranking"
+                ),
+                "status": "limited",
+                "target": (
+                    "ΔΔG, kcal/mol · direction accuracy "
+                    f"{_round(shadow_blend['direction_accuracy'])} · "
+                    f"state AP {_round(shadow_state['average_precision'])}"
+                ),
+                "test": (
+                    "Frozen-design target-free family-shadow resplit; "
+                    "not a never-seen dataset"
+                ),
+                "rows": int(shadow_rows),
+                "spearman": _round(shadow_blend["spearman"]),
+                "pearson": _round(shadow_blend["pearson"]),
+                "mae": _round(shadow_blend["mae"]),
+                "rmse": _round(shadow_blend["rmse"]),
+            },
+        )
+        data["same_project_comparisons"].insert(
+            0,
+            {
+                "model": "Portable masked/geometry accuracy ensemble",
+                "input": (
+                    "Full WT ESM-C context + masked ESM-C marginals + "
+                    "ProteinMPNN + target-independent backbone geometry"
+                ),
+                "benchmark": (
+                    "Five family folds plus frozen-design target-free "
+                    "family-shadow resplit"
+                ),
+                "metric": (
+                    f"OOF MAE {development['state']['mae']:.4f}→"
+                    f"{development['blend']['mae']:.4f}; shadow "
+                    f"{shadow_state['mae']:.4f}→{shadow_blend['mae']:.4f}; "
+                    f"shadow ρ {shadow_state['spearman']:.4f}→"
+                    f"{shadow_blend['spearman']:.4f}"
+                ),
+                "decision": (
+                    "Promoted for expected-ddG magnitude; retain exact state "
+                    "score for stabilizer ranking"
+                ),
+                "tone": "good",
+            },
+        )
+        optimization_audits.insert(
+            0,
+            {
+                "candidate": "Portable masked/geometry accuracy ensemble",
+                "validation": (
+                    f"family OOF MAE {development['state']['mae']:.4f}→"
+                    f"{development['blend']['mae']:.4f}; all five folds "
+                    "improved"
+                ),
+                "frozen_test": (
+                    f"family-shadow MAE {shadow_state['mae']:.4f}→"
+                    f"{shadow_blend['mae']:.4f}; ρ "
+                    f"{shadow_state['spearman']:.4f}→"
+                    f"{shadow_blend['spearman']:.4f}; blend 95% CI "
+                    f"{interval[0]:.4f}–{interval[1]:.4f}"
+                ),
+                "decision": (
+                    "Dual route promoted; 6B pending after strict-FP32 OOM "
+                    f"({attempt_6b['unrelated_active_gpu_memory_gib']:.2f} "
+                    "GiB occupied by an unrelated process)"
+                ),
+                "tone": "good",
+            },
+        )
+        data["sources"].append(
+            "docs/accuracy_optimization_audit.json"
+        )
     data["optimization_audits"] = optimization_audits
     return data
 
@@ -1734,9 +1902,14 @@ document.querySelector("#stamp").innerHTML =
   `<span class="warn">${DATA.status.structure_audit}</span>`;
 
 const e = DATA.expected_ddg;
+const currentAccuracy = DATA.models.find(
+  m => m.name === "ESM-C 600M portable accuracy ensemble"
+) ?? DATA.models[0];
+const currentMae = e.family_shadow_mae ?? e.generic_mae;
+const currentMaeCi = e.family_shadow_mae_ci95 ?? e.generic_mae_ci95;
 document.querySelector("#kpis").innerHTML = [
-  ["Best generic ρ", fmt(DATA.models[0].spearman), DATA.models[0].test],
-  ["Typical |ΔΔG error|", `${fmt(e.generic_mae, 2)} kcal/mol`, e.generic_mae_ci95 ? `protein-bootstrap 95% CI ${fmt(e.generic_mae_ci95[0], 2)}–${fmt(e.generic_mae_ci95[1], 2)}` : "MegaScale holdout"],
+  ["Latest family-shadow ρ", fmt(currentAccuracy.spearman), currentAccuracy.test],
+  ["Latest |ΔΔG| error", `${fmt(currentMae, 2)} kcal/mol`, currentMaeCi ? `protein-bootstrap 95% CI ${fmt(currentMaeCi[0], 2)}–${fmt(currentMaeCi[1], 2)}` : "MegaScale holdout"],
   ["Experimental transfer", `${fmt(e.experimental_mae, 2)} kcal/mol`, "ProTherm holdout"],
   ["C5aR GPCR AP", fmt(DATA.gpcr.c5ar.consensus_ap ?? DATA.gpcr.c5ar.rerank_ap), `${DATA.gpcr.c5ar.consensus_top50 ?? DATA.gpcr.c5ar.rerank_top50}/34 positives in top 50`],
 ].map(([label, value, note]) => `<div class="kpi"><div class="label">${label}</div><div class="value accent">${value}</div><div class="note">${note}</div></div>`).join("");
@@ -1875,6 +2048,8 @@ if (scatter) {
 document.querySelector("#ddg-callout").innerHTML =
   `<strong>Operational expectation: roughly ±1 kcal/mol for a new GPCR.</strong><p>${e.interpretation}</p>`;
 document.querySelector("#ddg-bars").innerHTML =
+  (e.family_shadow_mae == null ? "" :
+    bar("600M portable family-shadow MAE", e.family_shadow_mae, 1.5)) +
   bar("600M v2 Megascale MAE", e.generic_mae, 1.5) +
   bar("Retained 6B MAE", e.retained_6b_mae, 1.5, true) +
   bar("6B ProTherm MAE", e.experimental_mae, 1.5, true) +
