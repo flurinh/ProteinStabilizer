@@ -24,6 +24,14 @@ from .esmc6b import (
     rerank_esmc6b_screen,
 )
 from .features import build_feature_files
+from .full_structure_data import (
+    build_full_sequence_embeddings,
+    build_full_structure_dataset,
+)
+from .full_structure_training import (
+    evaluate_full_structure_outer,
+    train_full_structure_architecture,
+)
 from .gpcr_evolutionary import rank_gpcr_screening_consensus
 from .gpcr_ranking import train_zero_shot_membrane_ranker
 from .predictor import predict_mutations, screen_single_mutants
@@ -114,6 +122,15 @@ DEFAULT_APPLICATION_6B_CACHE = (
     ROOT / "embeddings/application/esmc_6b_targets_fp32.h5"
 )
 DEFAULT_ALPHAFOLD_CACHE = ROOT / "artifacts/structures/alphafold"
+DEFAULT_FULL_SEQUENCE_EMBEDDINGS = (
+    ROOT / "embeddings/esmc_600m/full_structure_wt_fp32.h5"
+)
+DEFAULT_FULL_STRUCTURE_DATA = (
+    ROOT / "artifacts/full_structure/megascale_600m_fp32.h5"
+)
+DEFAULT_FULL_STRUCTURE_CHECKPOINTS = (
+    ROOT / "checkpoints/esmc_600m_full_structure_fp32"
+)
 
 
 def _json(value: object) -> None:
@@ -238,6 +255,78 @@ def command_structure_v2(args: argparse.Namespace) -> dict[str, object]:
         temp_root=args.temp_root,
         device=args.device,
         storage_dtype=args.storage_dtype,
+    )
+
+
+def command_embed_full_structure(
+    args: argparse.Namespace,
+) -> dict[str, object]:
+    return build_full_sequence_embeddings(
+        args.root,
+        args.output,
+        model_name=args.model,
+        device=args.device,
+        inference_dtype=args.inference_dtype,
+        storage_dtype=args.storage_dtype,
+        max_tokens=args.max_tokens,
+        max_batch_size=args.max_batch_size,
+    )
+
+
+def command_features_full_structure(
+    args: argparse.Namespace,
+) -> dict[str, object]:
+    return build_full_structure_dataset(
+        args.root,
+        args.embeddings,
+        args.structure_archive,
+        args.proteinmpnn_repository,
+        args.output,
+        temp_root=args.temp_root,
+        seed=args.seed,
+        minimum_identity=args.minimum_identity,
+        coverage=args.coverage,
+        outer_fraction=args.outer_fraction,
+        folds=args.folds,
+    )
+
+
+def command_train_full_structure(
+    args: argparse.Namespace,
+) -> dict[str, object]:
+    return train_full_structure_architecture(
+        args.data,
+        args.proteinmpnn_repository,
+        args.output,
+        seed=args.seed,
+        cv_epochs=args.cv_epochs,
+        cv_minimum_epochs=args.cv_minimum_epochs,
+        final_epochs=args.final_epochs,
+        final_minimum_epochs=args.final_minimum_epochs,
+        epistasis_epochs=args.epistasis_epochs,
+        epistasis_minimum_epochs=args.epistasis_minimum_epochs,
+        patience=args.patience,
+        protein_batch_size=args.protein_batch_size,
+        row_batch_size=args.row_batch_size,
+        learning_rate=args.learning_rate,
+        structure_learning_rate=args.structure_learning_rate,
+        epistasis_learning_rate=args.epistasis_learning_rate,
+        weight_decay=args.weight_decay,
+        device=args.device,
+    )
+
+
+def command_evaluate_full_structure_outer(
+    args: argparse.Namespace,
+) -> dict[str, object]:
+    return evaluate_full_structure_outer(
+        args.data,
+        args.checkpoint,
+        args.proteinmpnn_repository,
+        args.output,
+        protein_batch_size=args.protein_batch_size,
+        row_batch_size=args.row_batch_size,
+        device=args.device,
     )
 
 
@@ -1108,6 +1197,165 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["float32", "float16"],
         default="float32",
     )
+    embed_full_structure = subparsers.add_parser(
+        "embed-full-structure"
+    )
+    embed_full_structure.add_argument("--root", type=Path, default=ROOT)
+    embed_full_structure.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_FULL_SEQUENCE_EMBEDDINGS,
+    )
+    embed_full_structure.add_argument(
+        "--model", default="esmc_600m"
+    )
+    embed_full_structure.add_argument("--device", default="cuda")
+    embed_full_structure.add_argument(
+        "--inference-dtype",
+        choices=["float32", "bfloat16"],
+        default="float32",
+    )
+    embed_full_structure.add_argument(
+        "--storage-dtype",
+        choices=["float32", "float16"],
+        default="float32",
+    )
+    embed_full_structure.add_argument("--max-tokens", type=int, default=8192)
+    embed_full_structure.add_argument(
+        "--max-batch-size", type=int, default=64
+    )
+    features_full_structure = subparsers.add_parser(
+        "features-full-structure"
+    )
+    features_full_structure.add_argument("--root", type=Path, default=ROOT)
+    features_full_structure.add_argument(
+        "--embeddings",
+        type=Path,
+        default=DEFAULT_FULL_SEQUENCE_EMBEDDINGS,
+    )
+    features_full_structure.add_argument(
+        "--structure-archive",
+        type=Path,
+        default=DEFAULT_MEGASCALE_ARCHIVE,
+    )
+    features_full_structure.add_argument(
+        "--proteinmpnn-repository",
+        type=Path,
+        default=DEFAULT_PROTEINMPNN_REPOSITORY,
+    )
+    features_full_structure.add_argument(
+        "--output", type=Path, default=DEFAULT_FULL_STRUCTURE_DATA
+    )
+    features_full_structure.add_argument(
+        "--temp-root",
+        type=Path,
+        default=Path(
+            "/data/fast/tmp/protein-stabilizer/full-structure"
+        ),
+    )
+    features_full_structure.add_argument(
+        "--seed", type=int, default=20260723
+    )
+    features_full_structure.add_argument(
+        "--minimum-identity", type=float, default=0.25
+    )
+    features_full_structure.add_argument(
+        "--coverage", type=float, default=0.80
+    )
+    features_full_structure.add_argument(
+        "--outer-fraction", type=float, default=0.20
+    )
+    features_full_structure.add_argument("--folds", type=int, default=5)
+    train_full_structure = subparsers.add_parser(
+        "train-full-structure"
+    )
+    train_full_structure.add_argument(
+        "--data", type=Path, default=DEFAULT_FULL_STRUCTURE_DATA
+    )
+    train_full_structure.add_argument(
+        "--proteinmpnn-repository",
+        type=Path,
+        default=DEFAULT_PROTEINMPNN_REPOSITORY,
+    )
+    train_full_structure.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_FULL_STRUCTURE_CHECKPOINTS,
+    )
+    train_full_structure.add_argument(
+        "--seed", type=int, default=20260723
+    )
+    train_full_structure.add_argument(
+        "--cv-epochs", type=int, default=30
+    )
+    train_full_structure.add_argument(
+        "--cv-minimum-epochs", type=int, default=15
+    )
+    train_full_structure.add_argument(
+        "--final-epochs", type=int, default=70
+    )
+    train_full_structure.add_argument(
+        "--final-minimum-epochs", type=int, default=50
+    )
+    train_full_structure.add_argument(
+        "--epistasis-epochs", type=int, default=50
+    )
+    train_full_structure.add_argument(
+        "--epistasis-minimum-epochs", type=int, default=25
+    )
+    train_full_structure.add_argument(
+        "--patience", type=int, default=8
+    )
+    train_full_structure.add_argument(
+        "--protein-batch-size", type=int, default=8
+    )
+    train_full_structure.add_argument(
+        "--row-batch-size", type=int, default=4096
+    )
+    train_full_structure.add_argument(
+        "--learning-rate", type=float, default=3.0e-4
+    )
+    train_full_structure.add_argument(
+        "--structure-learning-rate", type=float, default=1.0e-4
+    )
+    train_full_structure.add_argument(
+        "--epistasis-learning-rate", type=float, default=7.5e-4
+    )
+    train_full_structure.add_argument(
+        "--weight-decay", type=float, default=1.0e-4
+    )
+    train_full_structure.add_argument("--device", default="cuda")
+    evaluate_full_structure = subparsers.add_parser(
+        "evaluate-full-structure-outer"
+    )
+    evaluate_full_structure.add_argument(
+        "--data", type=Path, default=DEFAULT_FULL_STRUCTURE_DATA
+    )
+    evaluate_full_structure.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=(
+            DEFAULT_FULL_STRUCTURE_CHECKPOINTS
+            / "full_structure_selected.pt"
+        ),
+    )
+    evaluate_full_structure.add_argument(
+        "--proteinmpnn-repository",
+        type=Path,
+        default=DEFAULT_PROTEINMPNN_REPOSITORY,
+    )
+    evaluate_full_structure.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_FULL_STRUCTURE_CHECKPOINTS,
+    )
+    evaluate_full_structure.add_argument(
+        "--protein-batch-size", type=int, default=8
+    )
+    evaluate_full_structure.add_argument(
+        "--row-batch-size", type=int, default=4096
+    )
+    evaluate_full_structure.add_argument("--device", default="cuda")
     structure_v2 = subparsers.add_parser("structure-v2")
     structure_v2.add_argument("--base-features", type=Path, default=DEFAULT_FEATURES)
     structure_v2.add_argument(
@@ -1854,6 +2102,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         "embed": command_embed,
         "embed-v2-context": command_embed_v2_context,
         "embed-v2-context-6b": command_embed_v2_context_6b,
+        "embed-full-structure": command_embed_full_structure,
+        "features-full-structure": command_features_full_structure,
+        "train-full-structure": command_train_full_structure,
+        "evaluate-full-structure-outer": (
+            command_evaluate_full_structure_outer
+        ),
         "structure-v2": command_structure_v2,
         "structure-v2-aligned": command_structure_v2_aligned,
         "features-v2": command_features_v2,

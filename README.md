@@ -31,6 +31,39 @@ recorded in [`docs/v2_training_report.md`](docs/v2_training_report.md).
 
 ## Model
 
+### Full-protein structure experiment
+
+The repository now includes a reproducible SPURS-inspired training path that
+embeds each unique WT once, combines full ESM-C residue/global states with a
+trainable masked ProteinMPNN encoder through cross-attention, and decodes all
+20 amino-acid potentials in one pass. Multiple substitutions use an unordered
+additive-plus-epistasis decoder and always expose both components.
+
+The real 600M run used 136,333 single and 114,109 double mutants across 173
+proteins, five MMseqs-family folds, and a newly sealed family outer partition.
+Warm-started structure fusion improved development OOF MAE only from `0.53131`
+to `0.53081` kcal/mol, below the predeclared `0.02` scale gate, so it was not
+promoted or scaled to 6B. The selected sequence state-potential model reached
+outer-family MAE `0.59824` kcal/mol (95% protein-bootstrap CI
+`0.55861–0.64466`) and Spearman `0.72580`. Learned double epistasis also failed
+its development gate, so additive prediction is selected while the residual
+is retained as a diagnostic.
+
+The durable result and artifact hashes are in
+[`docs/full_structure_training_audit.json`](docs/full_structure_training_audit.json).
+The generated embedding bank, feature tensors, checkpoints, prediction CSVs,
+and real-scale scatterplots remain git-ignored.
+
+```bash
+protein-stabilizer embed-full-structure
+protein-stabilizer features-full-structure
+protein-stabilizer train-full-structure
+protein-stabilizer evaluate-full-structure-outer
+```
+
+The outer command is intentionally one-shot per output directory and refuses
+to overwrite an existing report. Negative ddG means stabilizing.
+
 ### Promoted v2 hierarchy
 
 The v2 single-mutant model receives both WT and complete-mutant final-layer

@@ -90,6 +90,9 @@ def dashboard_data() -> dict[str, object]:
     stability_optimization = _load_optional(
         "docs/stability_optimization_audit.json"
     )
+    full_structure = _load_optional(
+        "docs/full_structure_training_audit.json"
+    )
 
     test_600m = single_600m["test"]
     test_6b = single_6b["test"]
@@ -1333,6 +1336,170 @@ def dashboard_data() -> dict[str, object]:
             "exposures"
         )
         data["sources"].append("docs/stability_optimization_audit.json")
+    if full_structure is not None:
+        outer = full_structure["sealed_outer_evaluation"]
+        single = outer["single"]
+        double = outer["double_selected_additive"]
+        development = full_structure["development_oof"]
+        sequence_oof = development["sequence_only"]
+        structure_oof = development["warm_started_full_structure"]
+        structure_gate = development["structure_promotion_gate"]
+        double_oof = development["double_mutants"]
+        training = full_structure["training"]
+        data["status"].update(
+            {
+                "headline": (
+                    "New family-held-out outer result: 0.598 kcal/mol MAE; "
+                    "historical 6B remains operational, while full "
+                    "ProteinMPNN fusion and learned epistasis were not promoted"
+                ),
+                "best_ddg": (
+                    "6B hierarchy/state fusion remains operational; 600M "
+                    "full-protein run supplies the clean evidence estimate"
+                ),
+                "training": (
+                    "173 WT proteins embedded once · 136,333 singles + "
+                    "114,109 doubles · five family folds + sealed outer · "
+                    "historical 204,000 optimizer updates retained for "
+                    "continuity"
+                ),
+                "structure_audit": (
+                    "Sub-0.30 is not supported; warm-started trainable "
+                    "ProteinMPNN fusion improved OOF MAE by "
+                    f"{_round(structure_gate['mae_improvement'], 4)}, below "
+                    "the 0.02 scale gate"
+                ),
+            }
+        )
+        data["expected_ddg"].update(
+            {
+                "clean_family_mae": _round(single["mae"]),
+                "clean_family_rmse": _round(single["rmse"]),
+                "clean_family_mae_ci95": [
+                    _round(value, 4)
+                    for value in single[
+                        "protein_bootstrap_mae_95_ci"
+                    ]
+                ],
+                "interpretation": (
+                    "The clean family-held-out estimate is about 0.60 "
+                    "kcal/mol MAE (95% protein-bootstrap CI 0.559–0.645). "
+                    "For a new GPCR, continue to treat roughly ±1 kcal/mol "
+                    "as the operational error scale and prioritize ranking "
+                    "plus experimental confirmation."
+                ),
+            }
+        )
+        data["losses"].insert(
+            0,
+            {
+                "model": "600M full-protein state potential",
+                "objective": "Huber + rank + stabilizer retrieval",
+                "members": 1,
+                "final_median": _round(
+                    training["final_sequence_train_objective"], 4
+                ),
+                "final_range": None,
+                "note": (
+                    "70 final epochs after five family-clustered folds; "
+                    "native FP32 and TF32 disabled. Structure refinement was "
+                    "evaluated OOF but did not clear its promotion gate."
+                ),
+            },
+        )
+        data["models"].insert(
+            2,
+            {
+                "name": "ESM-C 600M full-protein state potential",
+                "role": (
+                    "Leakage-clean evidence baseline; one-pass 20-state "
+                    "screening"
+                ),
+                "status": "limited",
+                "target": (
+                    "ΔΔG, kcal/mol · AP "
+                    f"{_round(single['stabilizer_average_precision'])}"
+                ),
+                "test": (
+                    "New sealed MMseqs-family outer partition; selected "
+                    "without outer metrics"
+                ),
+                "rows": int(single["rows"]),
+                "spearman": _round(single["spearman"]),
+                "pearson": _round(single["pearson"]),
+                "mae": _round(single["mae"]),
+                "rmse": _round(single["rmse"]),
+            },
+        )
+        data["models"].insert(
+            3,
+            {
+                "name": "600M full-protein additive doubles",
+                "role": (
+                    "Permutation-invariant additive prediction; learned "
+                    "epistasis rejected on development OOF"
+                ),
+                "status": "limited",
+                "target": "ΔΔG, kcal/mol · additive + reported residual",
+                "test": "Same sealed MMseqs-family outer partition",
+                "rows": int(double["rows"]),
+                "spearman": _round(double["spearman"]),
+                "pearson": _round(double["pearson"]),
+                "mae": _round(double["mae"]),
+                "rmse": _round(double["rmse"]),
+            },
+        )
+        data["same_project_comparisons"].insert(
+            0,
+            {
+                "model": "Trainable full ProteinMPNN → ESM-C fusion",
+                "input": (
+                    "Full WT ESM-C residues + raw backbone + masked "
+                    "ProteinMPNN"
+                ),
+                "benchmark": (
+                    "Five MMseqs-family development folds; outer excluded "
+                    "from promotion"
+                ),
+                "metric": (
+                    f"sequence MAE {_round(sequence_oof['mae'], 4)} → "
+                    f"structure {_round(structure_oof['mae'], 4)}; "
+                    f"ρ {_round(sequence_oof['spearman'], 4)} → "
+                    f"{_round(structure_oof['spearman'], 4)}"
+                ),
+                "decision": (
+                    "Not scaled to 6B: positive change was much smaller than "
+                    "the predeclared 0.02 kcal/mol gate"
+                ),
+                "tone": "bad",
+            },
+        )
+        optimization_audits.insert(
+            0,
+            {
+                "candidate": "Full trainable structure architecture",
+                "validation": (
+                    f"family OOF MAE {sequence_oof['mae']:.4f}→"
+                    f"{structure_oof['mae']:.4f}; AP "
+                    f"{sequence_oof['stabilizer_average_precision']:.4f}→"
+                    f"{structure_oof['stabilizer_average_precision']:.4f}"
+                ),
+                "frozen_test": (
+                    f"sealed outer MAE {single['mae']:.4f}, ρ "
+                    f"{single['spearman']:.4f}; 95% CI "
+                    f"{single['protein_bootstrap_mae_95_ci'][0]:.4f}–"
+                    f"{single['protein_bootstrap_mae_95_ci'][1]:.4f}"
+                ),
+                "decision": (
+                    "Structure not promoted; additive selected for doubles "
+                    f"(OOF MAE {double_oof['additive_mae']:.4f})"
+                ),
+                "tone": "bad",
+            },
+        )
+        data["sources"].append(
+            "docs/full_structure_training_audit.json"
+        )
     data["optimization_audits"] = optimization_audits
     return data
 

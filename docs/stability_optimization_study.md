@@ -149,6 +149,47 @@ Primary references:
    experimentally; do not label GPCR rank as kcal/mol or crystallization
    probability.
 
+## Full-structure implementation result (2026-07-23)
+
+The proposed architecture has now been implemented and trained end to end in
+native FP32. The full MegaScale stage contains 173 unique WT proteins rather
+than hundreds of thousands of unique backbones, so ESM-C embeds each WT once
+and the training loop gathers all mutation labels from a protein-level forward
+pass. The persistent bank contains 136,333 singles and 114,109 doubles.
+
+MMseqs clustering at 25% identity and 80% bidirectional coverage produced 114
+families. Five development folds and a newly assigned outer partition hold out
+whole families; no mutation rows or families cross partitions. The outer
+metrics were not used by either the structure or epistasis promotion gates.
+
+The SPURS-style candidate uses frozen full-protein ESM-C residue queries,
+trainable leave-one-residue-out ProteinMPNN decoder states as structure
+keys/values, gated cross-attention, and one-pass 20-amino-acid potentials. A
+sequence warm start made the structure residual safe: development OOF MAE
+improved from `0.53131` to `0.53081` kcal/mol, Spearman from `0.69826` to
+`0.69937`, and stabilizer AP from `0.20348` to `0.20410`. The MAE gain was only
+`0.00050`, far below the predeclared `0.02` scale gate, so the structure branch
+was not promoted to the final checkpoint or scaled to 6B.
+
+On the once-consumed outer family partition, the selected single-mutant model
+has MAE `0.59824` kcal/mol (protein-bootstrap 95% CI `0.55861–0.64466`), RMSE
+`0.79500`, Spearman `0.72580`, and stabilizer AP `0.23760` across 27,925 rows
+and 25 proteins. This is the first clean estimate in the project and does not
+support a sub-`0.30` or SOTA claim.
+
+The unordered double-mutant head was also trained and evaluated. Learned
+epistasis degraded development OOF MAE from additive `0.86710` to `0.98768`
+and Spearman from `0.54540` to `0.49338`, so the development-only gate selected
+additive prediction. The learned residual remains in the checkpoint and is
+reported separately as a diagnostic; outer results cannot reverse that
+selection.
+
+The state-potential parameterization gives exact self and reverse identities.
+The maximum three-state cycle residual observed in FP32 was
+`4.77e-7` kcal/mol. Reproduction commands, source/checkpoint hashes, metrics,
+and generated-artifact hashes are recorded in
+`docs/full_structure_training_audit.json`.
+
 This is a product-oriented route: one higher-value architecture experiment and
 one defensible evaluation redesign, rather than additional global calibration
 or loss sweeps on the already-consulted historical test.

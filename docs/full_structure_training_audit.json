@@ -1,0 +1,137 @@
+{
+  "schema": "protein-stabilizer.full-structure-audit.v1",
+  "run_date": "2026-07-23",
+  "architecture": {
+    "sequence_backbone": "frozen ESM-C 600M final-layer full-protein residue embeddings",
+    "structure_backbone": "trainable pinned ProteinMPNN v_48_020 leave-one-residue-out decoder",
+    "fusion": "local/global ESM-C queries with ProteinMPNN keys/values and gated cross-attention",
+    "single_decoder": "one-pass Lx20 amino-acid state potentials",
+    "multi_decoder": "permutation-invariant additive plus DeepSets epistasis",
+    "sign": "negative ddG means stabilizing",
+    "numeric_policy": "native float32; TF32 disabled; no autocast"
+  },
+  "data": {
+    "proteins": 173,
+    "families": 114,
+    "single_rows": 136333,
+    "single_proteins": 135,
+    "double_rows": 114109,
+    "maximum_protein_length": 72,
+    "development_proteins": 145,
+    "outer_proteins": 28,
+    "development_folds": 5,
+    "family_leaks": 0,
+    "split_policy": "MMseqs 25% identity and 80% bidirectional coverage; family groups assigned without targets",
+    "embedding_sha256": "0535cc7ce5f8fb9920c0d7437544bc9d0190c1a556af5cc6a9020cc2ac5d33c8",
+    "feature_bank_sha256": "d030ce2e7c3977f9cb75f37d3b9d529d226a8cd8866ec2bb744f7418b168584f"
+  },
+  "development_oof": {
+    "sequence_only": {
+      "rows": 108408,
+      "mae": 0.5313113203,
+      "rmse": 0.7215187306,
+      "pearson": 0.7302727110,
+      "spearman": 0.6982603296,
+      "stabilizer_average_precision": 0.2034834548,
+      "protein_bootstrap_mae_95_ci": [
+        0.5115515590,
+        0.5511755303
+      ]
+    },
+    "warm_started_full_structure": {
+      "rows": 108408,
+      "mae": 0.5308138039,
+      "rmse": 0.7213849133,
+      "pearson": 0.7306952615,
+      "spearman": 0.6993692732,
+      "stabilizer_average_precision": 0.2040965197,
+      "protein_bootstrap_mae_95_ci": [
+        0.5105252624,
+        0.5509786606
+      ]
+    },
+    "structure_promotion_gate": {
+      "required_mae_improvement": 0.02,
+      "mae_improvement": 0.0004975164,
+      "spearman_not_lower": true,
+      "average_precision_not_lower": true,
+      "passed": false,
+      "selected_state_model": "sequence_only"
+    },
+    "double_mutants": {
+      "rows": 91335,
+      "additive_mae": 0.8671045383,
+      "additive_spearman": 0.5453995750,
+      "learned_total_mae": 0.9876826726,
+      "learned_total_spearman": 0.4933775578,
+      "epistasis_promotion_passed": false,
+      "selected_decoder": "additive"
+    }
+  },
+  "training": {
+    "runtime_seconds": 126.0187240870,
+    "final_sequence_epochs": 70,
+    "final_sequence_train_objective": 0.1059431065,
+    "structure_fold_epochs": [
+      22,
+      22,
+      22,
+      22,
+      22
+    ],
+    "mutation_row_batch_size_for_epistasis": 4096,
+    "protein_batch_size_for_state_model": 8
+  },
+  "sealed_outer_evaluation": {
+    "consumed_once": true,
+    "selection_uses_outer": false,
+    "single": {
+      "rows": 27925,
+      "proteins": 25,
+      "mae": 0.5982426691,
+      "rmse": 0.7950042304,
+      "pearson": 0.7332446434,
+      "spearman": 0.7258031731,
+      "direction_accuracy": 0.8024350940,
+      "stabilizer_average_precision": 0.2375959308,
+      "protein_bootstrap_mae_95_ci": [
+        0.5586134657,
+        0.6446641237
+      ]
+    },
+    "double_selected_additive": {
+      "rows": 22774,
+      "proteins": 16,
+      "mae": 1.0938956074,
+      "rmse": 1.4477827686,
+      "pearson": 0.5323704416,
+      "spearman": 0.5844825935
+    },
+    "double_learned_epistasis_diagnostic": {
+      "mae": 0.9649439300,
+      "rmse": 1.2327052726,
+      "pearson": 0.5137677291,
+      "spearman": 0.5636984818,
+      "not_promoted_reason": "Development OOF degraded both MAE and rank; outer results cannot change selection"
+    },
+    "algebra": {
+      "maximum_absolute_self_ddg": 0.0,
+      "maximum_absolute_reverse_sum": 0.0,
+      "maximum_absolute_three_state_cycle": 4.76837158203125e-07
+    }
+  },
+  "artifacts": {
+    "checkpoint_sha256": "33afa3bad16e8f409bcc80d1dd8c0af8e6d6b2571bba5f0806892c41f25fcc52",
+    "training_report_sha256": "60a7117387104755cc5df1a7662b8d6ad1d62cc267a9a90718362a8f5b296285",
+    "outer_report_sha256": "bc3d8c086c6edb030716ebadfe06a0cc9a368001a6e2df9e99f2a40a8ba5915b",
+    "outer_single_predictions_sha256": "438f3d3cbb5164e2d584299ff88a681439729e2d273119ee1fd0380b3c539536",
+    "outer_single_scatter_sha256": "45adfd548a422f170658d1348fe07c9c70e90725bd1acbc31daa255d5eb86157",
+    "generated_artifacts_are_git_ignored": true
+  },
+  "decision": {
+    "full_structure_implemented_and_tested": true,
+    "scale_same_logic_to_6b": false,
+    "reason": "The full structure path improved OOF MAE by only 0.00050 kcal/mol, below the predeclared 0.02 gate. The clean outer single-mutant MAE is 0.598, so a sub-0.30 or SOTA claim is not supported.",
+    "operational_note": "This run supplies the first newly sealed family-held-out estimate. It does not replace the historical 6B screen solely on accuracy, and it does not establish accuracy on long membrane proteins or GPCRs."
+  }
+}
