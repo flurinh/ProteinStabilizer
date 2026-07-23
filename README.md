@@ -341,10 +341,15 @@ fusion:
   --generic-numbering 72=2.50x50,73=2.51x51
 ```
 
-Add `--pdb receptor.pdb` to enable the learned ProteinMPNN context. The PDB
+Add `--pdb receptor.pdb` to enable the learned ProteinMPNN context from a local
+structure. For a canonical UniProt entry, `--uniprot Q9UHM6` instead resolves
+the current PDB URL through the AlphaFold DB API and caches the structure plus
+source hashes under `artifacts/structures/alphafold/`. In both cases, the PDB
 must contain exactly one chain matching the FASTA sequence; otherwise the
-command fails instead of silently misaligning residues. Without a PDB,
-structure is explicitly missing-masked.
+command fails instead of silently misaligning residues. AlphaFold residues
+below `--alphafold-min-plddt 70` are removed from the ProteinMPNN neighborhood
+graph and marked structure-missing at those mutation sites. Without either
+structure source, structure is explicitly missing-masked.
 
 For the highest-accuracy prediction, run the strict-FP32 6B fusion in the
 separate environment. The defaults load the validation-selected state
@@ -363,6 +368,7 @@ The strict 6B path also supports a site-bounded scan:
 ```bash
 .venv-esmc6b/bin/protein-stabilizer screen-v2-6b \
   --fasta target_gpcr.fasta \
+  --uniprot Q9UHM6 \
   --positions 72,73,100-110 \
   --topology alpha_helical_gpcr \
   --output artifacts/target_gpcr_v2_6b.csv
@@ -409,6 +415,10 @@ adjacent `*.shortlist.csv` contains only exact-reranked suggestions. The
 provenance-checked application embedding cache under `embeddings/application/`
 is reused on identical reruns. The JSON summary reports computed embeddings,
 cache hits, avoided mutant embeddings, and the applied protected positions.
+The WT backbone is likewise encoded by ProteinMPNN once per command and reused
+for all substitutions. MegaScale training already follows the same scalable
+pattern: one ProteinMPNN encoding per source protein is cached and indexed by
+mutation site, rather than recomputing a structure representation per row.
 A pinned, directly runnable human melanopsin example is under
 [`examples/human_melanopsin/`](examples/human_melanopsin/README.md).
 

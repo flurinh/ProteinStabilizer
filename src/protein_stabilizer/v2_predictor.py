@@ -197,6 +197,8 @@ def _annotation_rows(
     generic_numbering: Mapping[int, str] | None,
     pdb_path: Path | None,
     proteinmpnn_repository: Path | None,
+    structure_residue_mask: np.ndarray | None,
+    structure_source_provenance: Mapping[str, object] | None,
     device: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, object] | None]:
     membrane = np.stack(
@@ -226,14 +228,47 @@ def _annotation_rows(
             proteinmpnn_repository,
             device=device,
         )
-        residue = structure_embedder.encode(Path(pdb_path), sequence)
+        active_residue_mask = (
+            np.ones(len(sequence), dtype=bool)
+            if structure_residue_mask is None
+            else np.asarray(structure_residue_mask, dtype=bool)
+        )
+        if active_residue_mask.shape != (len(sequence),):
+            raise ValueError(
+                "structure residue mask must have one value per sequence "
+                "residue"
+            )
+        residue = structure_embedder.encode(
+            Path(pdb_path),
+            sequence,
+            residue_mask=active_residue_mask,
+        )
         structure = np.stack(
             [residue[mutation.position - 1] for mutation in mutations]
         ).astype(np.float32)
-        structure_mask[:] = True
+        structure_mask = np.asarray(
+            [
+                active_residue_mask[mutation.position - 1]
+                for mutation in mutations
+            ],
+            dtype=bool,
+        )
+        structure[~structure_mask] = 0.0
         provenance = {
             "pdb_path": str(Path(pdb_path).resolve()),
             "pdb_sha256": file_sha256(Path(pdb_path)),
+            "source": (
+                None
+                if structure_source_provenance is None
+                else dict(structure_source_provenance)
+            ),
+            "runtime_residue_policy": (
+                "source-confidence-masked ProteinMPNN encoder graph"
+                if structure_residue_mask is not None
+                else "all exact-chain residues used in ProteinMPNN encoder graph"
+            ),
+            "usable_residue_count": int(active_residue_mask.sum()),
+            "masked_residue_count": int((~active_residue_mask).sum()),
             "proteinmpnn": json.loads(
                 structure_embedder.provenance.canonical_json()
             ),
@@ -353,6 +388,8 @@ def predict_hierarchical_mutations(
     generic_numbering: Mapping[int, str] | None = None,
     pdb_path: Path | None = None,
     proteinmpnn_repository: Path | None = None,
+    structure_residue_mask: np.ndarray | None = None,
+    structure_source_provenance: Mapping[str, object] | None = None,
     max_tokens: int = 8192,
     max_batch_size: int = 128,
     embedder: ESMCEmbedder | None = None,
@@ -410,6 +447,8 @@ def predict_hierarchical_mutations(
             generic_numbering=generic_numbering,
             pdb_path=pdb_path,
             proteinmpnn_repository=proteinmpnn_repository,
+            structure_residue_mask=structure_residue_mask,
+            structure_source_provenance=structure_source_provenance,
             device=device,
         )
     )
@@ -661,6 +700,8 @@ def screen_hierarchical_single_mutants(
     generic_numbering: Mapping[int, str] | None = None,
     pdb_path: Path | None = None,
     proteinmpnn_repository: Path | None = None,
+    structure_residue_mask: np.ndarray | None = None,
+    structure_source_provenance: Mapping[str, object] | None = None,
     legacy_checkpoint_dir: Path | None = None,
     max_tokens: int = 8192,
     max_batch_size: int = 128,
@@ -773,6 +814,8 @@ def screen_hierarchical_single_mutants(
             generic_numbering=generic_numbering,
             pdb_path=pdb_path,
             proteinmpnn_repository=proteinmpnn_repository,
+            structure_residue_mask=structure_residue_mask,
+            structure_source_provenance=structure_source_provenance,
             device=device,
         )
     )
@@ -1368,6 +1411,8 @@ def screen_hierarchical_double_mutants(
     generic_numbering: Mapping[int, str] | None = None,
     pdb_path: Path | None = None,
     proteinmpnn_repository: Path | None = None,
+    structure_residue_mask: np.ndarray | None = None,
+    structure_source_provenance: Mapping[str, object] | None = None,
     max_tokens: int = 8192,
     max_batch_size: int = 128,
     top: int = 20,
@@ -1525,6 +1570,8 @@ def screen_hierarchical_double_mutants(
             generic_numbering=generic_numbering,
             pdb_path=pdb_path,
             proteinmpnn_repository=proteinmpnn_repository,
+            structure_residue_mask=structure_residue_mask,
+            structure_source_provenance=structure_source_provenance,
             device=device,
         )
     )

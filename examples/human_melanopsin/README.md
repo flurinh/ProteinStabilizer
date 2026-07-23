@@ -3,6 +3,11 @@
 This example uses reviewed human melanopsin (`Q9UHM6`, `OPN4_HUMAN`) from
 UniProtKB release `2026_02`. The canonical sequence has 478 residues. Exact
 source metadata and sequence hashes are pinned in `provenance.json`.
+The run scripts resolve the current AlphaFold DB PDB through its API, require
+an exact match to this sequence, and cache the PDB plus source hashes under
+`artifacts/structures/alphafold/Q9UHM6/`. Residues below pLDDT 70 are excluded
+from the ProteinMPNN neighborhood graph and treated as structure-missing. Set
+`ALPHAFOLD_MIN_PLDDT` to change that threshold explicitly.
 
 The supplied protected mask limits suggestions to the annotated seven-helix
 core and excludes the annotated disulfide bond and retinal-linked lysine, plus
@@ -49,7 +54,8 @@ PAIR_RERANK_TOP=2 TOP=2 bash examples/human_melanopsin/run_pairs.sh 6b
 The default mask leaves 270 mutable positions and 5,130 single-substitution
 candidates. Two-stage screening embeds the WT once, then embeds at most 128
 mutant sequences instead of all 5,130. Identical reruns reuse the application
-embedding cache.
+embedding cache. ProteinMPNN also encodes the WT backbone only once per
+command; no mutant structures are predicted.
 
 Default outputs are written below
 `artifacts/examples/human_melanopsin/`. The full `*_screen.csv` includes every

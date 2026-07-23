@@ -41,6 +41,8 @@ fi
 cd "$ROOT"
 "$EXECUTABLE" "$COMMAND" \
   --fasta "$FASTA" \
+  --uniprot Q9UHM6 \
+  --alphafold-min-plddt "${ALPHAFOLD_MIN_PLDDT:-70}" \
   --protected-mask "$MASK" \
   --scan-mode two-stage \
   --rerank-top "${RERANK_TOP:-128}" \

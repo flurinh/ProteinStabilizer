@@ -997,6 +997,11 @@ def test_human_melanopsin_example_is_pinned_and_runnable() -> None:
     assert sequence[345:350] == "NPIIY"
     assert all(position in protected for position in (143, 167, 340, 350, 478))
     assert (example / "run_screen.sh").stat().st_mode & 0o100
+    run_screen = (example / "run_screen.sh").read_text(encoding="utf-8")
+    run_pairs = (example / "run_pairs.sh").read_text(encoding="utf-8")
+    assert "--uniprot Q9UHM6" in run_screen
+    assert "--uniprot Q9UHM6" in run_pairs
+    assert "--alphafold-min-plddt" in run_screen
 
 
 def test_v2_application_cli_contract() -> None:

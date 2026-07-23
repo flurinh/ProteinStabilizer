@@ -7,6 +7,9 @@ import json
 from pathlib import Path
 from typing import Sequence
 
+import numpy as np
+
+from .alphafold import fetch_alphafold_structure
 from .data import DatasetPaths, all_embedding_requests, single_embedding_requests
 from .embeddings import (
     ESMCEmbedder,
@@ -110,6 +113,7 @@ DEFAULT_APPLICATION_600M_CACHE = (
 DEFAULT_APPLICATION_6B_CACHE = (
     ROOT / "embeddings/application/esmc_6b_targets_fp32.h5"
 )
+DEFAULT_ALPHAFOLD_CACHE = ROOT / "artifacts/structures/alphafold"
 
 
 def _json(value: object) -> None:
@@ -125,6 +129,25 @@ def _read_fasta(path: Path) -> str:
     if not lines:
         raise ValueError(f"no sequence found in {path}")
     return "".join(lines)
+
+
+def _resolve_structure(
+    args: argparse.Namespace,
+    sequence: str,
+) -> tuple[Path | None, np.ndarray | None, dict[str, object] | None]:
+    if args.uniprot is None:
+        return args.pdb, None, None
+    structure = fetch_alphafold_structure(
+        args.uniprot,
+        sequence,
+        args.alphafold_cache,
+        min_plddt=args.alphafold_min_plddt,
+    )
+    return (
+        structure.pdb_path,
+        structure.residue_mask,
+        structure.provenance,
+    )
 
 
 def _require_data(root: Path) -> None:
@@ -537,6 +560,9 @@ def command_predict_v2(args: argparse.Namespace) -> dict[str, object]:
     mutations = [
         value.strip() for value in args.mutations.split(",") if value.strip()
     ]
+    pdb_path, structure_residue_mask, structure_provenance = (
+        _resolve_structure(args, sequence)
+    )
     embedder = ESMCEmbedder(
         model_name=args.model,
         device=args.device,
@@ -550,8 +576,10 @@ def command_predict_v2(args: argparse.Namespace) -> dict[str, object]:
         device=args.device,
         topology=args.topology,
         generic_numbering=_parse_generic_numbering(args.generic_numbering),
-        pdb_path=args.pdb,
+        pdb_path=pdb_path,
         proteinmpnn_repository=args.proteinmpnn_repository,
+        structure_residue_mask=structure_residue_mask,
+        structure_source_provenance=structure_provenance,
         max_tokens=args.max_tokens,
         max_batch_size=args.max_batch_size,
         embedder=embedder,
@@ -566,6 +594,9 @@ def command_predict_v2_6b(args: argparse.Namespace) -> dict[str, object]:
     mutations = [
         value.strip() for value in args.mutations.split(",") if value.strip()
     ]
+    pdb_path, structure_residue_mask, structure_provenance = (
+        _resolve_structure(args, sequence)
+    )
     embedder = ESMC6BEmbedder(
         args.model,
         args.device,
@@ -580,8 +611,10 @@ def command_predict_v2_6b(args: argparse.Namespace) -> dict[str, object]:
         device=args.device,
         topology=args.topology,
         generic_numbering=_parse_generic_numbering(args.generic_numbering),
-        pdb_path=args.pdb,
+        pdb_path=pdb_path,
         proteinmpnn_repository=args.proteinmpnn_repository,
+        structure_residue_mask=structure_residue_mask,
+        structure_source_provenance=structure_provenance,
         max_tokens=args.max_tokens,
         max_batch_size=args.max_batch_size,
         embedder=embedder,
@@ -677,6 +710,9 @@ def command_screen_v2(args: argparse.Namespace) -> dict[str, object]:
         args.protected_positions,
         args.protected_mask,
     )
+    pdb_path, structure_residue_mask, structure_provenance = (
+        _resolve_structure(args, sequence)
+    )
     embedder = ESMCEmbedder(
         model_name=args.model,
         device=args.device,
@@ -691,8 +727,10 @@ def command_screen_v2(args: argparse.Namespace) -> dict[str, object]:
         device=args.device,
         topology=args.topology,
         generic_numbering=_parse_generic_numbering(args.generic_numbering),
-        pdb_path=args.pdb,
+        pdb_path=pdb_path,
         proteinmpnn_repository=args.proteinmpnn_repository,
+        structure_residue_mask=structure_residue_mask,
+        structure_source_provenance=structure_provenance,
         legacy_checkpoint_dir=(
             args.legacy_checkpoints if args.scan_mode == "exact" else None
         ),
@@ -719,6 +757,9 @@ def command_screen_v2_6b(args: argparse.Namespace) -> dict[str, object]:
         args.protected_positions,
         args.protected_mask,
     )
+    pdb_path, structure_residue_mask, structure_provenance = (
+        _resolve_structure(args, sequence)
+    )
     embedder = ESMC6BEmbedder(
         args.model,
         args.device,
@@ -734,8 +775,10 @@ def command_screen_v2_6b(args: argparse.Namespace) -> dict[str, object]:
         device=args.device,
         topology=args.topology,
         generic_numbering=_parse_generic_numbering(args.generic_numbering),
-        pdb_path=args.pdb,
+        pdb_path=pdb_path,
         proteinmpnn_repository=args.proteinmpnn_repository,
+        structure_residue_mask=structure_residue_mask,
+        structure_source_provenance=structure_provenance,
         legacy_checkpoint_dir=None,
         max_tokens=args.max_tokens,
         max_batch_size=args.max_batch_size,
@@ -755,13 +798,19 @@ def _command_screen_v2_pairs(
     args: argparse.Namespace,
     *,
     embedder: ESMCEmbedder,
+    sequence: str,
+    structure: tuple[
+        Path | None,
+        np.ndarray | None,
+        dict[str, object] | None,
+    ],
 ) -> dict[str, object]:
-    sequence = args.sequence if args.sequence is not None else _read_fasta(args.fasta)
     protected = _protected_mask(
         sequence,
         args.protected_positions,
         args.protected_mask,
     )
+    pdb_path, structure_residue_mask, structure_provenance = structure
     return screen_hierarchical_double_mutants(
         sequence,
         args.single_screen,
@@ -771,8 +820,10 @@ def _command_screen_v2_pairs(
         device=args.device,
         topology=args.topology,
         generic_numbering=_parse_generic_numbering(args.generic_numbering),
-        pdb_path=args.pdb,
+        pdb_path=pdb_path,
         proteinmpnn_repository=args.proteinmpnn_repository,
+        structure_residue_mask=structure_residue_mask,
+        structure_source_provenance=structure_provenance,
         max_tokens=args.max_tokens,
         max_batch_size=args.max_batch_size,
         top=args.top,
@@ -793,8 +844,12 @@ def _command_screen_v2_pairs(
 def command_screen_v2_pairs(args: argparse.Namespace) -> dict[str, object]:
     """Design bounded double mutants with the promoted ESM-C 600M heads."""
 
+    sequence = args.sequence if args.sequence is not None else _read_fasta(args.fasta)
+    structure = _resolve_structure(args, sequence)
     return _command_screen_v2_pairs(
         args,
+        sequence=sequence,
+        structure=structure,
         embedder=ESMCEmbedder(
             model_name=args.model,
             device=args.device,
@@ -806,8 +861,12 @@ def command_screen_v2_pairs(args: argparse.Namespace) -> dict[str, object]:
 def command_screen_v2_pairs_6b(args: argparse.Namespace) -> dict[str, object]:
     """Design bounded double mutants with native-FP32 ESM-C 6B."""
 
+    sequence = args.sequence if args.sequence is not None else _read_fasta(args.fasta)
+    structure = _resolve_structure(args, sequence)
     return _command_screen_v2_pairs(
         args,
+        sequence=sequence,
+        structure=structure,
         embedder=ESMC6BEmbedder(
             args.model,
             args.device,
@@ -879,6 +938,42 @@ def _common_pipeline_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--single-epochs", type=int, default=30)
     parser.add_argument("--ensemble-size", type=int, default=5)
     parser.add_argument("--multi-epochs", type=int, default=25)
+
+
+def _add_structure_arguments(parser: argparse.ArgumentParser) -> None:
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument(
+        "--pdb",
+        type=Path,
+        help="local PDB containing one exact target-sequence chain",
+    )
+    source.add_argument(
+        "--uniprot",
+        help=(
+            "UniProt accession whose current exact-sequence AlphaFold DB PDB "
+            "will be retrieved"
+        ),
+    )
+    parser.add_argument(
+        "--alphafold-cache",
+        type=Path,
+        default=DEFAULT_ALPHAFOLD_CACHE,
+        help="validated AlphaFold DB structure and provenance cache",
+    )
+    parser.add_argument(
+        "--alphafold-min-plddt",
+        type=float,
+        default=70.0,
+        help=(
+            "exclude lower-confidence residues from the ProteinMPNN graph "
+            "and mark their mutation sites structure-missing"
+        ),
+    )
+    parser.add_argument(
+        "--proteinmpnn-repository",
+        type=Path,
+        default=DEFAULT_PROTEINMPNN_REPOSITORY,
+    )
 
 
 def _pair_screen_arguments(
@@ -977,12 +1072,7 @@ def _pair_screen_arguments(
         "--generic-numbering",
         help="comma-separated position=generic-number entries",
     )
-    parser.add_argument("--pdb", type=Path)
-    parser.add_argument(
-        "--proteinmpnn-repository",
-        type=Path,
-        default=DEFAULT_PROTEINMPNN_REPOSITORY,
-    )
+    _add_structure_arguments(parser)
     parser.add_argument("--max-tokens", type=int, default=max_tokens)
     parser.add_argument("--max-batch-size", type=int, default=max_batch_size)
     parser.add_argument(
@@ -1438,12 +1528,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--generic-numbering",
         help="comma-separated position=generic-number entries",
     )
-    predict_v2.add_argument("--pdb", type=Path)
-    predict_v2.add_argument(
-        "--proteinmpnn-repository",
-        type=Path,
-        default=DEFAULT_PROTEINMPNN_REPOSITORY,
-    )
+    _add_structure_arguments(predict_v2)
     predict_v2.add_argument("--max-tokens", type=int, default=8192)
     predict_v2.add_argument("--max-batch-size", type=int, default=128)
     predict_v2_6b = subparsers.add_parser("predict-v2-6b")
@@ -1477,12 +1562,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--generic-numbering",
         help="comma-separated position=generic-number entries",
     )
-    predict_v2_6b.add_argument("--pdb", type=Path)
-    predict_v2_6b.add_argument(
-        "--proteinmpnn-repository",
-        type=Path,
-        default=DEFAULT_PROTEINMPNN_REPOSITORY,
-    )
+    _add_structure_arguments(predict_v2_6b)
     predict_v2_6b.add_argument("--max-tokens", type=int, default=4096)
     predict_v2_6b.add_argument("--max-batch-size", type=int, default=2)
     screen = subparsers.add_parser("screen")
@@ -1561,12 +1641,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--generic-numbering",
         help="comma-separated position=generic-number entries",
     )
-    screen_v2.add_argument("--pdb", type=Path)
-    screen_v2.add_argument(
-        "--proteinmpnn-repository",
-        type=Path,
-        default=DEFAULT_PROTEINMPNN_REPOSITORY,
-    )
+    _add_structure_arguments(screen_v2)
     screen_v2.add_argument("--max-tokens", type=int, default=8192)
     screen_v2.add_argument("--max-batch-size", type=int, default=128)
     screen_v2.add_argument(
@@ -1645,12 +1720,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--generic-numbering",
         help="comma-separated position=generic-number entries",
     )
-    screen_v2_6b.add_argument("--pdb", type=Path)
-    screen_v2_6b.add_argument(
-        "--proteinmpnn-repository",
-        type=Path,
-        default=DEFAULT_PROTEINMPNN_REPOSITORY,
-    )
+    _add_structure_arguments(screen_v2_6b)
     screen_v2_6b.add_argument("--max-tokens", type=int, default=4096)
     screen_v2_6b.add_argument("--max-batch-size", type=int, default=2)
     screen_v2_6b.add_argument(

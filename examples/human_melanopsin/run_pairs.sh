@@ -47,6 +47,8 @@ fi
 cd "$ROOT"
 "$EXECUTABLE" "$COMMAND" \
   --fasta "$FASTA" \
+  --uniprot Q9UHM6 \
+  --alphafold-min-plddt "${ALPHAFOLD_MIN_PLDDT:-70}" \
   --single-screen "$SINGLE_SCREEN" \
   --protected-mask "$MASK" \
   --single-limit "${SINGLE_LIMIT:-20}" \

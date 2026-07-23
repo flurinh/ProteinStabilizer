@@ -176,8 +176,18 @@ class ProteinMPNNBackboneEmbedder:
             storage_dtype=storage_dtype,
         )
 
-    def encode(self, pdb_path: Path, target_sequence: str) -> np.ndarray:
-        """Return one structure-only vector for every target-sequence residue."""
+    def encode(
+        self,
+        pdb_path: Path,
+        target_sequence: str,
+        *,
+        residue_mask: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Return one structure-only vector for every target-sequence residue.
+
+        ``residue_mask`` removes unreliable target residues from the
+        ProteinMPNN encoder graph and zeros their returned vectors.
+        """
 
         records = self.module.parse_PDB(str(pdb_path), ca_only=False)
         if len(records) != 1:
@@ -229,6 +239,25 @@ class ProteinMPNNBackboneEmbedder:
             _,
             _,
         ) = values
+        length = len(target_sequence)
+        if not torch.all(mask[0, :length] > 0):
+            missing = torch.nonzero(mask[0, :length] <= 0).flatten().tolist()
+            raise ValueError(
+                f"{pdb_path.name} has missing target coordinates at {missing}"
+            )
+        active_mask: np.ndarray | None = None
+        if residue_mask is not None:
+            active_mask = np.asarray(residue_mask, dtype=bool)
+            if active_mask.shape != (length,):
+                raise ValueError(
+                    "ProteinMPNN residue mask must have one value per "
+                    "target-sequence residue"
+                )
+            mask = mask.clone()
+            mask[0, :length] *= torch.from_numpy(active_mask).to(
+                device=mask.device,
+                dtype=mask.dtype,
+            )
         with torch.inference_mode():
             edges, edge_index = self.model.features(
                 coordinates, mask, residue_index, chain_encoding
@@ -246,11 +275,10 @@ class ProteinMPNNBackboneEmbedder:
                 residue, edge = layer(
                     residue, edge, edge_index, mask, attend
                 )
-        length = len(target_sequence)
-        if not torch.all(mask[0, :length] > 0):
-            missing = torch.nonzero(mask[0, :length] <= 0).flatten().tolist()
-            raise ValueError(f"{pdb_path.name} has missing target coordinates at {missing}")
-        return residue[0, :length].float().cpu().numpy()
+        result = residue[0, :length].float().cpu().numpy()
+        if active_mask is not None:
+            result[~active_mask] = 0.0
+        return result
 
     def encode_aligned(
         self,
