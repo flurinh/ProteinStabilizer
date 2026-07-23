@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -25,6 +26,7 @@ from protein_stabilizer.data import (
 from protein_stabilizer.cli import (
     _parse_generic_numbering,
     _parse_positions,
+    _protected_mask,
     build_parser,
 )
 from protein_stabilizer.embeddings import (
@@ -621,7 +623,12 @@ def test_hierarchical_training_records_steps_and_examples() -> None:
         weight_decay=1e-4,
         ensemble_size=1,
         device=torch.device("cpu"),
-        objective=HierarchicalObjectiveConfig(ranking_pairs_per_batch=4),
+        objective=HierarchicalObjectiveConfig(
+            ranking_pairs_per_batch=4,
+            huber_delta=2.0,
+            mse_weight=0.1,
+            retrieval_source="ddg",
+        ),
     )
     assert metrics["ensemble_size"] == 1
     assert metrics["directional_constraints"][
@@ -629,6 +636,7 @@ def test_hierarchical_training_records_steps_and_examples() -> None:
     ] < 1e-6
     assert members[0]["optimizer_steps"] >= 2
     assert members[0]["examples_seen"] >= 16
+    assert members[0]["history"][0]["train_loss"]["mse"] >= 0.0
 
 
 def test_tail_balancing_and_retrieval_metrics_prioritize_stabilizers() -> None:
@@ -933,6 +941,63 @@ def test_position_expression_parser() -> None:
         _parse_positions("5-2")
 
 
+def test_protected_mask_combines_inline_and_reasoned_file(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "protected.txt"
+    path.write_text(
+        "# one-based hard exclusions\n"
+        "2-3\tDRY motif\n"
+        "5 ligand contact # inline comment\n",
+        encoding="utf-8",
+    )
+    mask = _protected_mask("ACDEFG", "1,3", path)
+    assert mask == {
+        1: "command-line protected mask",
+        2: "DRY motif",
+        3: "command-line protected mask; DRY motif",
+        5: "ligand contact",
+    }
+    with pytest.raises(ValueError, match="outside"):
+        _protected_mask("ACDEFG", "7", None)
+
+
+def test_human_melanopsin_example_is_pinned_and_runnable() -> None:
+    example = Path(__file__).resolve().parents[1] / "examples/human_melanopsin"
+    fasta_path = example / "Q9UHM6.fasta"
+    fasta_bytes = fasta_path.read_bytes()
+    sequence = "".join(
+        line.strip()
+        for line in fasta_bytes.decode("ascii").splitlines()
+        if line and not line.startswith(">")
+    )
+    provenance = json.loads(
+        (example / "provenance.json").read_text(encoding="utf-8")
+    )
+    assert provenance["accession"] == "Q9UHM6"
+    assert provenance["uniprot_id"] == "OPN4_HUMAN"
+    assert len(sequence) == provenance["sequence_length"] == 478
+    assert hashlib.sha256(fasta_bytes).hexdigest() == provenance["fasta_sha256"]
+    assert (
+        hashlib.sha256(sequence.encode("ascii")).hexdigest()
+        == provenance["sequence_sha256"]
+    )
+
+    protected = _protected_mask(
+        sequence,
+        None,
+        example / "protected_positions.txt",
+    )
+    assert len(protected) == 208
+    assert len(sequence) - len(protected) == 270
+    assert sequence[142] == "C" and sequence[220] == "C"
+    assert sequence[166:169] == "DRY"
+    assert sequence[339] == "K"
+    assert sequence[345:350] == "NPIIY"
+    assert all(position in protected for position in (143, 167, 340, 350, 478))
+    assert (example / "run_screen.sh").stat().st_mode & 0o100
+
+
 def test_v2_application_cli_contract() -> None:
     args = build_parser().parse_args(
         [
@@ -1038,6 +1103,14 @@ def test_v2_application_predicts_unordered_sets_and_screens(
     )
 
     class FakeEmbedder:
+        provenance = ESMCProvenance(
+            model_name="fake-application",
+            embedding_dimension=8,
+            package_version="test",
+            checkpoint_path="/fake/application",
+            checkpoint_sha256="a" * 64,
+        )
+
         def encode_hierarchy(
             self,
             requests: list[EmbeddingRequest],
@@ -1162,6 +1235,61 @@ def test_v2_application_predicts_unordered_sets_and_screens(
     assert "state_potential_ddg" in state_screen["top"][0]
     assert "hierarchy_ddg" not in state_screen["top"][0]
 
+    application_cache = tmp_path / "application_embeddings.h5"
+    two_stage = screen_hierarchical_single_mutants(
+        "ACDE",
+        checkpoint_dir,
+        tmp_path / "two_stage.csv",
+        positions=[1, 2, 3],
+        protected_positions=[2],
+        protected_reasons={2: "ligand contact"},
+        device="cpu",
+        top=2,
+        rerank_top=2,
+        max_per_site=1,
+        embedder=FakeEmbedder(),
+        state_potential_checkpoint=state_path,
+        scan_mode="two-stage",
+        embedding_cache=application_cache,
+    )
+    assert two_stage["rows"] == 38
+    assert two_stage["positions"] == 2
+    assert two_stage["protected_mask"]["position_ranges"] == ["2"]
+    assert two_stage["protected_mask"]["reasons"] == [
+        {"reason": "ligand contact", "position_ranges": ["2"]}
+    ]
+    assert two_stage["embedding_cost"]["sequence_embedding_requests"] == 3
+    assert two_stage["embedding_cost"]["sequence_embeddings_computed"] == 3
+    assert two_stage["embedding_cost"]["mutant_embeddings_avoided"] == 36
+    assert len({row["position"] for row in two_stage["top"]}) == 2
+    assert all(row["score_stage"] == "exact-reranked" for row in two_stage["top"])
+    for row in two_stage["top"]:
+        assert row["ddg"] == pytest.approx(
+            0.45 * row["hierarchy_ddg"]
+            + 0.55 * row["state_potential_ddg"],
+            abs=1e-6,
+        )
+    assert (tmp_path / "two_stage.shortlist.csv").is_file()
+    assert 2 not in set(pd.read_csv(tmp_path / "two_stage.csv")["position"])
+
+    cached_two_stage = screen_hierarchical_single_mutants(
+        "ACDE",
+        checkpoint_dir,
+        tmp_path / "two_stage_cached.csv",
+        positions=[1, 2, 3],
+        protected_positions=[2],
+        device="cpu",
+        top=2,
+        rerank_top=2,
+        max_per_site=1,
+        embedder=FakeEmbedder(),
+        state_potential_checkpoint=state_path,
+        scan_mode="two-stage",
+        embedding_cache=application_cache,
+    )
+    assert cached_two_stage["embedding_cost"]["sequence_embeddings_computed"] == 0
+    assert cached_two_stage["embedding_cost"]["cache_hits"] == 3
+
     legacy_dir = tmp_path / "legacy"
     legacy_dir.mkdir()
     legacy = SingleMutationHead(
@@ -1237,9 +1365,27 @@ def test_esmc6b_v2_cache_defaults_to_native_fp32() -> None:
     assert screen_args.checkpoints.name == "esmc_6b_v2"
     assert screen_args.output.name == "screen_v2_6b.csv"
     assert screen_args.scan_mode == "exact"
+    assert screen_args.rerank_top == 128
+    assert screen_args.embedding_cache.name == "esmc_6b_targets_fp32.h5"
     assert screen_args.state_potential_checkpoint.parent.name == (
         "esmc_6b_state_potential_fp32"
     )
+    staged_args = build_parser().parse_args(
+        [
+            "screen-v2-6b",
+            "--sequence",
+            "ACDE",
+            "--scan-mode",
+            "two-stage",
+            "--protected-positions",
+            "2-3",
+            "--max-per-site",
+            "2",
+        ]
+    )
+    assert staged_args.scan_mode == "two-stage"
+    assert staged_args.protected_positions == "2-3"
+    assert staged_args.max_per_site == 2
     structure_args = build_parser().parse_args(["structure-v2"])
     assert structure_args.storage_dtype == "float32"
     potential_args = build_parser().parse_args(["train-state-potential"])
@@ -1321,6 +1467,44 @@ def test_state_potential_scores_all_amino_acids_with_exact_algebra() -> None:
     torch.testing.assert_close(
         cycle,
         torch.zeros_like(cycle),
+        atol=1e-6,
+        rtol=0,
+    )
+
+
+def test_absolute_state_head_is_consistent_with_signed_ddg() -> None:
+    model = StatePotentialMutationHead(
+        StatePotentialConfig(
+            embedding_dim=6,
+            window_size=3,
+            structure_dim=4,
+            membrane_dim=2,
+            state_dim=8,
+            amino_acid_dim=5,
+            hidden_dim=12,
+            latent_dim=7,
+            absolute_stability_head=True,
+        )
+    ).eval()
+    generator = torch.Generator().manual_seed(11)
+    inputs = {
+        "wt_window": torch.randn(4, 3, 6, generator=generator),
+        "window_mask": torch.ones(4, 3, dtype=torch.bool),
+        "wt_global": torch.randn(4, 6, generator=generator),
+        "wt_amino_acid": torch.tensor([0, 1, 2, 3], dtype=torch.long),
+        "mutant_amino_acid": torch.tensor([4, 5, 6, 7], dtype=torch.long),
+        "structure": torch.randn(4, 4, generator=generator),
+        "structure_mask": torch.ones(4, dtype=torch.bool),
+        "membrane": torch.randn(4, 2, generator=generator),
+    }
+    with torch.inference_mode():
+        outputs = model.predict_thermodynamic_state(**inputs)
+        direct = model(**inputs)
+    torch.testing.assert_close(outputs["ddg"], direct)
+    torch.testing.assert_close(
+        outputs["mutant_absolute_stability"]
+        - outputs["wt_absolute_stability"],
+        -outputs["ddg"],
         atol=1e-6,
         rtol=0,
     )

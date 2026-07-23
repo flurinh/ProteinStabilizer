@@ -55,10 +55,12 @@ retrieval; endpoints with different units are never pooled.
 Architecture discovery was bounded to the sequence hierarchy versus the same
 hierarchy with learned ProteinMPNN fusion. The selected fusion model was then
 trained as a five-member ensemble with batch size 256, a 50-epoch floor, and
-protein-held-out validation. Its frozen 19,645-row generic test reaches
+protein-held-out validation. Its historical 19,645-row generic test reaches
 Spearman `0.818`, MAE `0.513` kcal/mol, stabilizer average precision `0.386`,
 and 33 stabilizers in the top 50. It passed every prespecified promotion gate
-against the retained 600M baseline.
+against the retained 600M baseline at the time. Because that test was then
+reused for later decisions, it is now a historical continuity set rather than
+an untouched estimate.
 
 For double mutants, the v2 head sums the two frozen constituent ddG predictions
 and learns a DeepSets-style epistasis correction from constituent and complete
@@ -181,12 +183,12 @@ export HF_HOME=/data/fast/cache/huggingface
 `requirements-esmc6b-lock.txt` records the 6B training environment. The looser
 `pyproject.toml` bounds are for development.
 
-ESM-C 6B uses `transformers==4.57.6`, which conflicts with the validated 600M
-environment. Install it separately:
+ESM-C 6B uses Biohub's ESM-C-enabled Transformers `4.57.6` fork pinned to
+commit `ef32577f55da19a4989cd7b22e004dc43a4998cb`. It conflicts with the
+validated 600M environment, so install it separately:
 
 ```bash
-python3.12 -m venv .venv-esmc6b
-.venv-esmc6b/bin/pip install -e '.[esmc6b]'
+bash scripts/setup_esmc6b_env.sh
 ```
 
 The 6B checkpoint is downloaded from `biohub/ESMC-6B` on first use unless
@@ -316,6 +318,44 @@ The strict 6B path also supports a site-bounded scan:
 and scores all 20 amino-acid states per site in one head pass. State-only
 scores are explicitly labeled and should be followed by exact rescoring of the
 shortlist.
+
+For a receptor-wide experimental suggestion set, use the bounded two-stage
+mode and a hard functional mask:
+
+```bash
+.venv-esmc6b/bin/protein-stabilizer screen-v2-6b \
+  --fasta target_gpcr.fasta \
+  --protected-mask target_gpcr.protected.txt \
+  --scan-mode two-stage \
+  --rerank-top 128 \
+  --max-per-site 2 \
+  --topology alpha_helical_gpcr \
+  --output artifacts/target_gpcr_suggestions.csv
+```
+
+The mask is one-based in FASTA coordinates. Each non-comment line contains a
+position, range, or comma-separated expression followed optionally by a tab
+and its reason; see
+[`docs/gpcr_protected_mask.example.txt`](docs/gpcr_protected_mask.example.txt).
+`--protected-positions 45,72-76` can add inline exclusions. The two sources are
+merged, checked against sequence length, and removed before mutation candidates
+or embeddings are generated. The model does not infer that a residue is safe:
+include known ligand contacts, activation microswitches, conserved motifs,
+disulfides, glycosylation sites, construct boundaries, and partner interfaces
+in the target-specific mask.
+
+Two-stage mode performs one WT embedding to score every allowed amino-acid
+state, then embeds at most `--rerank-top` mutant sequences for the full promoted
+fusion. For a 400-residue unmasked receptor this requests 128 mutant embeddings
+instead of 7,600. `--max-per-site` is enforced both when choosing the exact
+rerank set and when assembling the final experimental shortlist. The full CSV
+retains all allowed state-potential candidates with their scoring stage; the
+adjacent `*.shortlist.csv` contains only exact-reranked suggestions. The
+provenance-checked application embedding cache under `embeddings/application/`
+is reused on identical reruns. The JSON summary reports computed embeddings,
+cache hits, avoided mutant embeddings, and the applied protected positions.
+A pinned, directly runnable human melanopsin example is under
+[`examples/human_melanopsin/`](examples/human_melanopsin/README.md).
 
 Native-FP32 6B inference is deliberately expensive. Use 600M to explore a
 broad receptor-wide search and 6B to rescore a bounded set of sites when
@@ -491,17 +531,20 @@ Full selection and bootstrap evidence are in
 
 ## ESM-C 6B status
 
-The definitive ESM-C 6B v2 run is complete in native FP32. The hierarchy cache
+The current ESM-C 6B v2 run is complete in native FP32. The hierarchy cache
 contains 259,830 unique sequences and 384,271 local windows. The promoted
-hierarchy/state-potential fusion reaches held-out Spearman `0.856`, MAE
+hierarchy/state-potential fusion reaches historical protein-held-out Spearman `0.856`, MAE
 `0.467` kcal/mol, stabilizer average precision `0.442`, and 41 stabilizers in
-the top 50. The fused native-FP32 double-mutant model reaches Spearman `0.749`,
+the top 50. The 19-protein test was consulted by prior promotion gates and is
+therefore a continuity benchmark, not an untouched SOTA estimate; its
+protein-bootstrap MAE 95% interval is `0.427–0.509`. The fused native-FP32
+double-mutant model reaches Spearman `0.749`,
 MAE `0.585`, and exact permutation invariance. Application checkpoints are
 under `checkpoints/esmc_6b_state_potential_fp32/`.
 
 The ProTherm transfer diagnostic improves to Spearman `0.452`, but the
 receptor-disjoint GPCR delta-Tm and membrane transfers remain weak. The 6B
-generic ddG model is therefore the quality ceiling for stability prediction,
+generic ddG model is therefore the current operational baseline for stability prediction,
 while GPCR-specific experimental ordering uses the promoted family consensus
 plus experimental judgment—not a claimed calibrated GPCR ddG model. The 600M
 and 6B caches remain strictly separate. The earlier masked-only/DDGemb
@@ -513,6 +556,8 @@ A separate full-6B re-audit of the reconstructed four-receptor Muk et al.
 thermostability matrix remained at chance under nested receptor holdout and is
 recorded in
 [`docs/esmc6b_muk_thermostability_audit.json`](docs/esmc6b_muk_thermostability_audit.json).
+The current error-floor, split, competitor, and optimization assessment is in
+[`docs/stability_optimization_study.md`](docs/stability_optimization_study.md).
 
 ## Sources
 

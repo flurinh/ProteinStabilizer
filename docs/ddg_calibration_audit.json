@@ -1,0 +1,74 @@
+{
+  "calibration": {
+    "candidate_parameterizations": 324,
+    "candidate_powers": 81,
+    "formula": "scale * sign(raw_ddg) * abs(raw_ddg) ** power",
+    "maximum_forward_plus_reverse": 0.0,
+    "power": 1.02,
+    "preserves_order": true,
+    "preserves_zero": true,
+    "scale": 0.8393443689925829,
+    "selected_on": "protein-held-out validation only"
+  },
+  "decision": {
+    "promotion_gates": {
+      "exact_reversal": true,
+      "strictly_monotone": true,
+      "test_mae_improves": false,
+      "test_pearson_not_worse": true,
+      "test_rmse_improves": false,
+      "test_spearman_preserved": true,
+      "validation_mae_improves": true,
+      "validation_rmse_improves": true
+    },
+    "status": "rejected"
+  },
+  "frozen_test": {
+    "after": {
+      "direction_accuracy": 0.860320692288114,
+      "mae": 0.49801848707824703,
+      "n": 19645,
+      "pearson": 0.8495471759196793,
+      "rmse": 0.6907050745685694,
+      "spearman": 0.8555450903165531
+    },
+    "before": {
+      "direction_accuracy": 0.860320692288114,
+      "mae": 0.467003546573974,
+      "n": 19645,
+      "pearson": 0.8491888643299597,
+      "rmse": 0.6401839559590127,
+      "spearman": 0.8555450903165531
+    },
+    "rows": 19645
+  },
+  "provenance": {
+    "baseline_checkpoint_sha256": "be9ff05c745eda74ef615abe04222245e436448079e6159c4a7a3673f47b37f5",
+    "cache_sha256": "d8c0d65ab251619a1e6f77c567057a9aa9392f80c52f2a3bcabceacd7d0ac459",
+    "features": "/data/fast/projects/ProteinStabilizer/artifacts/features_v2_6b_fp32",
+    "precision": "native FP32; TF32 disabled",
+    "state_checkpoint_sha256": "ccef3d204ec5d9808e2abb36b1e4ba0241b2d9d403b93d48efa6e5ee01d87b7e",
+    "test_features_sha256": "6cd363181c38239fc9c00f0ba445cb1e6ae775bf318e184d5381dc7c190aa23f",
+    "validation_features_sha256": "6c07bbaf5fc3e6f3f45f23394445281d6fa931ecc0f475cb88a8b26856d0bbdd"
+  },
+  "schema": "protein-stabilizer.ddg-calibration-audit.v1",
+  "validation": {
+    "after": {
+      "direction_accuracy": 0.8277701446698457,
+      "mae": 0.34730345193091405,
+      "n": 12373,
+      "pearson": 0.8385737861551843,
+      "rmse": 0.4942605263979122,
+      "spearman": 0.8170216238270811
+    },
+    "before": {
+      "direction_accuracy": 0.8277701446698457,
+      "mae": 0.37087581607131714,
+      "n": 12373,
+      "pearson": 0.838302699725779,
+      "rmse": 0.5197880130152847,
+      "spearman": 0.8170216238270811
+    },
+    "rows": 12373
+  }
+}

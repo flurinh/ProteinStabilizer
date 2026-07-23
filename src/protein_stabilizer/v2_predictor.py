@@ -17,7 +17,14 @@ from .data import (
     apply_mutations,
     normalize_sequence,
 )
-from .embeddings import ESMCEmbedder, HierarchicalEmbedding, file_sha256, token_batches
+from .embeddings import (
+    ESMCEmbedder,
+    HierarchicalEmbedding,
+    HierarchyEmbeddingReader,
+    HierarchyEmbeddingWriter,
+    file_sha256,
+    token_batches,
+)
 from .predictor import _percentile_ranks, _thermostability_consensus
 from .state_potential import load_state_potential_ensemble
 from .structure import ProteinMPNNBackboneEmbedder
@@ -61,6 +68,125 @@ def _embed_requests(
     if len(results) != len(requests):
         raise RuntimeError("hierarchy inference returned the wrong request count")
     return results
+
+
+def _embed_requests_cached(
+    embedder: ESMCEmbedder,
+    requests: Sequence[EmbeddingRequest],
+    *,
+    window_radius: int,
+    max_tokens: int,
+    max_batch_size: int,
+    cache_path: Path | None,
+) -> tuple[list[HierarchicalEmbedding], dict[str, int]]:
+    """Embed requests, optionally reusing a provenance-locked HDF5 cache."""
+
+    if cache_path is None:
+        return (
+            _embed_requests(
+                embedder,
+                requests,
+                window_radius=window_radius,
+                max_tokens=max_tokens,
+                max_batch_size=max_batch_size,
+            ),
+            {
+                "requested": len(requests),
+                "computed": len(requests),
+                "cache_hits": 0,
+            },
+        )
+    provenance = getattr(embedder, "provenance", None)
+    if provenance is None:
+        raise ValueError("embedding cache requires embedder model provenance")
+    cache_path = Path(cache_path)
+    with HierarchyEmbeddingWriter(
+        cache_path,
+        provenance,
+        window_radius=window_radius,
+    ) as writer:
+        missing = writer.missing_requests(requests)
+        for batch in token_batches(
+            missing,
+            max_tokens=max_tokens,
+            max_batch_size=max_batch_size,
+        ):
+            writer.append(
+                batch,
+                embedder.encode_hierarchy(
+                    batch,
+                    window_radius=window_radius,
+                ),
+            )
+    results: list[HierarchicalEmbedding] = []
+    with HierarchyEmbeddingReader(cache_path) as reader:
+        for request in requests:
+            features = reader.features(
+                [
+                    (request.sequence_hash, position)
+                    for position in request.positions
+                ]
+            )
+            results.append(
+                HierarchicalEmbedding(
+                    global_mean=features["global_mean"][0],
+                    windows=features["window"],
+                    window_mask=features["window_mask"],
+                )
+            )
+    return results, {
+        "requested": len(requests),
+        "computed": len(missing),
+        "cache_hits": len(requests) - len(missing),
+    }
+
+
+def _bounded_candidate_indices(
+    order: Sequence[int],
+    mutations: Sequence[Mutation],
+    limit: int,
+    *,
+    max_per_site: int | None,
+) -> list[int]:
+    """Take a score-ordered, site-diverse experimental shortlist."""
+
+    if limit < 1:
+        raise ValueError("candidate limit must be positive")
+    if max_per_site is not None and max_per_site < 1:
+        raise ValueError("max substitutions per site must be positive")
+    selected: list[int] = []
+    per_site: dict[int, int] = {}
+    for raw_index in order:
+        index = int(raw_index)
+        position = mutations[index].position
+        if (
+            max_per_site is not None
+            and per_site.get(position, 0) >= max_per_site
+        ):
+            continue
+        selected.append(index)
+        per_site[position] = per_site.get(position, 0) + 1
+        if len(selected) == limit:
+            break
+    return selected
+
+
+def _compact_position_ranges(positions: Sequence[int]) -> list[str]:
+    """Render sorted one-based positions without expanding long mask ranges."""
+
+    ordered = sorted(set(int(position) for position in positions))
+    if not ordered:
+        return []
+    result: list[str] = []
+    start = previous = ordered[0]
+    for position in ordered[1:]:
+        if position == previous + 1:
+            previous = position
+            continue
+        result.append(str(start) if start == previous else f"{start}-{previous}")
+        start = previous = position
+    result.append(str(start) if start == previous else f"{start}-{previous}")
+    return result
 
 
 def _annotation_rows(
@@ -542,27 +668,60 @@ def screen_hierarchical_single_mutants(
     embedder: ESMCEmbedder | None = None,
     state_potential_checkpoint: Path | None = None,
     scan_mode: str = "exact",
+    rerank_top: int = 128,
+    max_per_site: int | None = None,
+    protected_positions: Sequence[int] | None = None,
+    protected_reasons: Mapping[int, str] | None = None,
+    embedding_cache: Path | None = None,
 ) -> dict[str, object]:
-    """Score every non-WT amino acid independently at selected positions."""
+    """Score allowed substitutions with exact, state-only, or staged inference."""
 
     wt_sequence = normalize_sequence(sequence)
-    selected_positions = tuple(
+    requested_positions = tuple(
         range(1, len(wt_sequence) + 1)
         if positions is None
         else sorted(set(int(position) for position in positions))
     )
-    if not selected_positions or any(
+    if not requested_positions or any(
         position < 1 or position > len(wt_sequence)
-        for position in selected_positions
+        for position in requested_positions
     ):
         raise ValueError("screen positions must be within the sequence")
+    protected = tuple(
+        sorted(set(int(position) for position in (protected_positions or ())))
+    )
+    if any(position < 1 or position > len(wt_sequence) for position in protected):
+        raise ValueError("protected positions must be within the sequence")
+    protected_set = set(protected)
+    selected_positions = tuple(
+        position
+        for position in requested_positions
+        if position not in protected_set
+    )
+    if not selected_positions:
+        raise ValueError("the protected mask excludes every requested position")
+    normalized_reasons = {
+        int(position): str(reason)
+        for position, reason in (protected_reasons or {}).items()
+    }
+    if not set(normalized_reasons).issubset(protected_set):
+        raise ValueError("protected reasons contain an unmasked position")
     if top < 1:
         raise ValueError("top must be positive")
-    if scan_mode not in {"exact", "state-only"}:
-        raise ValueError("scan mode must be exact or state-only")
-    if scan_mode == "state-only" and state_potential_checkpoint is None:
+    if rerank_top < 1:
+        raise ValueError("rerank top must be positive")
+    if max_per_site is not None and max_per_site < 1:
+        raise ValueError("max substitutions per site must be positive")
+    if scan_mode not in {"exact", "state-only", "two-stage"}:
+        raise ValueError("scan mode must be exact, state-only, or two-stage")
+    if scan_mode in {"state-only", "two-stage"} and state_potential_checkpoint is None:
         raise ValueError(
-            "state-only scanning requires a state-potential checkpoint"
+            f"{scan_mode} scanning requires a state-potential checkpoint"
+        )
+    if scan_mode == "two-stage" and legacy_checkpoint_dir is not None:
+        raise ValueError(
+            "two-stage scanning cannot run the retained GPCR consensus; "
+            "use the exact mode or omit legacy checkpoints"
         )
     candidates = [
         Mutation(wt_sequence[position - 1], position, amino_acid)
@@ -582,12 +741,13 @@ def screen_hierarchical_single_mutants(
     active_embedder = embedder or ESMCEmbedder(
         model_name=model_name, device=device
     )
-    embedded = _embed_requests(
+    embedded, initial_embedding_stats = _embed_requests_cached(
         active_embedder,
         requests,
         window_radius=4,
         max_tokens=max_tokens,
         max_batch_size=max_batch_size,
+        cache_path=embedding_cache,
     )
     wt = embedded[0]
     index_by_position = {
@@ -629,27 +789,6 @@ def screen_hierarchical_single_mutants(
     ] | None = None
     baseline_ddg: np.ndarray | None = None
     baseline_retrieval: np.ndarray | None = None
-    if scan_mode == "exact":
-        arrays = (
-            repeated_wt.windows,
-            np.concatenate([value.windows for value in embedded[1:]], axis=0),
-            repeated_wt.window_mask,
-            np.repeat(wt.global_mean[None], len(candidates), axis=0),
-            np.stack([value.global_mean for value in embedded[1:]]),
-        )
-        base, payload = load_hierarchical_ensemble(base_path, torch_device)
-        with torch.inference_mode():
-            heads = base.predict_heads(
-                **_torch_state(
-                    arrays,
-                    structure=structure,
-                    structure_mask=structure_mask,
-                    membrane=membrane,
-                    device=torch_device,
-                )
-            )
-        baseline_ddg = heads["ddg"].float().cpu().numpy()
-        baseline_retrieval = heads["retrieval"].float().cpu().numpy()
     state_ddg: np.ndarray | None = None
     state_payload: dict[str, object] | None = None
     state_weight: float | None = None
@@ -732,10 +871,89 @@ def screen_hierarchical_single_mutants(
         state_checkpoint_sha256 = file_sha256(
             Path(state_potential_checkpoint)
         )
+    exact_indices: list[int] = []
+    rerank_embedding_stats = {
+        "requested": 0,
+        "computed": 0,
+        "cache_hits": 0,
+    }
+    exact_embeddings: Sequence[HierarchicalEmbedding] = embedded[1:]
+    if scan_mode == "exact":
+        exact_indices = list(range(len(candidates)))
+    elif scan_mode == "two-stage":
+        assert state_ddg is not None
+        state_order = np.argsort(state_ddg, kind="stable")
+        exact_indices = _bounded_candidate_indices(
+            state_order,
+            candidates,
+            min(rerank_top, len(candidates)),
+            max_per_site=max_per_site,
+        )
+        rerank_requests = [
+            EmbeddingRequest(
+                apply_mutations(wt_sequence, [candidates[index]]),
+                (candidates[index].position,),
+            )
+            for index in exact_indices
+        ]
+        exact_embeddings, rerank_embedding_stats = _embed_requests_cached(
+            active_embedder,
+            rerank_requests,
+            window_radius=4,
+            max_tokens=max_tokens,
+            max_batch_size=max_batch_size,
+            cache_path=embedding_cache,
+        )
+    if exact_indices:
+        exact_index_array = np.asarray(exact_indices, dtype=np.int64)
+        arrays = (
+            repeated_wt.windows[exact_index_array],
+            np.concatenate(
+                [value.windows for value in exact_embeddings], axis=0
+            ),
+            repeated_wt.window_mask[exact_index_array],
+            np.repeat(wt.global_mean[None], len(exact_indices), axis=0),
+            np.stack([value.global_mean for value in exact_embeddings]),
+        )
+        base, payload = load_hierarchical_ensemble(base_path, torch_device)
+        with torch.inference_mode():
+            heads = base.predict_heads(
+                **_torch_state(
+                    arrays,
+                    structure=structure[exact_index_array],
+                    structure_mask=structure_mask[exact_index_array],
+                    membrane=membrane[exact_index_array],
+                    device=torch_device,
+                )
+            )
+        baseline_ddg = np.full(len(candidates), np.nan, dtype=np.float32)
+        baseline_retrieval = np.full(
+            len(candidates), np.nan, dtype=np.float32
+        )
+        baseline_ddg[exact_index_array] = (
+            heads["ddg"].float().cpu().numpy()
+        )
+        baseline_retrieval[exact_index_array] = (
+            heads["retrieval"].float().cpu().numpy()
+        )
     if scan_mode == "state-only":
         assert state_ddg is not None
-        ddg = state_ddg
+        ddg = state_ddg.copy()
         retrieval = -state_ddg
+    elif scan_mode == "two-stage":
+        assert (
+            state_ddg is not None
+            and baseline_ddg is not None
+            and state_weight is not None
+        )
+        ddg = state_ddg.copy()
+        retrieval = -state_ddg.copy()
+        exact_index_array = np.asarray(exact_indices, dtype=np.int64)
+        ddg[exact_index_array] = (
+            (1.0 - state_weight) * baseline_ddg[exact_index_array]
+            + state_weight * state_ddg[exact_index_array]
+        )
+        retrieval[exact_index_array] = -ddg[exact_index_array]
     elif state_ddg is not None:
         assert baseline_ddg is not None and state_weight is not None
         ddg = (1.0 - state_weight) * baseline_ddg + state_weight * state_ddg
@@ -744,9 +962,10 @@ def screen_hierarchical_single_mutants(
         assert baseline_ddg is not None and baseline_retrieval is not None
         ddg = baseline_ddg
         retrieval = baseline_retrieval
-    ddg_order = np.argsort(ddg, kind="stable")
-    ddg_rank = np.empty(len(ddg_order), dtype=np.int64)
-    ddg_rank[ddg_order] = np.arange(1, len(ddg_order) + 1)
+    eligible = np.ones(len(candidates), dtype=bool)
+    if scan_mode == "two-stage":
+        eligible[:] = False
+        eligible[np.asarray(exact_indices, dtype=np.int64)] = True
     ranking_score = -ddg
     ranking_policy = "ascending signed v2 ddG; negative is stabilizing"
     mptherm: np.ndarray | None = None
@@ -807,9 +1026,30 @@ def screen_hierarchical_single_mutants(
             "0.20 ESM-C masked-marginal percentile; v2 signed ddG is "
             "reported as orthogonal generic-stability support"
         )
-    order = np.argsort(-ranking_score, kind="stable")
-    rank = np.empty(len(order), dtype=np.int64)
+    if scan_mode == "two-stage":
+        ranking_policy = (
+            f"WT-only state-potential pre-screen followed by exact promoted "
+            f"hierarchy/state fusion for {len(exact_indices)} candidates; "
+            "only exact-reranked candidates are suggestion-eligible"
+        )
+    ordered_all = np.argsort(-ranking_score, kind="stable")
+    order = np.asarray(
+        [index for index in ordered_all if eligible[index]],
+        dtype=np.int64,
+    )
+    rank = np.zeros(len(candidates), dtype=np.int64)
     rank[order] = np.arange(1, len(order) + 1)
+    ddg_order = np.asarray(
+        [index for index in np.argsort(ddg, kind="stable") if eligible[index]],
+        dtype=np.int64,
+    )
+    ddg_rank = np.zeros(len(candidates), dtype=np.int64)
+    ddg_rank[ddg_order] = np.arange(1, len(ddg_order) + 1)
+    state_prescreen_rank: np.ndarray | None = None
+    if state_ddg is not None:
+        state_order = np.argsort(state_ddg, kind="stable")
+        state_prescreen_rank = np.empty(len(candidates), dtype=np.int64)
+        state_prescreen_rank[state_order] = np.arange(1, len(candidates) + 1)
     rows = [
         {
             "mutation": str(mutation),
@@ -818,17 +1058,35 @@ def screen_hierarchical_single_mutants(
             "mutant": mutation.mutant,
             "ddg": float(ddg[index]),
             "retrieval_score": float(retrieval[index]),
-            "ddg_rank": int(ddg_rank[index]),
-            "stabilizer_rank": int(rank[index]),
+            "ddg_rank": int(ddg_rank[index]) if eligible[index] else "",
+            "stabilizer_rank": int(rank[index]) if eligible[index] else "",
             "selection_rank_score": float(ranking_score[index]),
+            "score_stage": (
+                "exact-reranked"
+                if scan_mode == "two-stage" and eligible[index]
+                else (
+                    "state-prescreen"
+                    if scan_mode in {"state-only", "two-stage"}
+                    else "exact"
+                )
+            ),
+            "suggestion_eligible": bool(eligible[index]),
         }
         for index, mutation in enumerate(candidates)
     ]
     if state_ddg is not None:
         for index, row in enumerate(rows):
             row["state_potential_ddg"] = float(state_ddg[index])
+            assert state_prescreen_rank is not None
+            row["state_prescreen_rank"] = int(
+                state_prescreen_rank[index]
+            )
             if baseline_ddg is not None:
-                row["hierarchy_ddg"] = float(baseline_ddg[index])
+                row["hierarchy_ddg"] = (
+                    float(baseline_ddg[index])
+                    if np.isfinite(baseline_ddg[index])
+                    else ""
+                )
     if mptherm is not None and masked_marginal is not None:
         mptherm_percentile = _percentile_ranks(mptherm)
         masked_percentile = _percentile_ranks(masked_marginal)
@@ -852,14 +1110,74 @@ def screen_hierarchical_single_mutants(
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
-    best = [rows[index] for index in order[: min(top, len(order))]]
+    best_indices = _bounded_candidate_indices(
+        order,
+        candidates,
+        min(top, len(order)),
+        max_per_site=max_per_site,
+    )
+    best = [rows[index] for index in best_indices]
+    shortlist_path = output_path.with_name(
+        f"{output_path.stem}.shortlist{output_path.suffix or '.csv'}"
+    )
+    with shortlist_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(best)
+    embedding_stats = {
+        "cache": (
+            None
+            if embedding_cache is None
+            else str(Path(embedding_cache).resolve())
+        ),
+        "sequence_embedding_requests": int(
+            initial_embedding_stats["requested"]
+            + rerank_embedding_stats["requested"]
+        ),
+        "sequence_embeddings_computed": int(
+            initial_embedding_stats["computed"]
+            + rerank_embedding_stats["computed"]
+        ),
+        "cache_hits": int(
+            initial_embedding_stats["cache_hits"]
+            + rerank_embedding_stats["cache_hits"]
+        ),
+        "full_exact_mutant_embeddings": len(candidates),
+        "mutant_embeddings_requested": len(exact_indices),
+        "mutant_embeddings_avoided": len(candidates) - len(exact_indices),
+        "masked_site_passes": (
+            len(selected_positions) if legacy_checkpoint_dir is not None else 0
+        ),
+    }
+    positions_by_reason: dict[str, list[int]] = {}
+    for position, reason in normalized_reasons.items():
+        positions_by_reason.setdefault(reason, []).append(position)
     return {
         "output": str(output_path.resolve()),
+        "shortlist_output": str(shortlist_path.resolve()),
         "rows": len(rows),
         "positions": len(selected_positions),
         "top": best,
+        "max_per_site": max_per_site,
         "ranking_policy": ranking_policy,
         "scan_mode": scan_mode,
+        "rerank_top": rerank_top if scan_mode == "two-stage" else None,
+        "embedding_cost": embedding_stats,
+        "protected_mask": {
+            "policy": "hard exclusion before candidate generation and embedding",
+            "position_ranges": _compact_position_ranges(protected),
+            "count": len(protected),
+            "in_requested_scope": len(
+                protected_set.intersection(requested_positions)
+            ),
+            "reasons": [
+                {
+                    "reason": reason,
+                    "position_ranges": _compact_position_ranges(positions),
+                }
+                for reason, positions in positions_by_reason.items()
+            ],
+        },
         "topology": topology,
         "structure_provenance": structure_provenance,
         "model": {

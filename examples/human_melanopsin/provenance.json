@@ -1,0 +1,22 @@
+{
+  "schema": "protein-stabilizer.example-sequence.v1",
+  "accession": "Q9UHM6",
+  "uniprot_id": "OPN4_HUMAN",
+  "protein": "Melanopsin",
+  "gene": "OPN4",
+  "organism": "Homo sapiens",
+  "taxonomy_id": 9606,
+  "entry_type": "UniProtKB reviewed (Swiss-Prot)",
+  "source_url": "https://rest.uniprot.org/uniprotkb/Q9UHM6.fasta",
+  "entry_url": "https://www.uniprot.org/uniprotkb/Q9UHM6/entry",
+  "retrieved_date": "2026-07-23",
+  "uniprot_release": "2026_02",
+  "uniprot_release_date": "2026-06-10",
+  "entry_version": 181,
+  "sequence_version": 1,
+  "sequence_length": 478,
+  "sequence_crc64": "A8022F5B5AA1198F",
+  "sequence_md5": "0C0A5C78CC1B6F651C337B6E1921F9B1",
+  "sequence_sha256": "ae959571e0522c4f0e01f367f828015ac0eeee87641f448610afc524f6dc5579",
+  "fasta_sha256": "fb8b4cc9bc5ad4fc72ee093344d17a2a6b460ee889550cf7278c2db263955ec8"
+}

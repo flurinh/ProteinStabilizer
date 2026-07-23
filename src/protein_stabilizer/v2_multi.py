@@ -706,7 +706,7 @@ def promote_hierarchical_multi_candidate(
     candidate_checkpoint_dir: Path,
     baseline_checkpoint_dir: Path,
 ) -> dict[str, object]:
-    """Apply frozen held-out gates before replacing the multi-mutant head."""
+    """Apply validation-only gates before replacing the multi-mutant head."""
 
     candidate_checkpoint_dir = Path(candidate_checkpoint_dir).resolve()
     baseline_checkpoint_dir = Path(baseline_checkpoint_dir).resolve()
@@ -733,25 +733,25 @@ def promote_hierarchical_multi_candidate(
         and candidate.get("split_integrity")
         == baseline.get("split_integrity")
     )
-    candidate_test = candidate["evaluation"]["test"]
-    baseline_test = baseline["evaluation"]["test"]
+    candidate_validation = candidate["evaluation"]["validation"]
+    baseline_validation = baseline["evaluation"]["validation"]
     gates = {
-        "identical_frozen_sources_and_splits": source_match,
-        "test_total_spearman_improves": (
-            float(candidate_test["total"]["spearman"])
-            > float(baseline_test["total"]["spearman"])
+        "identical_sources_and_splits": source_match,
+        "validation_total_spearman_improves": (
+            float(candidate_validation["total"]["spearman"])
+            > float(baseline_validation["total"]["spearman"])
         ),
-        "test_total_mae_improves": (
-            float(candidate_test["total"]["mae"])
-            < float(baseline_test["total"]["mae"])
+        "validation_total_mae_improves": (
+            float(candidate_validation["total"]["mae"])
+            < float(baseline_validation["total"]["mae"])
         ),
-        "test_total_rmse_improves": (
-            float(candidate_test["total"]["rmse"])
-            < float(baseline_test["total"]["rmse"])
+        "validation_total_rmse_improves": (
+            float(candidate_validation["total"]["rmse"])
+            < float(baseline_validation["total"]["rmse"])
         ),
-        "test_epistasis_spearman_not_worse": (
-            float(candidate_test["epistasis"]["spearman"])
-            >= float(baseline_test["epistasis"]["spearman"])
+        "validation_epistasis_spearman_not_worse": (
+            float(candidate_validation["epistasis"]["spearman"])
+            >= float(baseline_validation["epistasis"]["spearman"])
         ),
         "exact_permutation_invariance": (
             float(
@@ -776,9 +776,14 @@ def promote_hierarchical_multi_candidate(
             "metrics_sha256": file_sha256(baseline_metrics_path),
             "checkpoint": str(baseline_checkpoint),
             "checkpoint_sha256": file_sha256(baseline_checkpoint),
-            "test": baseline_test,
+            "validation": baseline_validation,
         },
-        "candidate_test": candidate_test,
+        "candidate_validation": candidate_validation,
+        "historical_test": candidate["evaluation"]["test"],
+        "policy": (
+            "validation metrics and exact permutation invariance only; "
+            "historical test is reporting-only"
+        ),
     }
     candidate["promotion"] = promotion
     payload = torch.load(

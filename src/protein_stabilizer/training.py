@@ -926,27 +926,34 @@ def evaluate_directional_ablation(
             if retrieval_policy == "negative_ddg"
             else "retrieval_head"
         ]
+    validation = raw["validation"]
+    baseline_validation = validation["baseline"]
+    candidate_validation = validation["candidate"]
+    baseline_regression = baseline_validation["regression"]
+    candidate_regression = candidate_validation["regression"]
+    baseline_retrieval = baseline_validation["retrieval"]
+    candidate_retrieval = candidate_validation["selected_retrieval"]
     test = raw["test"]
     baseline_test = test["baseline"]
     candidate_test = test["candidate"]
-    baseline_regression = baseline_test["regression"]
-    candidate_regression = candidate_test["regression"]
-    baseline_retrieval = baseline_test["retrieval"]
-    candidate_retrieval = candidate_test["selected_retrieval"]
+    baseline_test_regression = baseline_test["regression"]
+    candidate_test_regression = candidate_test["regression"]
+    baseline_test_retrieval = baseline_test["retrieval"]
+    candidate_test_retrieval = candidate_test["selected_retrieval"]
     constraints = candidate_payload["metrics"]["directional_constraints"]
     gate_checks = {
-        "spearman_improved": (
+        "validation_spearman_improved": (
             float(candidate_regression["spearman"])
             > float(baseline_regression["spearman"])
         ),
-        "mae_not_worse": (
+        "validation_mae_not_worse": (
             float(candidate_regression["mae"]) <= float(baseline_regression["mae"])
         ),
-        "average_precision_improved": (
+        "validation_average_precision_improved": (
             float(candidate_retrieval["average_precision"])
             > float(baseline_retrieval["average_precision"])
         ),
-        "top_50_not_worse": (
+        "validation_top_50_not_worse": (
             int(candidate_retrieval["hits_at_50"])
             >= int(baseline_retrieval["hits_at_50"])
         ),
@@ -978,26 +985,29 @@ def evaluate_directional_ablation(
         "validation": raw["validation"],
         "test": raw["test"],
         "test_delta_candidate_minus_baseline": {
-            "spearman": float(candidate_regression["spearman"])
-            - float(baseline_regression["spearman"]),
-            "mae": float(candidate_regression["mae"])
-            - float(baseline_regression["mae"]),
-            "rmse": float(candidate_regression["rmse"])
-            - float(baseline_regression["rmse"]),
-            "average_precision": float(candidate_retrieval["average_precision"])
-            - float(baseline_retrieval["average_precision"]),
-            "auroc": float(candidate_retrieval["auroc"])
-            - float(baseline_retrieval["auroc"]),
-            "hits_at_50": int(candidate_retrieval["hits_at_50"])
-            - int(baseline_retrieval["hits_at_50"]),
+            "spearman": float(candidate_test_regression["spearman"])
+            - float(baseline_test_regression["spearman"]),
+            "mae": float(candidate_test_regression["mae"])
+            - float(baseline_test_regression["mae"]),
+            "rmse": float(candidate_test_regression["rmse"])
+            - float(baseline_test_regression["rmse"]),
+            "average_precision": float(
+                candidate_test_retrieval["average_precision"]
+            )
+            - float(baseline_test_retrieval["average_precision"]),
+            "auroc": float(candidate_test_retrieval["auroc"])
+            - float(baseline_test_retrieval["auroc"]),
+            "hits_at_50": int(candidate_test_retrieval["hits_at_50"])
+            - int(baseline_test_retrieval["hits_at_50"]),
         },
         "directional_constraints": constraints,
         "promotion_gate": {
             "passed": all(gate_checks.values()),
             "checks": gate_checks,
             "policy": (
-                "candidate must improve test Spearman and stabilizer AP, not "
-                "worsen MAE or top-50 hits, and satisfy exact directionality"
+                "candidate must improve validation Spearman and stabilizer "
+                "AP, not worsen validation MAE or top-50 hits, and satisfy "
+                "exact directionality; historical test is reporting-only"
             ),
         },
     }

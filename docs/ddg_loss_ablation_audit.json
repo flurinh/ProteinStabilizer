@@ -1,0 +1,260 @@
+{
+  "candidates": {
+    "baseline": {
+      "best_epoch": 5,
+      "directional_constraints": {
+        "evaluated_rows": 512,
+        "maximum_absolute_forward_plus_reverse": 0.0,
+        "maximum_absolute_self_ddg": 0.0
+      },
+      "elapsed_seconds": 40.716753747998155,
+      "examples_seen": 938835,
+      "objective": {
+        "huber_delta": 1.0,
+        "maximum_bin_weight": 6.0,
+        "minimum_ranking_gap": 0.25,
+        "mse_weight": 0.0,
+        "neutral_upper_threshold": 0.5,
+        "ranking_pairs_per_batch": 192,
+        "ranking_weight": 0.1,
+        "regression_weight": 1.0,
+        "retrieval_weight": 0.2,
+        "stabilizer_threshold": -0.5
+      },
+      "optimizer_steps": 3672,
+      "validation": {
+        "direction_accuracy": 0.7748322961286672,
+        "mae": 0.4753574141448095,
+        "pearson": 0.762090184086554,
+        "rmse": 0.6571311942570138,
+        "selection_score": 0.46583956219864925,
+        "spearman": 0.7191815120347017,
+        "stabilizer_average_precision": 0.18362928316229624
+      }
+    },
+    "moderate_tail_balance": {
+      "best_epoch": 8,
+      "directional_constraints": {
+        "evaluated_rows": 512,
+        "maximum_absolute_forward_plus_reverse": 0.0,
+        "maximum_absolute_self_ddg": 0.0
+      },
+      "elapsed_seconds": 57.551235702994745,
+      "examples_seen": 1251780,
+      "objective": {
+        "huber_delta": 1.0,
+        "maximum_bin_weight": 3.0,
+        "minimum_ranking_gap": 0.25,
+        "mse_weight": 0.0,
+        "neutral_upper_threshold": 0.5,
+        "ranking_pairs_per_batch": 192,
+        "ranking_weight": 0.1,
+        "regression_weight": 1.0,
+        "retrieval_weight": 0.2,
+        "stabilizer_threshold": -0.5
+      },
+      "optimizer_steps": 4896,
+      "validation": {
+        "direction_accuracy": 0.7838034429806837,
+        "mae": 0.45574227742089984,
+        "pearson": 0.7713637697974374,
+        "rmse": 0.6300083722233011,
+        "selection_score": 0.4652996135135502,
+        "spearman": 0.7220968856843738,
+        "stabilizer_average_precision": 0.16604346224318897
+      }
+    },
+    "moderate_tail_balance_wide_huber": {
+      "best_epoch": 6,
+      "directional_constraints": {
+        "evaluated_rows": 512,
+        "maximum_absolute_forward_plus_reverse": 0.0,
+        "maximum_absolute_self_ddg": 0.0
+      },
+      "elapsed_seconds": 47.35846225699788,
+      "examples_seen": 1043150,
+      "objective": {
+        "huber_delta": 2.0,
+        "maximum_bin_weight": 3.0,
+        "minimum_ranking_gap": 0.25,
+        "mse_weight": 0.0,
+        "neutral_upper_threshold": 0.5,
+        "ranking_pairs_per_batch": 192,
+        "ranking_weight": 0.1,
+        "regression_weight": 1.0,
+        "retrieval_weight": 0.2,
+        "stabilizer_threshold": -0.5
+      },
+      "optimizer_steps": 4080,
+      "validation": {
+        "direction_accuracy": 0.771518629273418,
+        "mae": 0.4305911996844464,
+        "pearson": 0.7837263688475862,
+        "rmse": 0.5909514838158128,
+        "selection_score": 0.4694084977592479,
+        "spearman": 0.7240941678452185,
+        "stabilizer_average_precision": 0.167225634513202
+      }
+    },
+    "moderate_tail_balance_wide_huber_retrieval_0.35": {
+      "best_epoch": 5,
+      "directional_constraints": {
+        "evaluated_rows": 512,
+        "maximum_absolute_forward_plus_reverse": 0.0,
+        "maximum_absolute_self_ddg": 0.0
+      },
+      "elapsed_seconds": 42.74023388900241,
+      "examples_seen": 938835,
+      "objective": {
+        "huber_delta": 2.0,
+        "maximum_bin_weight": 3.0,
+        "minimum_ranking_gap": 0.25,
+        "mse_weight": 0.0,
+        "neutral_upper_threshold": 0.5,
+        "ranking_pairs_per_batch": 192,
+        "ranking_weight": 0.1,
+        "regression_weight": 1.0,
+        "retrieval_weight": 0.35,
+        "stabilizer_threshold": -0.5
+      },
+      "optimizer_steps": 3672,
+      "validation": {
+        "direction_accuracy": 0.7775802149842399,
+        "mae": 0.44338949764934665,
+        "pearson": 0.7758552528989431,
+        "rmse": 0.6101420017021537,
+        "selection_score": 0.47080785823720606,
+        "spearman": 0.727842432553829,
+        "stabilizer_average_precision": 0.1681969073686078
+      }
+    },
+    "moderate_tail_balance_wide_huber_retrieval_0.50": {
+      "best_epoch": 6,
+      "directional_constraints": {
+        "evaluated_rows": 512,
+        "maximum_absolute_forward_plus_reverse": 0.0,
+        "maximum_absolute_self_ddg": 0.0
+      },
+      "elapsed_seconds": 46.41251524200197,
+      "examples_seen": 1043150,
+      "objective": {
+        "huber_delta": 2.0,
+        "maximum_bin_weight": 3.0,
+        "minimum_ranking_gap": 0.25,
+        "mse_weight": 0.0,
+        "neutral_upper_threshold": 0.5,
+        "ranking_pairs_per_batch": 192,
+        "ranking_weight": 0.1,
+        "regression_weight": 1.0,
+        "retrieval_weight": 0.5,
+        "stabilizer_threshold": -0.5
+      },
+      "optimizer_steps": 4080,
+      "validation": {
+        "direction_accuracy": 0.7703871332740645,
+        "mae": 0.45827902701514556,
+        "pearson": 0.7610433271419165,
+        "rmse": 0.6284060974539296,
+        "selection_score": 0.4488970992303863,
+        "spearman": 0.7040618458405357,
+        "stabilizer_average_precision": 0.14833920854221053
+      }
+    },
+    "wide_huber": {
+      "best_epoch": 5,
+      "directional_constraints": {
+        "evaluated_rows": 512,
+        "maximum_absolute_forward_plus_reverse": 0.0,
+        "maximum_absolute_self_ddg": 0.0
+      },
+      "elapsed_seconds": 40.04324541499955,
+      "examples_seen": 938835,
+      "objective": {
+        "huber_delta": 2.0,
+        "maximum_bin_weight": 6.0,
+        "minimum_ranking_gap": 0.25,
+        "mse_weight": 0.0,
+        "neutral_upper_threshold": 0.5,
+        "ranking_pairs_per_batch": 192,
+        "ranking_weight": 0.1,
+        "regression_weight": 1.0,
+        "retrieval_weight": 0.2,
+        "stabilizer_threshold": -0.5
+      },
+      "optimizer_steps": 3672,
+      "validation": {
+        "direction_accuracy": 0.7716802715590398,
+        "mae": 0.47938541238317217,
+        "pearson": 0.765776715114557,
+        "rmse": 0.6509390735902546,
+        "selection_score": 0.4671299581202888,
+        "spearman": 0.7170076954847855,
+        "stabilizer_average_precision": 0.19605398917398154
+      }
+    }
+  },
+  "decision": {
+    "frozen_selection": "baseline",
+    "policy": "Select on protein-disjoint validation only; require >0.002 composite improvement and no material regression in Spearman, stabilizer AP, MAE, or RMSE. Reveal frozen test metrics only for the final selected objective.",
+    "promoted": false,
+    "selected_by_validation": "moderate_tail_balance_wide_huber_retrieval_0.35",
+    "validation_gates": {
+      "composite_improves_by_0.002": true,
+      "mae_not_materially_worse": true,
+      "rmse_not_materially_worse": true,
+      "spearman_not_materially_worse": true,
+      "stabilizer_ap_not_materially_worse": false
+    }
+  },
+  "frozen_test": {
+    "metrics": {
+      "direction_accuracy": 0.825248154746755,
+      "mae": 0.5496723645491195,
+      "pearson": 0.7948959709066258,
+      "rmse": 0.7421643332847254,
+      "spearman": 0.7927839186554168,
+      "stabilizer_average_precision": 0.28306283737014865
+    },
+    "objective": "baseline"
+  },
+  "provenance": {
+    "cache": "/data/fast/projects/ProteinStabilizer/embeddings/esmc_600m/hierarchy_cache_fp32.h5",
+    "cache_sha256": "4d538b8d3c51d157d2634a8f0034088a9d8eb2609f33535c1eaf9e17242d6bde",
+    "embedding": {
+      "checkpoint_path": "/data/fast/cache/huggingface/hub/models--EvolutionaryScale--esmc-600m-2024-12/blobs/8ef856e1a237ee3f995442df997a962e70057faadecf38fc0c8561bd3c2f4324",
+      "checkpoint_sha256": "8ef856e1a237ee3f995442df997a962e70057faadecf38fc0c8561bd3c2f4324",
+      "embedding_dimension": 1152,
+      "inference_dtype": "float32",
+      "model_name": "esmc_600m",
+      "package_version": "3.2.1",
+      "residue_policy": "final-layer-contextual-residue-bos-offset-v1",
+      "storage_dtype": "float32"
+    },
+    "feature_dir": "/data/fast/projects/ProteinStabilizer/artifacts/features_v2_600m_fp32",
+    "single_test_sha256": "29bc50a32be0dfd35f27b757ea88d95133d795d5410748d45a1a66cc88596c7d",
+    "single_train_sha256": "677d62d92ab7783ffff7527ff3a425b7aba7b90414d7d7914d3faefe9af4ee59"
+  },
+  "schema": "protein-stabilizer.ddg-loss-ablation.v1",
+  "split_integrity": {
+    "protein_overlap": 0,
+    "test_proteins": 19,
+    "test_rows": 19645,
+    "train_proteins": 104,
+    "train_rows": 104315,
+    "validation_proteins": 12,
+    "validation_rows": 12373
+  },
+  "training": {
+    "batch_size": 256,
+    "device": "cuda",
+    "elapsed_seconds": 276.0178564989983,
+    "ensemble_size": 1,
+    "epochs": 20,
+    "learning_rate": 0.00075,
+    "minimum_epochs": 8,
+    "patience": 4,
+    "precision": "strict float32; TF32 disabled",
+    "seed": 20260722,
+    "weight_decay": 0.0001
+  }
+}

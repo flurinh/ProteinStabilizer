@@ -81,6 +81,15 @@ def dashboard_data() -> dict[str, object]:
         "docs/gpcr_evolutionary_consensus_audit.json"
     )
     ddg_scatter = _load_optional("docs/generic_ddg_scatter.json")
+    ddg_calibration = _load_optional("docs/ddg_calibration_audit.json")
+    ddg_loss_ablation = _load_optional("docs/ddg_loss_ablation_audit.json")
+    ddg_aligned_retrieval = _load_optional(
+        "docs/ddg_aligned_retrieval_audit.json"
+    )
+    validation_audit = _load_optional("docs/model_validation_audit.json")
+    stability_optimization = _load_optional(
+        "docs/stability_optimization_audit.json"
+    )
 
     test_600m = single_600m["test"]
     test_6b = single_6b["test"]
@@ -547,6 +556,32 @@ def dashboard_data() -> dict[str, object]:
         ],
         "literature_context": [
             {
+                "model": "SPURS",
+                "input": "Sequence + structure",
+                "reported": (
+                    "MegaScale median protein ρ 0.83 vs ThermoMPNN 0.77; "
+                    ">25% identity filtering"
+                ),
+                "fit": (
+                    "Best architectural lead: ESM/ProteinMPNN cross-attention "
+                    "+ 20-state decoder; metric is not our row-micro MAE"
+                ),
+                "url": "https://www.nature.com/articles/s41467-025-67609-4",
+            },
+            {
+                "model": "JanusDDG",
+                "input": "Sequence",
+                "reported": (
+                    "WT/mutant two-front attention with antisymmetry and "
+                    "transitivity constraints"
+                ),
+                "fit": (
+                    "Relevant for reverse and multi-mutant consistency; not "
+                    "tested locally on MegaScale or GPCR"
+                ),
+                "url": "https://www.nature.com/articles/s42003-026-09632-9",
+            },
+            {
                 "model": "Stability Oracle",
                 "input": "Structure",
                 "reported": "T2837+TP: AUROC 0.83, precision 0.70, recall 0.69",
@@ -566,6 +601,19 @@ def dashboard_data() -> dict[str, object]:
                 "reported": "Published transfer model trained on Megascale stability data",
                 "fit": "Fast, but weaker than our MPTherm signal on the exact GPCR test",
                 "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10402116/",
+            },
+            {
+                "model": "IFUM",
+                "input": "Sequence + folded/unfolded structure states",
+                "reported": (
+                    "Absolute ΔG MegaScale-common PCC 0.78, RMSE 1.16 "
+                    "kcal/mol"
+                ),
+                "fit": (
+                    "Supports explicit state supervision; absolute ΔG is a "
+                    "different endpoint and >200-aa proteins need caution"
+                ),
+                "url": "https://www.nature.com/articles/s41467-026-68637-4",
             },
             {
                 "model": "FoldX",
@@ -1120,6 +1168,172 @@ def dashboard_data() -> dict[str, object]:
     if ddg_scatter is not None:
         data["ddg_scatter"] = ddg_scatter
         data["sources"].append("docs/generic_ddg_scatter.json")
+    optimization_audits: list[dict[str, object]] = []
+    if ddg_calibration is not None:
+        validation = ddg_calibration["validation"]
+        frozen = ddg_calibration["frozen_test"]
+        optimization_audits.append(
+            {
+                "candidate": "Odd monotone kcal/mol calibration",
+                "validation": (
+                    f"MAE {_round(validation['before']['mae'])}→"
+                    f"{_round(validation['after']['mae'])}; RMSE "
+                    f"{_round(validation['before']['rmse'])}→"
+                    f"{_round(validation['after']['rmse'])}"
+                ),
+                "frozen_test": (
+                    f"MAE {_round(frozen['before']['mae'])}→"
+                    f"{_round(frozen['after']['mae'])}; RMSE "
+                    f"{_round(frozen['before']['rmse'])}→"
+                    f"{_round(frozen['after']['rmse'])}"
+                ),
+                "decision": "Rejected; test kcal/mol error regressed",
+                "tone": "bad",
+            }
+        )
+        data["sources"].append("docs/ddg_calibration_audit.json")
+    if ddg_loss_ablation is not None:
+        decision = ddg_loss_ablation["decision"]
+        selected_name = decision["selected_by_validation"]
+        selected = ddg_loss_ablation["candidates"][selected_name]["validation"]
+        baseline = ddg_loss_ablation["candidates"]["baseline"]["validation"]
+        optimization_audits.append(
+            {
+                "candidate": "600M loss/tail-balance ablation",
+                "validation": (
+                    f"best MAE {_round(baseline['mae'])}→"
+                    f"{_round(selected['mae'])}; ρ "
+                    f"{_round(baseline['spearman'])}→"
+                    f"{_round(selected['spearman'])}; AP "
+                    f"{_round(baseline['stabilizer_average_precision'])}→"
+                    f"{_round(selected['stabilizer_average_precision'])}"
+                ),
+                "frozen_test": "Baseline retained after validation gate failure",
+                "decision": "Rejected; stabilizer AP regressed",
+                "tone": "bad",
+            }
+        )
+        data["sources"].append("docs/ddg_loss_ablation_audit.json")
+    if ddg_aligned_retrieval is not None:
+        candidates = ddg_aligned_retrieval["candidates"]
+        baseline = candidates["auxiliary_retrieval_head"]["validation"]
+        selected = candidates["ddg_aligned_retrieval"]["validation"]
+        frozen = ddg_aligned_retrieval.get("frozen_test")
+        if frozen:
+            frozen_baseline = frozen["auxiliary_retrieval_head"]
+            frozen_selected = frozen["ddg_aligned_retrieval"]
+            frozen_text = (
+                f"ρ {_round(frozen_baseline['spearman'])}→"
+                f"{_round(frozen_selected['spearman'])}; MAE "
+                f"{_round(frozen_baseline['mae'])}→"
+                f"{_round(frozen_selected['mae'])}; AP "
+                f"{_round(frozen_baseline['stabilizer_average_precision'])}→"
+                f"{_round(frozen_selected['stabilizer_average_precision'])}"
+            )
+        else:
+            frozen_text = "Not opened; validation gate failed"
+        optimization_audits.append(
+            {
+                "candidate": "ddG-aligned retrieval/ranking",
+                "validation": (
+                    f"ρ {_round(baseline['spearman'])}→"
+                    f"{_round(selected['spearman'])}; MAE "
+                    f"{_round(baseline['mae'])}→"
+                    f"{_round(selected['mae'])}; AP "
+                    f"{_round(baseline['stabilizer_average_precision'])}→"
+                    f"{_round(selected['stabilizer_average_precision'])}"
+                ),
+                "frozen_test": frozen_text,
+                "decision": "Rejected; frozen rank and kcal/mol error regressed",
+                "tone": "bad",
+            }
+        )
+        data["sources"].append("docs/ddg_aligned_retrieval_audit.json")
+    if validation_audit is not None:
+        estimate = validation_audit["current_historical_estimate"]
+        interval = estimate["protein_cluster_bootstrap_mae_ci95"]
+        data["status"].update(
+            {
+                "headline": (
+                    "The strict-FP32 6B fusion remains the operational "
+                    "baseline; its 0.467 kcal/mol result is historical, and "
+                    "a new sealed family-held-out lockbox is required"
+                ),
+                "best_ddg": "6B hierarchy/state fusion · historical estimate",
+                "structure_audit": (
+                    "Sub-0.30 is not supported by current evidence; only "
+                    "1/19 historical test proteins is below that MAE"
+                ),
+            }
+        )
+        data["expected_ddg"].update(
+            {
+                "generic_mae_ci95": [_round(value, 4) for value in interval],
+                "target_mae": 0.3,
+                "relative_reduction_needed": _round(
+                    estimate["relative_mae_reduction_needed"], 4
+                ),
+            }
+        )
+        if data["models"]:
+            data["models"][0]["status"] = "limited"
+            data["models"][0]["test"] = (
+                "Historical MegaScale protein holdout; no longer untouched"
+            )
+            data["models"][0]["role"] = (
+                "Highest-accuracy operational generic screen; not a current "
+                "SOTA claim"
+            )
+        for row in data["same_project_comparisons"]:
+            if row["model"] == (
+                "Our 6B hierarchy/state fusion · strict FP32"
+            ):
+                row.update(
+                    {
+                        "benchmark": (
+                            "Historical generic protein holdout; no longer "
+                            "untouched"
+                        ),
+                        "decision": (
+                            "Retained operationally; requires a new sealed "
+                            "lockbox for a SOTA claim"
+                        ),
+                        "tone": "bad",
+                    }
+                )
+        optimization_audits.insert(
+            0,
+            {
+                "candidate": "Sub-0.30 kcal/mol objective",
+                "validation": (
+                    "Current 6B MAE 0.467; protein-bootstrap 95% CI "
+                    f"{_round(interval[0], 4)}–{_round(interval[1], 4)}"
+                ),
+                "frozen_test": (
+                    "No untouched test remains; validation has 21.47% of "
+                    "rows in three high-identity train-homolog groups"
+                ),
+                "decision": "Not demonstrated; freeze a prospective lockbox",
+                "tone": "bad",
+            },
+        )
+        data["sources"].append("docs/model_validation_audit.json")
+    if stability_optimization is not None:
+        optimization_audits.extend(
+            experiment["dashboard"]
+            for experiment in stability_optimization["experiments"]
+        )
+        data["optimization_training"] = stability_optimization[
+            "training_scale"
+        ]
+        recent = data["optimization_training"]
+        data["status"]["training"] += (
+            f" · latest 600M audit {recent['core_optimizer_steps']:,} "
+            f"updates / {recent['core_row_exposures'] / 1e6:.2f}M row "
+            "exposures"
+        )
+        data["sources"].append("docs/stability_optimization_audit.json")
+    data["optimization_audits"] = optimization_audits
     return data
 
 
@@ -1276,12 +1490,18 @@ HTML_TEMPLATE = r"""<!doctype html>
   </section>
 
   <section class="panel section">
+    <h2>Latest optimization gates</h2>
+    <p>Rows below preserve prior optimization evidence. New promotions require family-clustered development plus a newly sealed outer lockbox; the historical test is continuity-only.</p>
+    <div class="table-wrap"><table id="optimization-audits"></table></div>
+  </section>
+
+  <section class="panel section">
     <h2>Held-out ΔΔG: predicted versus experimental</h2>
     <div class="scatter-grid">
       <canvas class="scatter-canvas" id="ddg-scatter"></canvas>
       <div>
         <div class="scatter-stats" id="scatter-stats"></div>
-        <p class="foot">Every point is one mutation from the frozen protein-held-out MegaScale test. Both axes use the same unclipped kcal/mol scale; the diagonal is perfect calibration. Negative values are stabilizing.</p>
+        <p class="foot">Every point is one mutation from the historical protein-held-out MegaScale test. Both axes use the same unclipped kcal/mol scale; the diagonal is perfect calibration. Negative values are stabilizing. This set has been consulted by prior promotion gates and is not an untouched lockbox.</p>
       </div>
     </div>
   </section>
@@ -1348,8 +1568,8 @@ document.querySelector("#stamp").innerHTML =
 
 const e = DATA.expected_ddg;
 document.querySelector("#kpis").innerHTML = [
-  ["Best generic ρ", fmt(DATA.models[0].spearman), "600M v2 · protein-held-out"],
-  ["Typical |ΔΔG error|", `${fmt(e.generic_mae, 2)} kcal/mol`, "Megascale holdout"],
+  ["Best generic ρ", fmt(DATA.models[0].spearman), DATA.models[0].test],
+  ["Typical |ΔΔG error|", `${fmt(e.generic_mae, 2)} kcal/mol`, e.generic_mae_ci95 ? `protein-bootstrap 95% CI ${fmt(e.generic_mae_ci95[0], 2)}–${fmt(e.generic_mae_ci95[1], 2)}` : "MegaScale holdout"],
   ["Experimental transfer", `${fmt(e.experimental_mae, 2)} kcal/mol`, "ProTherm holdout"],
   ["C5aR GPCR AP", fmt(DATA.gpcr.c5ar.consensus_ap ?? DATA.gpcr.c5ar.rerank_ap), `${DATA.gpcr.c5ar.consensus_top50 ?? DATA.gpcr.c5ar.rerank_top50}/34 positives in top 50`],
 ].map(([label, value, note]) => `<div class="kpi"><div class="label">${label}</div><div class="value accent">${value}</div><div class="note">${note}</div></div>`).join("");
@@ -1370,15 +1590,25 @@ document.querySelector("#models").innerHTML = DATA.models.map(m => `
 
 document.querySelector("#rank-bars").innerHTML = DATA.models.map((m, i) => bar(m.name.replace("ESM-C ", ""), m.spearman, 1, i % 2)).join("");
 const t = DATA.training_scale;
+const recent = DATA.optimization_training;
 document.querySelector("#training-facts").innerHTML = t ? [
   ["MegaScale rows", t.dataset_rows.toLocaleString(), `${t.train_rows.toLocaleString()} train · ${t.validation_rows.toLocaleString()} validation · ${t.test_rows.toLocaleString()} test`],
   ["Batch / epochs", `${t.batch_size} / ${t.epochs_per_member}`, `${(t.examples_per_member / 1e6).toFixed(2)}M row exposures per member`],
   ["Optimizer updates", t.total_optimizer_steps.toLocaleString(), `${t.main_optimizer_steps.toLocaleString()} main + ${t.state_optimizer_steps.toLocaleString()} state`],
   ["Measured training", `${fmt(t.total_minutes, 1)} min`, `${fmt(t.main_minutes, 1)} main + ${fmt(t.state_minutes, 1)} state`],
+  ...(recent ? [
+    ["Latest 600M study", `${(recent.core_row_exposures / 1e6).toFixed(2)}M`, `${recent.core_optimizer_steps.toLocaleString()} updates · FP32 / TF32 off`],
+    ["Full pretraining", recent.pretraining_rows.toLocaleString(), `${recent.pretraining_epochs} epochs + two ${recent.fine_tuning_epochs}-epoch paired fine-tunes`],
+  ] : []),
 ].map(([label, value, note]) => `<div class="training-fact"><span>${label}</span><b>${value}</b><small>${note}</small></div>`).join("") : "";
 document.querySelector("#losses").innerHTML = DATA.losses.map(l => `
   <div class="loss"><h3>${l.model}</h3><b>${fmt(l.final_median, 4)}</b>
   <small>final train ${l.objective}${l.final_range ? ` · range ${fmt(l.final_range[0],4)}–${fmt(l.final_range[1],4)}` : ""}<br>${l.note}</small></div>`).join("");
+
+document.querySelector("#optimization-audits").innerHTML = table(
+  ["Candidate", "Protein-held-out validation", "Historical confirmation", "Decision"],
+  DATA.optimization_audits.map(r => [r.candidate, r.validation, r.frozen_test, `<span class="${r.tone === "good" ? "accent" : "warn"}">${r.decision}</span>`])
+);
 
 const scatter = DATA.ddg_scatter;
 if (scatter) {
@@ -1389,6 +1619,7 @@ if (scatter) {
     ["Spearman ρ", fmt(m.spearman)],
     ["MAE", `${fmt(m.mae)} kcal/mol`],
     ["RMSE", `${fmt(m.rmse)} kcal/mol`],
+    ...(e.generic_mae_ci95 ? [["MAE protein CI", `${fmt(e.generic_mae_ci95[0])}–${fmt(e.generic_mae_ci95[1])}`]] : []),
     ["Calibration", `slope ${fmt(scatter.calibration.slope)} · intercept ${fmt(scatter.calibration.intercept)}`],
   ].map(([label, value]) => `<div class="scatter-stat"><span>${label}</span><b>${value}</b></div>`).join("");
 

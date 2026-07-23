@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import Sequence
 
 from .data import DatasetPaths, all_embedding_requests, single_embedding_requests
-from .embeddings import build_embedding_cache, build_hierarchy_embedding_cache
+from .embeddings import (
+    ESMCEmbedder,
+    build_embedding_cache,
+    build_hierarchy_embedding_cache,
+)
 from .esmc6b import (
     DEFAULT_ESMC6B_MODEL,
     ESMC6BEmbedder,
@@ -98,6 +102,12 @@ DEFAULT_ESMC6B_STATE_MULTI = (
 )
 DEFAULT_ESMC6B_STATE_CHECKPOINTS = (
     ROOT / "checkpoints/esmc_6b_state_potential_fp32"
+)
+DEFAULT_APPLICATION_600M_CACHE = (
+    ROOT / "embeddings/application/esmc_600m_targets_fp32.h5"
+)
+DEFAULT_APPLICATION_6B_CACHE = (
+    ROOT / "embeddings/application/esmc_6b_targets_fp32.h5"
 )
 
 
@@ -596,6 +606,54 @@ def _parse_positions(value: str | None) -> list[int] | None:
     return sorted(positions)
 
 
+def _protected_mask(
+    sequence: str,
+    expression: str | None,
+    path: Path | None,
+) -> dict[int, str]:
+    """Read a one-based hard exclusion mask with auditable reasons."""
+
+    protected: dict[int, str] = {}
+
+    def add(value: str, reason: str) -> None:
+        parsed = _parse_positions(value)
+        if not parsed:
+            raise ValueError("protected-mask position expression is empty")
+        for position in parsed:
+            if position < 1 or position > len(sequence):
+                raise ValueError(
+                    f"protected position {position} lies outside a "
+                    f"{len(sequence)}-residue sequence"
+                )
+            previous = protected.get(position)
+            if previous is None:
+                protected[position] = reason
+            elif reason not in previous.split("; "):
+                protected[position] = f"{previous}; {reason}"
+
+    if expression is not None:
+        add(expression, "command-line protected mask")
+    if path is not None:
+        path = Path(path)
+        for line_number, raw_line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            content = raw_line.split("#", 1)[0].strip()
+            if not content:
+                continue
+            if "\t" in content:
+                position_expression, reason = content.split("\t", 1)
+            else:
+                fields = content.split(maxsplit=1)
+                position_expression = fields[0]
+                reason = fields[1] if len(fields) == 2 else ""
+            add(
+                position_expression.strip(),
+                reason.strip() or f"{path.name}:{line_number}",
+            )
+    return protected
+
+
 def command_screen(args: argparse.Namespace) -> dict[str, object]:
     sequence = args.sequence if args.sequence is not None else _read_fasta(args.fasta)
     return screen_single_mutants(
@@ -613,6 +671,11 @@ def command_screen(args: argparse.Namespace) -> dict[str, object]:
 
 def command_screen_v2(args: argparse.Namespace) -> dict[str, object]:
     sequence = args.sequence if args.sequence is not None else _read_fasta(args.fasta)
+    protected = _protected_mask(
+        sequence,
+        args.protected_positions,
+        args.protected_mask,
+    )
     embedder = ESMCEmbedder(
         model_name=args.model,
         device=args.device,
@@ -629,13 +692,20 @@ def command_screen_v2(args: argparse.Namespace) -> dict[str, object]:
         generic_numbering=_parse_generic_numbering(args.generic_numbering),
         pdb_path=args.pdb,
         proteinmpnn_repository=args.proteinmpnn_repository,
-        legacy_checkpoint_dir=args.legacy_checkpoints,
+        legacy_checkpoint_dir=(
+            args.legacy_checkpoints if args.scan_mode == "exact" else None
+        ),
         max_tokens=args.max_tokens,
         max_batch_size=args.max_batch_size,
         top=args.top,
         embedder=embedder,
         state_potential_checkpoint=args.state_potential_checkpoint,
         scan_mode=args.scan_mode,
+        rerank_top=args.rerank_top,
+        max_per_site=args.max_per_site,
+        protected_positions=tuple(protected),
+        protected_reasons=protected,
+        embedding_cache=args.embedding_cache,
     )
 
 
@@ -643,6 +713,11 @@ def command_screen_v2_6b(args: argparse.Namespace) -> dict[str, object]:
     """Screen selected sites with the promoted native-FP32 ESM-C 6B head."""
 
     sequence = args.sequence if args.sequence is not None else _read_fasta(args.fasta)
+    protected = _protected_mask(
+        sequence,
+        args.protected_positions,
+        args.protected_mask,
+    )
     embedder = ESMC6BEmbedder(
         args.model,
         args.device,
@@ -667,6 +742,11 @@ def command_screen_v2_6b(args: argparse.Namespace) -> dict[str, object]:
         embedder=embedder,
         state_potential_checkpoint=args.state_potential_checkpoint,
         scan_mode=args.scan_mode,
+        rerank_top=args.rerank_top,
+        max_per_site=args.max_per_site,
+        protected_positions=tuple(protected),
+        protected_reasons=protected,
+        embedding_cache=args.embedding_cache,
     )
 
 
@@ -1244,9 +1324,32 @@ def build_parser() -> argparse.ArgumentParser:
         "--positions", help="comma-separated positions/ranges; default all"
     )
     screen_v2.add_argument(
+        "--protected-positions",
+        help="one-based positions/ranges that are never mutated",
+    )
+    screen_v2.add_argument(
+        "--protected-mask",
+        type=Path,
+        help=(
+            "text mask with one position/range and optional tab-separated "
+            "reason per line"
+        ),
+    )
+    screen_v2.add_argument(
         "--output", type=Path, default=ROOT / "artifacts/screen_v2.csv"
     )
     screen_v2.add_argument("--top", type=int, default=50)
+    screen_v2.add_argument(
+        "--max-per-site",
+        type=int,
+        help="maximum substitutions from one site in the returned shortlist",
+    )
+    screen_v2.add_argument(
+        "--rerank-top",
+        type=int,
+        default=128,
+        help="state-potential candidates to embed exactly in two-stage mode",
+    )
     screen_v2.add_argument(
         "--checkpoints", type=Path, default=DEFAULT_FP32_V2_CHECKPOINTS
     )
@@ -1288,12 +1391,19 @@ def build_parser() -> argparse.ArgumentParser:
     screen_v2.add_argument("--max-tokens", type=int, default=8192)
     screen_v2.add_argument("--max-batch-size", type=int, default=128)
     screen_v2.add_argument(
+        "--embedding-cache",
+        type=Path,
+        default=DEFAULT_APPLICATION_600M_CACHE,
+        help="persistent provenance-checked target embedding cache",
+    )
+    screen_v2.add_argument(
         "--scan-mode",
-        choices=["exact", "state-only"],
+        choices=["exact", "state-only", "two-stage"],
         default="exact",
         help=(
             "exact runs the promoted hierarchy/state blend; state-only "
-            "scores all amino acids from one WT embedding as a fast pre-screen"
+            "scores all amino acids from one WT embedding; two-stage embeds "
+            "only a bounded state-potential shortlist exactly"
         ),
     )
     screen_v2_6b = subparsers.add_parser("screen-v2-6b")
@@ -1303,9 +1413,32 @@ def build_parser() -> argparse.ArgumentParser:
         "--positions", help="comma-separated positions/ranges; default all"
     )
     screen_v2_6b.add_argument(
+        "--protected-positions",
+        help="one-based positions/ranges that are never mutated",
+    )
+    screen_v2_6b.add_argument(
+        "--protected-mask",
+        type=Path,
+        help=(
+            "text mask with one position/range and optional tab-separated "
+            "reason per line"
+        ),
+    )
+    screen_v2_6b.add_argument(
         "--output", type=Path, default=ROOT / "artifacts/screen_v2_6b.csv"
     )
     screen_v2_6b.add_argument("--top", type=int, default=50)
+    screen_v2_6b.add_argument(
+        "--max-per-site",
+        type=int,
+        help="maximum substitutions from one site in the returned shortlist",
+    )
+    screen_v2_6b.add_argument(
+        "--rerank-top",
+        type=int,
+        default=128,
+        help="state-potential candidates to embed exactly in two-stage mode",
+    )
     screen_v2_6b.add_argument(
         "--checkpoints", type=Path, default=DEFAULT_ESMC6B_V2_CHECKPOINTS
     )
@@ -1342,12 +1475,19 @@ def build_parser() -> argparse.ArgumentParser:
     screen_v2_6b.add_argument("--max-tokens", type=int, default=4096)
     screen_v2_6b.add_argument("--max-batch-size", type=int, default=2)
     screen_v2_6b.add_argument(
+        "--embedding-cache",
+        type=Path,
+        default=DEFAULT_APPLICATION_6B_CACHE,
+        help="persistent provenance-checked target embedding cache",
+    )
+    screen_v2_6b.add_argument(
         "--scan-mode",
-        choices=["exact", "state-only"],
+        choices=["exact", "state-only", "two-stage"],
         default="exact",
         help=(
             "exact runs the promoted hierarchy/state blend; state-only "
-            "scores all amino acids from one WT embedding as a fast pre-screen"
+            "scores all amino acids from one WT embedding; two-stage embeds "
+            "only a bounded state-potential shortlist exactly"
         ),
     )
     rerank = subparsers.add_parser("rerank-6b")
