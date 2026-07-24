@@ -158,7 +158,7 @@ DEFAULT_ACCURACY_CHECKPOINTS = (
 DEFAULT_ACCURACY_FINAL = DEFAULT_ACCURACY_CHECKPOINTS / "promoted"
 DEFAULT_ESMC6B_ACCURACY_FINAL = (
     ROOT
-    / "checkpoints/esmc_6b_accuracy_fp32/promoted_multiscale_affine"
+    / "checkpoints/esmc_6b_accuracy_fp32/promoted_proteinmpnn_affine"
 )
 DEFAULT_MASKED_MARGINALS = Path(
     "/data/fast/tmp/protein-stabilizer/study/"

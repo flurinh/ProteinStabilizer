@@ -14,10 +14,12 @@ from protein_stabilizer.accuracy import (
     MASKED_CHEMISTRY_DIMENSION,
     MULTISCALE_AFFINE_DDG_CALIBRATION_SCHEMA,
     PORTABLE_PRIOR_DIMENSION,
+    PROTEINMPNN_MULTISCALE_DDG_CALIBRATION_SCHEMA,
     PROTEINMPNN_DIMENSION,
     PortablePriorConfig,
     apply_affine_ddg_calibration,
     apply_multiscale_affine_ddg_calibration,
+    apply_proteinmpnn_multiscale_ddg_calibration,
     backbone_geometry_features,
     blend_state_and_prior,
     fit_portable_prior,
@@ -250,6 +252,52 @@ def test_multiscale_affine_calibration_is_monotone_and_self_zeroed() -> None:
         )
 
 
+def test_proteinmpnn_multiscale_calibration_is_monotone_and_self_zeroed() -> None:
+    calibration = {
+        "schema": PROTEINMPNN_MULTISCALE_DDG_CALIBRATION_SCHEMA,
+        "coefficients": {
+            "primary_state": 0.4,
+            "secondary_state": 0.3,
+            "portable_prior": 0.2,
+            "proteinmpnn_leave_one_out": 0.1,
+            "intercept": -0.1,
+        },
+    }
+    prediction = apply_proteinmpnn_multiscale_ddg_calibration(
+        np.array([-1.0, 0.5], dtype=np.float32),
+        np.array([-0.5, 0.25], dtype=np.float32),
+        np.array([-0.25, 0.1], dtype=np.float32),
+        np.array([-0.5, 0.25], dtype=np.float32),
+        calibration,
+        self_mask=np.array([False, True]),
+    )
+    np.testing.assert_allclose(prediction, [-0.75, 0.0], atol=1.0e-7)
+
+    invalid = {
+        **calibration,
+        "coefficients": {
+            **calibration["coefficients"],
+            "proteinmpnn_leave_one_out": -0.1,
+        },
+    }
+    with pytest.raises(RuntimeError, match="not monotone"):
+        apply_proteinmpnn_multiscale_ddg_calibration(
+            np.array([0.0], dtype=np.float32),
+            np.array([0.0], dtype=np.float32),
+            np.array([0.0], dtype=np.float32),
+            np.array([0.0], dtype=np.float32),
+            invalid,
+        )
+    with pytest.raises(ValueError, match="must align"):
+        apply_proteinmpnn_multiscale_ddg_calibration(
+            np.array([0.0], dtype=np.float32),
+            np.array([0.0], dtype=np.float32),
+            np.array([0.0], dtype=np.float32),
+            np.array([0.0, 1.0], dtype=np.float32),
+            calibration,
+        )
+
+
 def test_masked_cache_is_resumable_and_noop_is_hash_stable(
     tmp_path, monkeypatch
 ) -> None:
@@ -436,7 +484,7 @@ def test_cross_scale_accuracy_cli_contract() -> None:
     assert screen.accuracy_checkpoint.name == "accuracy_ensemble.pt"
     assert (
         screen.accuracy_checkpoint.parent.name
-        == "promoted_multiscale_affine"
+        == "promoted_proteinmpnn_affine"
     )
 
 

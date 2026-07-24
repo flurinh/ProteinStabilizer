@@ -5,7 +5,9 @@ GPCR-specific calibration layer. The fast path uses frozen ESM-C 600M
 embeddings with mutation-direction, ordered local, whole-protein, membrane, and
 learned ProteinMPNN context. The best current expected-ddG route combines
 cached strict-FP32 ESM-C 6B and 600M WT-state passes with 600M masked contexts
-and ProteinMPNN/backbone features.
+and ProteinMPNN/backbone features. A frozen ProteinMPNN leave-one-residue-out
+pass supplies a direct 20-state structural compatibility potential without
+adding any ESM-C calls.
 Permutation-invariant epistasis heads score double mutants and accept larger
 mutation sets as an explicit extrapolation.
 Saturation screening also reads the encoder's masked amino-acid probabilities
@@ -103,6 +105,20 @@ promoted formula is `0.32487 × 6B_state + 0.31938 × 600M_state + 0.46345 ×
 portable_prior − 0.05739`. It is used only for expected ΔΔG magnitude;
 candidate order remains the exact 6B state score.
 
+A final low-cost calibration exposes the pretrained ProteinMPNN decoder
+directly: every residue sees the full WT sequence except its own identity, and
+all 20 amino-acid compatibilities are produced in one structure pass. A
+conservative 50% blend with the retained estimator improves confirmation-fold
+MAE from `0.45524` to `0.44666` kcal/mol, Spearman from `0.78014` to `0.79339`,
+direction accuracy from `80.77%` to `81.36%`, and top-50 stabilizer hits from
+`37` to `42`. On the already-consumed family shadow, MAE improves from
+`0.44994` to `0.44668`, Spearman from `0.78798` to `0.79532`, and top-50 hits
+from `18` to `26`. The shadow was consulted for shrinkage and promotion, so it
+is validation evidence rather than an untouched benchmark. The augmented
+expected-ddG score now drives the early candidate order; the exact 6B state
+must still agree on a stabilizing sign. The formula and hashes are recorded in
+[`docs/esmc6b_proteinmpnn_accuracy_audit.json`](docs/esmc6b_proteinmpnn_accuracy_audit.json).
+
 This general-model gain does not solve GPCR transfer. On 97 quantitative ΔTm
 mutations across 11 receptors, calibrated expected ΔΔG reaches pooled
 Spearman `0.029` and macro within-receptor Spearman `0.244`. A comparator
@@ -118,6 +134,8 @@ protein-stabilizer cross-validate-accuracy
 protein-stabilizer evaluate-accuracy-shadow
 protein-stabilizer train-accuracy
 protein-stabilizer evaluate-accuracy-outer
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python \
+  scripts/calibrate_proteinmpnn_accuracy.py
 ```
 
 Application screening needs a PDB or UniProt accession:

@@ -27,6 +27,9 @@ AFFINE_DDG_CALIBRATION_SCHEMA = (
 MULTISCALE_AFFINE_DDG_CALIBRATION_SCHEMA = (
     "protein-stabilizer.multiscale-affine-ddg-calibration.v1"
 )
+PROTEINMPNN_MULTISCALE_DDG_CALIBRATION_SCHEMA = (
+    "protein-stabilizer.proteinmpnn-multiscale-ddg-calibration.v1"
+)
 MASKED_CHEMISTRY_DIMENSION = 70
 BACKBONE_GEOMETRY_DIMENSION = 18
 PROTEINMPNN_DIMENSION = 128
@@ -463,6 +466,83 @@ def apply_multiscale_affine_ddg_calibration(
     if np.any(~np.isfinite(result)):
         raise RuntimeError(
             "multiscale affine ddG calibration produced invalid values"
+        )
+    return result
+
+
+def apply_proteinmpnn_multiscale_ddg_calibration(
+    primary_state_prediction: np.ndarray,
+    secondary_state_prediction: np.ndarray,
+    prior_prediction: np.ndarray,
+    proteinmpnn_prediction: np.ndarray,
+    calibration: dict[str, object],
+    *,
+    self_mask: np.ndarray | None = None,
+) -> np.ndarray:
+    """Apply the selected 6B/600M/prior/ProteinMPNN calibration."""
+
+    if (
+        calibration.get("schema")
+        != PROTEINMPNN_MULTISCALE_DDG_CALIBRATION_SCHEMA
+    ):
+        raise RuntimeError(
+            "ProteinMPNN multiscale ddG calibration schema mismatch"
+        )
+    primary = np.asarray(primary_state_prediction, dtype=np.float32)
+    secondary = np.asarray(secondary_state_prediction, dtype=np.float32)
+    prior = np.asarray(prior_prediction, dtype=np.float32)
+    proteinmpnn = np.asarray(proteinmpnn_prediction, dtype=np.float32)
+    if not (
+        primary.shape
+        == secondary.shape
+        == prior.shape
+        == proteinmpnn.shape
+    ):
+        raise ValueError(
+            "primary, secondary, portable-prior, and ProteinMPNN "
+            "predictions must align"
+        )
+    coefficient = calibration.get("coefficients")
+    if not isinstance(coefficient, dict):
+        raise RuntimeError(
+            "ProteinMPNN multiscale ddG calibration lacks coefficients"
+        )
+    primary_scale = float(coefficient["primary_state"])
+    secondary_scale = float(coefficient["secondary_state"])
+    prior_scale = float(coefficient["portable_prior"])
+    proteinmpnn_scale = float(
+        coefficient["proteinmpnn_leave_one_out"]
+    )
+    intercept = float(coefficient["intercept"])
+    values = np.asarray(
+        [
+            primary_scale,
+            secondary_scale,
+            prior_scale,
+            proteinmpnn_scale,
+            intercept,
+        ],
+        dtype=np.float64,
+    )
+    if np.any(values[:4] < 0.0) or not np.isfinite(values).all():
+        raise RuntimeError(
+            "ProteinMPNN multiscale ddG calibration is not monotone/finite"
+        )
+    result = (
+        primary_scale * primary
+        + secondary_scale * secondary
+        + prior_scale * prior
+        + proteinmpnn_scale * proteinmpnn
+        + intercept
+    ).astype(np.float32)
+    if self_mask is not None:
+        mask = np.asarray(self_mask, dtype=bool)
+        if mask.shape != result.shape:
+            raise ValueError("self-mutation mask must align with predictions")
+        result[mask] = 0.0
+    if np.any(~np.isfinite(result)):
+        raise RuntimeError(
+            "ProteinMPNN multiscale ddG calibration produced invalid values"
         )
     return result
 

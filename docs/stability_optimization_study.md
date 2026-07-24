@@ -10,11 +10,20 @@ protein bootstrap places the MAE 95% interval at `0.4267–0.5092`. This is usef
 retrospective evidence, but it is not an untouched SOTA estimate because the
 same test proteins were consulted by earlier promotion gates.
 
+For product screening, the current expected-ΔΔG route now adds a frozen
+ProteinMPNN leave-one-residue-out 20-state potential to the cached 6B/600M
+state ensemble. It reaches MAE `0.44666` on confirmation family folds and
+`0.44668` on the already-consumed family shadow, where top-50 stabilizer hits
+increase from `18` to `26`. The corresponding five-fold OOF scatter has MAE
+`0.45113`, RMSE `0.62053`, and Spearman `0.78915`. This is the default
+application route, but it is not a fresh SOTA estimate: the shadow was
+consulted for post-hoc shrinkage and promotion.
+
 The requested `MAE < 0.30 kcal/mol` has not been demonstrated. Reaching it from
-the current point estimate would require a `35.8%` reduction, and only one of
-the 19 historical test proteins is currently below `0.30`. No tested loss,
-calibration, surface, masked-marginal, or pretraining change supports scaling a
-new head from ESM-C 600M to 6B yet.
+the historical point estimate required a `35.8%` reduction, and only one of
+the 19 historical test proteins was below `0.30`. The new ProteinMPNN prior
+improves the consumed family evaluations but still does not support a
+sub-`0.30` claim.
 
 ## What the current model learns
 

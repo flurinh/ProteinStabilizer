@@ -50,6 +50,7 @@ def export_accuracy(args: argparse.Namespace) -> dict[str, object]:
         (
             name
             for name in (
+                "proteinmpnn_expected_ddg",
                 "multiscale_calibrated_ddg",
                 "calibrated_ddg",
                 "ensemble_ddg",
@@ -71,18 +72,28 @@ def export_accuracy(args: argparse.Namespace) -> dict[str, object]:
     scale_audit = json.loads(
         scale_audit_path.read_text(encoding="utf-8")
     )
-    calibration_audit_path = (
-        ROOT
-        / (
+    calibration_audit_name = {
+        "proteinmpnn_expected_ddg": (
+            "docs/esmc6b_proteinmpnn_accuracy_audit.json"
+        ),
+        "multiscale_calibrated_ddg": (
             "docs/esmc6b_multiscale_accuracy_audit.json"
-            if prediction_column == "multiscale_calibrated_ddg"
-            else "docs/esmc6b_accuracy_calibration_audit.json"
-        )
-    ).resolve()
+        ),
+        "calibrated_ddg": (
+            "docs/esmc6b_accuracy_calibration_audit.json"
+        ),
+    }.get(prediction_column)
+    calibration_audit_path = (
+        None
+        if calibration_audit_name is None
+        else (ROOT / calibration_audit_name).resolve()
+    )
     if prediction_column in {
         "calibrated_ddg",
         "multiscale_calibrated_ddg",
+        "proteinmpnn_expected_ddg",
     }:
+        assert calibration_audit_path is not None
         if not calibration_audit_path.is_file():
             raise FileNotFoundError(calibration_audit_path)
         calibration_audit = json.loads(
@@ -90,7 +101,11 @@ def export_accuracy(args: argparse.Namespace) -> dict[str, object]:
         )
         candidate_key = (
             "candidate"
-            if prediction_column == "multiscale_calibrated_ddg"
+            if prediction_column
+            in {
+                "multiscale_calibrated_ddg",
+                "proteinmpnn_expected_ddg",
+            }
             else "calibrated"
         )
         calibrated_metrics = calibration_audit["metrics"][

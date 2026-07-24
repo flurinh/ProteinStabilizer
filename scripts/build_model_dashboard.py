@@ -110,6 +110,9 @@ def dashboard_data() -> dict[str, object]:
     accuracy_multiscale = _load_optional(
         "docs/esmc6b_multiscale_accuracy_audit.json"
     )
+    accuracy_proteinmpnn = _load_optional(
+        "docs/esmc6b_proteinmpnn_accuracy_audit.json"
+    )
     accuracy_gpcr_transfer = _load_optional(
         "docs/esmc6b_accuracy_gpcr_transfer_audit.json"
     )
@@ -2099,6 +2102,129 @@ def dashboard_data() -> dict[str, object]:
         )
         data["sources"].append(
             "docs/esmc6b_multiscale_accuracy_audit.json"
+        )
+    if accuracy_proteinmpnn is not None:
+        candidate_oof = accuracy_proteinmpnn["metrics"][
+            "all_development_oof"
+        ]["candidate"]
+        shadow_metrics = accuracy_proteinmpnn["metrics"]["family_shadow"]
+        retained_shadow = shadow_metrics["retained"]
+        candidate_shadow = shadow_metrics["candidate"]
+        candidate_regression = candidate_shadow["regression"]
+        candidate_interval = candidate_shadow[
+            "protein_cluster_bootstrap_mae_95_ci"
+        ]
+        confirmation = accuracy_proteinmpnn["metrics"][
+            "confirmation_folds_1_to_4"
+        ]
+        formula = accuracy_proteinmpnn["calibration"]["formula"]
+        data["status"].update(
+            {
+                "headline": (
+                    "The promoted 6B + 600M + frozen ProteinMPNN "
+                    f"estimator reaches {_round(candidate_regression['mae'], 3)} "
+                    "kcal/mol family-shadow MAE and now drives early "
+                    "stabilizer ranking"
+                ),
+                "best_ddg": (
+                    "Monotone 6B state + 600M state + masked/structure "
+                    "prior + frozen ProteinMPNN leave-one-out potential"
+                ),
+                "structure_audit": (
+                    "One frozen ProteinMPNN structure pass improves every "
+                    "confirmation and consumed-shadow accuracy/retrieval "
+                    "gate without ESM-C or mutant-sequence calls. Sub-0.30 "
+                    "and quantitative GPCR accuracy remain unproven."
+                ),
+            }
+        )
+        data["expected_ddg"].update(
+            {
+                "development_oof_mae": _round(
+                    candidate_oof["regression"]["mae"], 4
+                ),
+                "family_shadow_mae": _round(
+                    candidate_regression["mae"], 4
+                ),
+                "family_shadow_rmse": _round(
+                    candidate_regression["rmse"], 4
+                ),
+                "family_shadow_mae_ci95": [
+                    _round(value, 4) for value in candidate_interval
+                ],
+                "family_shadow_spearman": _round(
+                    candidate_regression["spearman"], 4
+                ),
+                "family_shadow_blend_ap": _round(
+                    candidate_shadow["retrieval"]["average_precision"], 4
+                ),
+                "calibration_formula": formula,
+                "interpretation": (
+                    "The 50%-shrunk frozen ProteinMPNN leave-one-out "
+                    "potential reduces consumed family-shadow MAE from "
+                    f"{retained_shadow['regression']['mae']:.4f} to "
+                    f"{candidate_regression['mae']:.4f} kcal/mol "
+                    f"(95% protein-bootstrap CI "
+                    f"{candidate_interval[0]:.4f}–"
+                    f"{candidate_interval[1]:.4f}). Confirmation folds "
+                    "improve independently, but the shadow was consulted "
+                    "and is not untouched; GPCR values remain out-of-domain."
+                ),
+            }
+        )
+        current = data["models"][0]
+        current.update(
+            {
+                "name": (
+                    "ESM-C 6B+600M + frozen ProteinMPNN accuracy ensemble"
+                ),
+                "role": (
+                    "Expected-ddG magnitude and early stabilizer ranking "
+                    "from cached WT states, portable prior, and one "
+                    "leave-one-out ProteinMPNN structure pass"
+                ),
+                "target": (
+                    "ΔΔG, kcal/mol · direction accuracy "
+                    f"{_round(candidate_regression['direction_accuracy'])} "
+                    "· AP "
+                    f"{_round(candidate_shadow['retrieval']['average_precision'])}"
+                ),
+                "spearman": _round(candidate_regression["spearman"]),
+                "pearson": _round(candidate_regression["pearson"]),
+                "mae": _round(candidate_regression["mae"]),
+                "rmse": _round(candidate_regression["rmse"]),
+            }
+        )
+        optimization_audits.insert(
+            0,
+            {
+                "candidate": (
+                    "Frozen ProteinMPNN leave-one-out 20-state potential"
+                ),
+                "validation": (
+                    "confirmation folds 1–4 MAE "
+                    f"{confirmation['retained']['regression']['mae']:.4f}→"
+                    f"{confirmation['candidate']['regression']['mae']:.4f}; "
+                    "top-50 stabilizer hits "
+                    f"{confirmation['retained_suggestions']['hits_at_50']}→"
+                    f"{confirmation['candidate_suggestions']['hits_at_50']}"
+                ),
+                "frozen_test": (
+                    "consumed family-shadow MAE "
+                    f"{retained_shadow['regression']['mae']:.4f}→"
+                    f"{candidate_regression['mae']:.4f}; top-50 hits "
+                    f"{shadow_metrics['retained_suggestions']['hits_at_50']}→"
+                    f"{shadow_metrics['candidate_suggestions']['hits_at_50']}"
+                ),
+                "decision": (
+                    "Promoted for expected ΔΔG and early ranking; one "
+                    "structure pass, zero added ESM-C calls; outer excluded"
+                ),
+                "tone": "good",
+            },
+        )
+        data["sources"].append(
+            "docs/esmc6b_proteinmpnn_accuracy_audit.json"
         )
     if accuracy_gpcr_transfer is not None:
         zero_shot = accuracy_gpcr_transfer["zero_shot_results"][

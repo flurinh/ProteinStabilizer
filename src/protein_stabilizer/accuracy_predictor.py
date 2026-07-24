@@ -14,9 +14,11 @@ import torch
 from .accuracy import (
     AFFINE_DDG_CALIBRATION_SCHEMA,
     MULTISCALE_AFFINE_DDG_CALIBRATION_SCHEMA,
+    PROTEINMPNN_MULTISCALE_DDG_CALIBRATION_SCHEMA,
     PortablePriorConfig,
     apply_affine_ddg_calibration,
     apply_multiscale_affine_ddg_calibration,
+    apply_proteinmpnn_multiscale_ddg_calibration,
     backbone_geometry_features,
     blend_state_and_prior,
     load_portable_prior,
@@ -104,7 +106,10 @@ def _load_accuracy_checkpoint(
     if (
         isinstance(calibration, dict)
         and calibration.get("schema")
-        == MULTISCALE_AFFINE_DDG_CALIBRATION_SCHEMA
+        in {
+            MULTISCALE_AFFINE_DDG_CALIBRATION_SCHEMA,
+            PROTEINMPNN_MULTISCALE_DDG_CALIBRATION_SCHEMA,
+        }
     ):
         if (
             not isinstance(secondary, dict)
@@ -452,6 +457,53 @@ def screen_accuracy_single_mutants(
         [amino_acid_index[value] for value in wt_sequence],
         dtype=np.int64,
     )
+    ddg_calibration = checkpoint.get("ddg_calibration")
+    proteinmpnn_leave_one_out_ddg = None
+    if (
+        isinstance(ddg_calibration, dict)
+        and ddg_calibration.get("schema")
+        == PROTEINMPNN_MULTISCALE_DDG_CALIBRATION_SCHEMA
+    ):
+        # The portable prior already owns a pinned, frozen ProteinMPNN. Reuse
+        # it for one simultaneous leave-one-residue-out 20-state pass. This is
+        # a structure computation only: it adds no ESM-C or mutant-sequence
+        # encodings.
+        static_leave_one_out = MaskedProteinMPNNEncoder(
+            structure_embedder.model,
+            structure_embedder.module,
+        ).to(torch_device)
+        static_leave_one_out.eval()
+        with torch.inference_mode():
+            proteinmpnn_representation = static_leave_one_out(
+                torch.from_numpy(coordinates[None]).to(torch_device),
+                torch.from_numpy(sequence_tokens[None]).to(torch_device),
+                torch.from_numpy(active_structure_mask[None]).to(
+                    torch_device
+                ),
+            )
+            proteinmpnn_log_probability = torch.log_softmax(
+                structure_embedder.model.W_out(
+                    proteinmpnn_representation[..., :128]
+                ),
+                dim=-1,
+            )[..., : len(AMINO_ACIDS)]
+        proteinmpnn_values = (
+            proteinmpnn_log_probability[0].float().cpu().numpy()
+        )
+        proteinmpnn_leave_one_out_ddg = np.asarray(
+            [
+                proteinmpnn_values[
+                    mutation.position - 1,
+                    amino_acid_index[mutation.wt],
+                ]
+                - proteinmpnn_values[
+                    mutation.position - 1,
+                    amino_acid_index[mutation.mutant],
+                ]
+                for mutation in candidates
+            ],
+            dtype=np.float32,
+        )
     with torch.inference_mode():
         potential, _ = state_model.all_potentials(
             torch.from_numpy(esm_residue[None]).to(torch_device),
@@ -555,10 +607,28 @@ def screen_accuracy_single_mutants(
         static_proteinmpnn[None],
     )
     prior_ddg = predict_portable_prior(prior, features, wt, mutant)
-    ddg_calibration = checkpoint.get("ddg_calibration")
     if ddg_calibration is None:
         expected_ddg = blend_state_and_prior(
             state_ddg, prior_ddg, config=config
+        )
+    elif (
+        ddg_calibration.get("schema")
+        == PROTEINMPNN_MULTISCALE_DDG_CALIBRATION_SCHEMA
+    ):
+        if (
+            secondary_state_ddg is None
+            or proteinmpnn_leave_one_out_ddg is None
+        ):
+            raise RuntimeError(
+                "ProteinMPNN multiscale calibration lacks a component"
+            )
+        expected_ddg = apply_proteinmpnn_multiscale_ddg_calibration(
+            state_ddg,
+            secondary_state_ddg,
+            prior_ddg,
+            proteinmpnn_leave_one_out_ddg,
+            ddg_calibration,
+            self_mask=wt == mutant,
         )
     elif (
         ddg_calibration.get("schema")
@@ -585,7 +655,15 @@ def screen_accuracy_single_mutants(
     else:
         raise RuntimeError("unsupported ddG calibration schema")
 
-    stabilizer_order = np.argsort(state_ddg, kind="stable")
+    proteinmpnn_ranking = (
+        isinstance(ddg_calibration, dict)
+        and ddg_calibration.get("schema")
+        == PROTEINMPNN_MULTISCALE_DDG_CALIBRATION_SCHEMA
+    )
+    stabilizer_ranking_ddg = (
+        expected_ddg if proteinmpnn_ranking else state_ddg
+    )
+    stabilizer_order = np.argsort(stabilizer_ranking_ddg, kind="stable")
     ddg_order = np.argsort(expected_ddg, kind="stable")
     stabilizer_rank = np.empty(len(candidates), dtype=np.int64)
     stabilizer_rank[stabilizer_order] = np.arange(1, len(candidates) + 1)
@@ -608,7 +686,9 @@ def screen_accuracy_single_mutants(
             "ddg": float(expected_ddg[index]),
             "state_ddg": float(state_ddg[index]),
             "portable_prior_ddg": float(prior_ddg[index]),
-            "stabilizer_rank_score": float(-state_ddg[index]),
+            "stabilizer_rank_score": float(
+                -stabilizer_ranking_ddg[index]
+            ),
             "stabilizer_rank": int(stabilizer_rank[index]),
             "expected_ddg_rank": int(ddg_rank[index]),
             "component_agreement": bool(agreement[index]),
@@ -617,6 +697,10 @@ def screen_accuracy_single_mutants(
         if secondary_state_ddg is not None:
             rows[-1]["secondary_state_ddg"] = float(
                 secondary_state_ddg[index]
+            )
+        if proteinmpnn_leave_one_out_ddg is not None:
+            rows[-1]["proteinmpnn_leave_one_out_ddg"] = float(
+                proteinmpnn_leave_one_out_ddg[index]
             )
     eligible_order = [
         int(index) for index in stabilizer_order if eligible[index]
@@ -663,7 +747,10 @@ def screen_accuracy_single_mutants(
                 else str(ddg_calibration["formula"])
             ),
             "stabilizer_ranking": (
-                "exact state score; selected because it retained higher "
+                "ProteinMPNN-augmented expected ddG; selected because it "
+                "improved family-held-out early stabilizer retrieval"
+                if proteinmpnn_ranking
+                else "exact state score; selected because it retained higher "
                 "family-held-out average precision"
             ),
             "suggestion_policy": (
@@ -690,7 +777,8 @@ def screen_accuracy_single_mutants(
             "gpcr_warning": (
                 "GPCR expected general ddG is a domain-shift extrapolation, "
                 "not a GPCR-calibrated kcal/mol measurement; treat the "
-                "state score as ranking evidence and test shortlisted "
+                "ranked shortlist as prioritization evidence and test "
+                "shortlisted "
                 "mutations experimentally"
             ),
         },
@@ -723,6 +811,9 @@ def screen_accuracy_single_mutants(
             ),
             "mutant_sequence_passes": 0,
             "substitutions_scored_per_site": 19,
+            "proteinmpnn_leave_one_out_structure_passes": (
+                1 if proteinmpnn_leave_one_out_ddg is not None else 0
+            ),
             "state_embedding_cache": state_cache_provenance,
             "secondary_state_embedding_cache": (
                 secondary_cache_provenance
