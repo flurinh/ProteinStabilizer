@@ -1175,6 +1175,7 @@ def test_v2_application_predicts_unordered_sets_and_screens(
         topology="alpha_helical_gpcr",
         generic_numbering={1: "1.50x50", 4: "2.50x50"},
         embedder=FakeEmbedder(),
+        embedding_cache=tmp_path / "application.h5",
     )
     reverse_order = predict_hierarchical_mutations(
         "ACDE",
@@ -1182,6 +1183,7 @@ def test_v2_application_predicts_unordered_sets_and_screens(
         checkpoint_dir,
         device="cpu",
         embedder=FakeEmbedder(),
+        embedding_cache=tmp_path / "application.h5",
     )
     assert [row["mutation"] for row in forward["mutations"]] == [
         "A1W",
@@ -1194,6 +1196,9 @@ def test_v2_application_predicts_unordered_sets_and_screens(
         reverse_order["total_ddg"]
     )
     assert "permutation-invariant" in forward["mutation_set_policy"]
+    assert forward["embedding_cost"]["sequence_embeddings_computed"] == 4
+    assert reverse_order["embedding_cost"]["sequence_embeddings_computed"] == 0
+    assert reverse_order["embedding_cost"]["cache_hits"] == 4
 
     fused = predict_hierarchical_mutations(
         "ACDE",
@@ -1407,6 +1412,16 @@ def test_esmc6b_multiple_mutation_cli_contract() -> None:
     assert args.command == "predict-6b"
     assert args.model == "biohub/ESMC-6B"
     assert args.mutations == "A1C,E4W"
+    v2_args = build_parser().parse_args(
+        [
+            "predict-v2-6b",
+            "--sequence",
+            "ACDE",
+            "--mutations",
+            "A1C,E4W",
+        ]
+    )
+    assert v2_args.embedding_cache.name == "esmc_6b_targets_fp32.h5"
 
 
 def test_esmc6b_v2_cache_defaults_to_native_fp32() -> None:

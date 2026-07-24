@@ -394,6 +394,7 @@ def predict_hierarchical_mutations(
     max_batch_size: int = 128,
     embedder: ESMCEmbedder | None = None,
     state_potential_checkpoint: Path | None = None,
+    embedding_cache: Path | None = None,
 ) -> dict[str, object]:
     """Predict one unordered mutation set with additive/epistasis reporting."""
 
@@ -427,12 +428,13 @@ def predict_hierarchical_mutations(
         model_name=model_name, device=device
     )
     window_radius = 4
-    embedded = _embed_requests(
+    embedded, embedding_stats = _embed_requests_cached(
         active_embedder,
         requests,
         window_radius=window_radius,
         max_tokens=max_tokens,
         max_batch_size=max_batch_size,
+        cache_path=embedding_cache,
     )
     wt_embedding = embedded[0]
     single_embeddings = embedded[1 : 1 + len(parsed)]
@@ -663,6 +665,23 @@ def predict_hierarchical_mutations(
                 )
             )
         ),
+        "embedding_cost": {
+            "sequence_embedding_requests": int(
+                embedding_stats["requested"]
+            ),
+            "sequence_embeddings_computed": int(
+                embedding_stats["computed"]
+            ),
+            "cache_hits": int(embedding_stats["cache_hits"]),
+            "wt_sequence_embeddings": 1,
+            "constituent_single_sequence_embeddings": len(parsed),
+            "joint_sequence_embeddings": int(len(parsed) > 1),
+            "embedding_cache": (
+                None
+                if embedding_cache is None
+                else str(Path(embedding_cache).resolve())
+            ),
+        },
         "topology": topology,
         "structure_provenance": structure_provenance,
         "model": {

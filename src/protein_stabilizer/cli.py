@@ -833,6 +833,7 @@ def command_predict_v2(args: argparse.Namespace) -> dict[str, object]:
         max_batch_size=args.max_batch_size,
         embedder=embedder,
         state_potential_checkpoint=args.state_potential_checkpoint,
+        embedding_cache=args.embedding_cache,
     )
 
 
@@ -868,6 +869,7 @@ def command_predict_v2_6b(args: argparse.Namespace) -> dict[str, object]:
         max_batch_size=args.max_batch_size,
         embedder=embedder,
         state_potential_checkpoint=args.state_potential_checkpoint,
+        embedding_cache=args.embedding_cache,
     )
 
 
@@ -2299,6 +2301,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_structure_arguments(predict_v2)
     predict_v2.add_argument("--max-tokens", type=int, default=8192)
     predict_v2.add_argument("--max-batch-size", type=int, default=128)
+    predict_v2.add_argument(
+        "--embedding-cache",
+        type=Path,
+        default=DEFAULT_APPLICATION_600M_CACHE,
+        help="persistent provenance-checked target embedding cache",
+    )
     predict_v2_6b = subparsers.add_parser("predict-v2-6b")
     predict_v2_6b.add_argument("--sequence")
     predict_v2_6b.add_argument("--fasta", type=Path)
@@ -2333,6 +2341,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_structure_arguments(predict_v2_6b)
     predict_v2_6b.add_argument("--max-tokens", type=int, default=4096)
     predict_v2_6b.add_argument("--max-batch-size", type=int, default=2)
+    predict_v2_6b.add_argument(
+        "--embedding-cache",
+        type=Path,
+        default=DEFAULT_APPLICATION_6B_CACHE,
+        help="persistent provenance-checked target embedding cache",
+    )
     screen = subparsers.add_parser("screen")
     screen.add_argument("--sequence")
     screen.add_argument("--fasta", type=Path)

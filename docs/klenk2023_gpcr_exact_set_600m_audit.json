@@ -1,0 +1,220 @@
+{
+  "benchmark": {
+    "path": "/data/fast/tmp/protein-stabilizer/prospective-gpcr/klenk2023/klenk2023_gpcr_multimutant.csv",
+    "rows": 8,
+    "sha256": "89b839f44f1c3b87aaed9c7c9d6c41b28ea904a2e11825cdf3e24aa403c275c0",
+    "status": "already consumed by additive evaluation; no fitting, selection, or promotion decision may use this diagnostic"
+  },
+  "created_date": "2026-07-24",
+  "decision": {
+    "allowed_use": "diagnose whether exact joint context is a plausible bounded combination reranker; require a new receptor-held-out quantitative panel before promotion",
+    "production_promotion": false,
+    "reason": "This benchmark was already consumed and all mutation counts extrapolate beyond double-mutant training."
+  },
+  "embedding_cost": {
+    "cold_cache_unique_sequence_requests": 35,
+    "mutant_sequence_requests": 33,
+    "precompute": {
+      "P20789": {
+        "cache": "/data/fast/tmp/protein-stabilizer/prospective-gpcr/klenk2023/caches/P20789_exact_set_600m_fp32.h5",
+        "cache_hits": 15,
+        "cache_sha256": "6006267fdb717dbdde814bae3259141d3e3784fb26899464187eaa23dfb80cbb",
+        "computed": 0,
+        "requested": 15
+      },
+      "Q03431": {
+        "cache": "/data/fast/tmp/protein-stabilizer/prospective-gpcr/klenk2023/caches/Q03431_exact_set_600m_fp32.h5",
+        "cache_hits": 20,
+        "cache_sha256": "5c1c47b3de0b5fb03a02563d4f9a2c290708f09d29910afa18c943f5b9eae24b",
+        "computed": 0,
+        "requested": 20
+      }
+    },
+    "prediction_stage_cache_hits": 56,
+    "prediction_stage_computed": 0,
+    "request_plan": {
+      "P20789": 15,
+      "Q03431": 20
+    }
+  },
+  "model": {
+    "candidate": "hierarchy_proteinmpnn",
+    "checkpoint": "/data/fast/projects/ProteinStabilizer/checkpoints/esmc_600m_v2/hierarchy_selected_ensemble.pt",
+    "checkpoint_sha256": "a244f1ade77f0200860c6605c89cdeb12a8ad4ff24bba74f25c597d5316e72dc",
+    "evaluated_mutation_count_range": [
+      3,
+      8
+    ],
+    "multi_checkpoint_sha256": "7f1fcf78fc6b81cd42dd76363afa5e718b50aba8ac4efab4c2987c7a7369b68a",
+    "multi_state_potential_weight": null,
+    "mutation_count_domain": 2,
+    "name": "esmc_600m",
+    "numeric_policy": "float32 inference and storage",
+    "prediction": "hierarchical baseline",
+    "state_potential_checkpoint": null,
+    "state_potential_checkpoint_sha256": null,
+    "state_potential_weight": null,
+    "training_domain": "MegaScale double mutants from short soluble proteins"
+  },
+  "objective": "Post-consumption diagnostic of the fixed promoted permutation-invariant mutation-set model on 3-8-mutation GPCR variants.",
+  "provenance": {
+    "alphafold_cache": "/data/fast/projects/ProteinStabilizer/artifacts/structures/alphafold",
+    "output_csv": "/data/fast/tmp/protein-stabilizer/prospective-gpcr/klenk2023/klenk2023_exact_set_600m.csv",
+    "output_csv_sha256": "4123a3c9b3714967cb992273c4cf2f6de716f70dd65b0450ec5fb8f7afafb1c3",
+    "runtime": "/data/fast/projects/ProteinStabilizer/.venv/bin/python"
+  },
+  "results_by_receptor": {
+    "NTR1_RAT": {
+      "benchmark_role": "prior_receptor_continuity",
+      "epistasis_summary": {
+        "maximum_ddg": -0.15749888122081757,
+        "mean_ddg": -0.24976969361305237,
+        "minimum_ddg": -0.35950765013694763
+      },
+      "exact_set_total": {
+        "favorable_sign_accuracy": 0.6,
+        "pearson": {
+          "pvalue": 0.21198371534754074,
+          "statistic": 0.6742016993618187
+        },
+        "rows": 5,
+        "sign_evaluable_rows": 5,
+        "spearman": {
+          "pvalue": 0.03738607346849874,
+          "statistic": 0.8999999999999998
+        }
+      },
+      "same_model_additive": {
+        "favorable_sign_accuracy": 0.4,
+        "pearson": {
+          "pvalue": 0.14155227218475905,
+          "statistic": 0.7532642600143629
+        },
+        "rows": 5,
+        "sign_evaluable_rows": 5,
+        "spearman": {
+          "pvalue": 0.03738607346849874,
+          "statistic": 0.8999999999999998
+        }
+      }
+    },
+    "PTH1R_HUMAN": {
+      "benchmark_role": "new_receptor_lockbox",
+      "epistasis_summary": {
+        "maximum_ddg": 0.07002880424261093,
+        "mean_ddg": -0.026748796304066975,
+        "minimum_ddg": -0.10637237131595612
+      },
+      "exact_set_total": {
+        "favorable_sign_accuracy": 0.6666666666666666,
+        "pearson": {
+          "pvalue": 0.39926842176800936,
+          "statistic": 0.809691919580095
+        },
+        "rows": 3,
+        "sign_evaluable_rows": 3,
+        "spearman": {
+          "pvalue": 0.6666666666666667,
+          "statistic": 0.5
+        }
+      },
+      "same_model_additive": {
+        "favorable_sign_accuracy": 0.6666666666666666,
+        "pearson": {
+          "pvalue": 0.3001242559597598,
+          "statistic": 0.8909178969859602
+        },
+        "rows": 3,
+        "sign_evaluable_rows": 3,
+        "spearman": {
+          "pvalue": 0.0,
+          "statistic": 1.0
+        }
+      }
+    }
+  },
+  "rows": [
+    {
+      "exact_set_total_ddg": -0.6163034439086914,
+      "experimental_delta_tm_mean_c": 7.485,
+      "learned_epistasis_ddg": -0.15749888122081757,
+      "mutation_count": 5,
+      "protein_id": "NTR1_RAT",
+      "same_model_additive_ddg": -0.45880454778671265,
+      "uniprot_id": "P20789",
+      "variant": "N8"
+    },
+    {
+      "exact_set_total_ddg": -0.28704285621643066,
+      "experimental_delta_tm_mean_c": 5.5475,
+      "learned_epistasis_ddg": -0.2205537110567093,
+      "mutation_count": 3,
+      "protein_id": "NTR1_RAT",
+      "same_model_additive_ddg": -0.06648916006088257,
+      "uniprot_id": "P20789",
+      "variant": "N12"
+    },
+    {
+      "exact_set_total_ddg": 0.09965598583221436,
+      "experimental_delta_tm_mean_c": 3.7725,
+      "learned_epistasis_ddg": -0.35950765013694763,
+      "mutation_count": 4,
+      "protein_id": "NTR1_RAT",
+      "same_model_additive_ddg": 0.459163635969162,
+      "uniprot_id": "P20789",
+      "variant": "N13"
+    },
+    {
+      "exact_set_total_ddg": 0.5667433738708496,
+      "experimental_delta_tm_mean_c": 5.199999999999999,
+      "learned_epistasis_ddg": -0.25464674830436707,
+      "mutation_count": 6,
+      "protein_id": "NTR1_RAT",
+      "same_model_additive_ddg": 0.8213901519775391,
+      "uniprot_id": "P20789",
+      "variant": "N21"
+    },
+    {
+      "exact_set_total_ddg": -0.08595511317253113,
+      "experimental_delta_tm_mean_c": 5.4375,
+      "learned_epistasis_ddg": -0.2566414773464203,
+      "mutation_count": 5,
+      "protein_id": "NTR1_RAT",
+      "same_model_additive_ddg": 0.17068636417388916,
+      "uniprot_id": "P20789",
+      "variant": "N23"
+    },
+    {
+      "exact_set_total_ddg": 0.13603326678276062,
+      "experimental_delta_tm_mean_c": -6.092499999999999,
+      "learned_epistasis_ddg": -0.10637237131595612,
+      "mutation_count": 4,
+      "protein_id": "PTH1R_HUMAN",
+      "same_model_additive_ddg": 0.24240563809871674,
+      "uniprot_id": "Q03431",
+      "variant": "P34_05"
+    },
+    {
+      "exact_set_total_ddg": 0.15133726596832275,
+      "experimental_delta_tm_mean_c": -3.105,
+      "learned_epistasis_ddg": 0.07002880424261093,
+      "mutation_count": 5,
+      "protein_id": "PTH1R_HUMAN",
+      "same_model_additive_ddg": 0.08130846917629242,
+      "uniprot_id": "Q03431",
+      "variant": "P34_13"
+    },
+    {
+      "exact_set_total_ddg": -0.8547248244285583,
+      "experimental_delta_tm_mean_c": -0.9275,
+      "learned_epistasis_ddg": -0.04390282183885574,
+      "mutation_count": 8,
+      "protein_id": "PTH1R_HUMAN",
+      "same_model_additive_ddg": -0.8108220100402832,
+      "uniprot_id": "Q03431",
+      "variant": "P14_12"
+    }
+  ],
+  "scale": "600m",
+  "schema": "protein-stabilizer.klenk2023-exact-set-audit.v1"
+}

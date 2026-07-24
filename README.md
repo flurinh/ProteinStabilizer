@@ -520,6 +520,15 @@ head:
   --topology alpha_helical_gpcr
 ```
 
+Both `predict-v2` commands use persistent, provenance-checked target caches by
+default (`embeddings/application/esmc_600m_targets.h5` and
+`embeddings/application/esmc_6b_targets_fp32.h5`). The JSON response reports
+requested, computed, and cache-hit sequence embeddings. A double mutant needs
+four unique full-sequence representations on a cold cache—WT, two constituent
+singles, and the joint mutant—but an identical or mutation-order-reversed
+repeat is encoder-free. Override the location with `--embedding-cache` when
+targets need separate caches.
+
 The strict 6B path also supports a site-bounded scan:
 
 ```bash

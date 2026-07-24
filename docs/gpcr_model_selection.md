@@ -138,6 +138,27 @@ existing 600M learned estimate. This supports using the 6B model to prioritize
 combinations after singles are selected, but it is not direct evidence for
 GPCR double mutants; larger combinations are also outside its training domain.
 
+The fixed Klenk GPCR panel was subsequently used for a post-consumption
+exact-set diagnostic. Unlike the low-cost additive check, this path embeds the
+complete mutant sequence and applies the learned permutation-invariant
+epistasis head. Cold cache construction required 35 unique full-sequence
+encodings across the two receptors, 33 of them mutants; reordered or repeated
+predictions then reuse the same hierarchy cache.
+
+The result does not justify promotion. At 600M, exact context improved NTR1
+favorable-direction accuracy from `0.40` to `0.60`, but reduced PTH1R Spearman
+from `1.00` to `0.50`. At 6B, it improved PTH1R direction from `0/3` to `1/3`
+while reducing NTR1 direction from `1/5` to `0/5`. All variants contain three
+to eight substitutions, outside a head trained only on doubles, and this
+benchmark has already been consumed. Exact-set scoring therefore remains a
+cacheable diagnostic for proposed combinations, not the production GPCR
+reranker. A new receptor-held-out quantitative multi-mutant panel is required
+before changing that policy. Exact components, checkpoint hashes, and cache
+costs are in
+[`klenk2023_gpcr_exact_set_600m_audit.json`](klenk2023_gpcr_exact_set_600m_audit.json)
+and
+[`klenk2023_gpcr_exact_set_6b_audit.json`](klenk2023_gpcr_exact_set_6b_audit.json).
+
 ## Rejected candidates
 
 | Candidate | Selection/evaluation evidence | Decision |

@@ -89,6 +89,27 @@ def test_model_dashboard_is_generated_from_recorded_metrics(tmp_path) -> None:
             "variants, while additive NTR1 direction fails 0/5 stabilizing "
             "variants."
         ),
+        "exact_set": {
+            "cold_sequence_requests": 35,
+            "mutant_sequence_requests": 33,
+            "six_hundred_m": {
+                "pth1r_additive_spearman": 1.0,
+                "pth1r_exact_spearman": 0.5,
+                "ntr1_additive_direction": 0.4,
+                "ntr1_exact_direction": 0.6,
+            },
+            "six_b": {
+                "pth1r_additive_direction": 0.0,
+                "pth1r_exact_direction": 0.333,
+                "ntr1_additive_direction": 0.2,
+                "ntr1_exact_direction": 0.0,
+            },
+            "decision": (
+                "Rejected: exact mutant-set context is inconsistent "
+                "between receptors and extrapolates a double-mutant "
+                "head to 3–8 substitutions."
+            ),
+        },
     }
     assert "Promoted GPCR evolutionary consensus" in html
     assert "Fixed GPCR multi-mutant transfer" in html
@@ -117,6 +138,11 @@ def test_model_dashboard_is_generated_from_recorded_metrics(tmp_path) -> None:
     assert any(
         row["candidate"]
         == "Additive 6B/600M GPCR multi-mutant transfer"
+        for row in data["optimization_audits"]
+    )
+    assert any(
+        row["candidate"]
+        == "Exact-set 600M/6B GPCR multi-mutant context"
         for row in data["optimization_audits"]
     )
     assert any(
@@ -150,6 +176,14 @@ def test_model_dashboard_is_generated_from_recorded_metrics(tmp_path) -> None:
         in data["sources"]
     )
     assert "docs/klenk2023_gpcr_multimutant_audit.json" in data["sources"]
+    assert (
+        "docs/klenk2023_gpcr_exact_set_600m_audit.json"
+        in data["sources"]
+    )
+    assert (
+        "docs/klenk2023_gpcr_exact_set_6b_audit.json"
+        in data["sources"]
+    )
 
 
 def test_accuracy_scatter_uses_all_rows_for_metrics_and_bounded_plot(

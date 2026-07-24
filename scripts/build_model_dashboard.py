@@ -113,6 +113,12 @@ def dashboard_data() -> dict[str, object]:
     klenk_gpcr_multimutant = _load_optional(
         "docs/klenk2023_gpcr_multimutant_audit.json"
     )
+    klenk_exact_set_600m = _load_optional(
+        "docs/klenk2023_gpcr_exact_set_600m_audit.json"
+    )
+    klenk_exact_set_6b = _load_optional(
+        "docs/klenk2023_gpcr_exact_set_6b_audit.json"
+    )
 
     test_600m = single_600m["test"]
     test_6b = single_6b["test"]
@@ -2088,6 +2094,73 @@ def dashboard_data() -> dict[str, object]:
                 "fails 0/5 stabilizing variants."
             ),
         }
+        if (
+            klenk_exact_set_600m is not None
+            and klenk_exact_set_6b is not None
+        ):
+            exact_600m = klenk_exact_set_600m["results_by_receptor"]
+            exact_6b = klenk_exact_set_6b["results_by_receptor"]
+            data["gpcr"]["multimutant_transfer"]["exact_set"] = {
+                "cold_sequence_requests": int(
+                    klenk_exact_set_6b["embedding_cost"][
+                        "cold_cache_unique_sequence_requests"
+                    ]
+                ),
+                "mutant_sequence_requests": int(
+                    klenk_exact_set_6b["embedding_cost"][
+                        "mutant_sequence_requests"
+                    ]
+                ),
+                "six_hundred_m": {
+                    "pth1r_additive_spearman": _round(
+                        exact_600m["PTH1R_HUMAN"][
+                            "same_model_additive"
+                        ]["spearman"]["statistic"]
+                    ),
+                    "pth1r_exact_spearman": _round(
+                        exact_600m["PTH1R_HUMAN"]["exact_set_total"][
+                            "spearman"
+                        ]["statistic"]
+                    ),
+                    "ntr1_additive_direction": _round(
+                        exact_600m["NTR1_RAT"]["same_model_additive"][
+                            "favorable_sign_accuracy"
+                        ]
+                    ),
+                    "ntr1_exact_direction": _round(
+                        exact_600m["NTR1_RAT"]["exact_set_total"][
+                            "favorable_sign_accuracy"
+                        ]
+                    ),
+                },
+                "six_b": {
+                    "pth1r_additive_direction": _round(
+                        exact_6b["PTH1R_HUMAN"]["same_model_additive"][
+                            "favorable_sign_accuracy"
+                        ]
+                    ),
+                    "pth1r_exact_direction": _round(
+                        exact_6b["PTH1R_HUMAN"]["exact_set_total"][
+                            "favorable_sign_accuracy"
+                        ]
+                    ),
+                    "ntr1_additive_direction": _round(
+                        exact_6b["NTR1_RAT"]["same_model_additive"][
+                            "favorable_sign_accuracy"
+                        ]
+                    ),
+                    "ntr1_exact_direction": _round(
+                        exact_6b["NTR1_RAT"]["exact_set_total"][
+                            "favorable_sign_accuracy"
+                        ]
+                    ),
+                },
+                "decision": (
+                    "Rejected: exact mutant-set context is inconsistent "
+                    "between receptors and extrapolates a double-mutant "
+                    "head to 3–8 substitutions."
+                ),
+            }
         optimization_audits.insert(
             1 if optimization_audits else 0,
             {
@@ -2115,6 +2188,37 @@ def dashboard_data() -> dict[str, object]:
         data["sources"].append(
             "docs/klenk2023_gpcr_multimutant_audit.json"
         )
+        if (
+            klenk_exact_set_600m is not None
+            and klenk_exact_set_6b is not None
+        ):
+            optimization_audits.insert(
+                2 if len(optimization_audits) >= 2 else len(optimization_audits),
+                {
+                    "candidate": (
+                        "Exact-set 600M/6B GPCR multi-mutant context"
+                    ),
+                    "validation": (
+                        "600M NTR1 direction 40%→60%, but PTH1R "
+                        "rank 1.000→0.500"
+                    ),
+                    "frozen_test": (
+                        "6B PTH1R direction 0%→33%, but NTR1 "
+                        "direction 20%→0%"
+                    ),
+                    "decision": (
+                        "Rejected; no consistent receptor transfer and "
+                        "all variants exceed the double-mutant domain"
+                    ),
+                    "tone": "bad",
+                },
+            )
+            data["sources"].extend(
+                [
+                    "docs/klenk2023_gpcr_exact_set_600m_audit.json",
+                    "docs/klenk2023_gpcr_exact_set_6b_audit.json",
+                ]
+            )
     data["optimization_audits"] = optimization_audits
     return data
 
@@ -2531,7 +2635,14 @@ document.querySelector("#gpcr").innerHTML =
     bar("New PTH1R direction", g.multimutant_transfer.pth1r_sign_accuracy, 1, true) +
     bar("Prior NTR1 favorable rank", g.multimutant_transfer.ntr1_spearman, 1) +
     bar("Prior NTR1 direction", g.multimutant_transfer.ntr1_sign_accuracy, 1) +
-    `<p class="foot">The frozen-before-inference Klenk check used ${g.multimutant_transfer.six_b_wt_sequences} strict-FP32 6B WT encodings and ${g.multimutant_transfer.masked_sites} 600M masked sites, with zero mutant-sequence embeddings. PTH1R has only ${g.multimutant_transfer.pth1r_rows} variants and all are experimentally destabilizing; NTR1 has ${g.multimutant_transfer.ntr1_rows} stabilizing variants but every additive direction is wrong. ${g.multimutant_transfer.decision}</p>`) +
+    `<p class="foot">The frozen-before-inference Klenk check used ${g.multimutant_transfer.six_b_wt_sequences} strict-FP32 6B WT encodings and ${g.multimutant_transfer.masked_sites} 600M masked sites, with zero mutant-sequence embeddings. PTH1R has only ${g.multimutant_transfer.pth1r_rows} variants and all are experimentally destabilizing; NTR1 has ${g.multimutant_transfer.ntr1_rows} stabilizing variants but every additive direction is wrong. ${g.multimutant_transfer.decision}</p>` +
+    (g.multimutant_transfer.exact_set == null ? "" :
+      `<h4>Exact mutant-set diagnostic</h4>` +
+      bar("600M NTR1 additive direction", g.multimutant_transfer.exact_set.six_hundred_m.ntr1_additive_direction, 1) +
+      bar("600M NTR1 exact-set direction", g.multimutant_transfer.exact_set.six_hundred_m.ntr1_exact_direction, 1, true) +
+      bar("6B PTH1R additive direction", g.multimutant_transfer.exact_set.six_b.pth1r_additive_direction, 1) +
+      bar("6B PTH1R exact-set direction", g.multimutant_transfer.exact_set.six_b.pth1r_exact_direction, 1, true) +
+      `<p class="foot">Cold-cache exact-set inference requested ${g.multimutant_transfer.exact_set.cold_sequence_requests} unique full-sequence encodings, including ${g.multimutant_transfer.exact_set.mutant_sequence_requests} mutant sequences; repeat prediction is cache-only. ${g.multimutant_transfer.exact_set.decision}</p>`)) +
   `<h3 style="margin-top:20px">ProteinMPNN logic scaled to 6B</h3>` +
   bar("Development", s.development_candidate, 1) +
   bar("Official check", s.official_candidate, 1, true) +
