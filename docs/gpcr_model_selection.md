@@ -81,6 +81,31 @@ ddG values as separate diagnostics. Exact metrics, cache manifests, checkpoint
 hashes, and limitations are in
 [`esmc6b_full_transfer_audit.json`](esmc6b_full_transfer_audit.json).
 
+### MegaScale-calibrated 6B accuracy model on quantitative GPCR ΔTm
+
+The promoted 6B/600M expected-ΔΔG model was also run on all 97 published
+GPCR-tm substitutions across 11 receptors. It required 11 WT 6B passes, 83
+unique masked 600M site contexts, and zero mutant-sequence embeddings.
+Expected ΔΔG is not converted to degrees Celsius; only its stabilizing rank
+direction is compared with experimental ΔTm.
+
+Transfer is weak. The calibrated expected-ΔΔG score reaches pooled Spearman
+`0.029` and macro within-receptor Spearman `0.244` over the eight receptors
+with at least three measurements. The 6B state component alone reaches
+`0.083` pooled and `0.240` macro Spearman. A receptor-clean MPTherm comparator,
+retrained in every fold after quarantining all upstream rows from the held-out
+UniProt accession, reaches macro Spearman `0.264`. Nested receptor-held-out
+fusions with the state, portable prior, or expected ΔΔG reach only `0.198`,
+`0.188`, and `0.219`, respectively.
+
+No new GPCR adapter or blend is promoted. The calibrated expected ΔΔG remains
+an explicitly out-of-domain diagnostic for GPCR screens, and the existing
+GPCR ranking route remains primary. The 97-row dataset is no longer an
+untouched benchmark; the next meaningful accuracy gate requires a new
+prospective receptor-held-out quantitative matrix. Exact metrics and cache,
+structure, feature, and checkpoint hashes are in
+[`esmc6b_accuracy_gpcr_transfer_audit.json`](esmc6b_accuracy_gpcr_transfer_audit.json).
+
 ### ProteinMPNN structure logic scaled to 6B
 
 The sequence-conditioned ProteinMPNN likelihood was first selected with the

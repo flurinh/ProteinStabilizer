@@ -66,6 +66,15 @@ def test_model_dashboard_is_generated_from_recorded_metrics(tmp_path) -> None:
     assert data["gpcr"]["c5ar"]["consensus_auc"] == 0.718
     assert data["gpcr"]["c5ar"]["consensus_ap"] == 0.377
     assert data["gpcr"]["c5ar"]["consensus_top50"] == 17
+    assert data["gpcr"]["accuracy_transfer"] == {
+        "rows": 97,
+        "receptors": 11,
+        "pooled_spearman": 0.029,
+        "macro_spearman": 0.244,
+        "clean_mptherm_macro_spearman": 0.264,
+        "best_nested_fusion_macro_spearman": 0.219,
+        "decision": "rejected; retain existing GPCR rank",
+    }
     assert "Promoted GPCR evolutionary consensus" in html
     assert "Experimental ΔΔG (kcal/mol)" in html
     assert "108,408 five-fold OOF mutations" in html
@@ -83,6 +92,11 @@ def test_model_dashboard_is_generated_from_recorded_metrics(tmp_path) -> None:
     )
     assert data["optimization_audits"][0]["candidate"] == (
         "Monotone affine ΔΔG calibration"
+    )
+    assert any(
+        row["candidate"]
+        == "6B expected-ΔΔG transfer to quantitative GPCR ΔTm"
+        for row in data["optimization_audits"]
     )
     assert any(
         row["name"] == "ESM-C 600M portable accuracy ensemble"
@@ -108,6 +122,10 @@ def test_model_dashboard_is_generated_from_recorded_metrics(tmp_path) -> None:
     assert "docs/esmc6b_accuracy_scatter.json" in data["sources"]
     assert (
         "docs/esmc6b_accuracy_calibration_audit.json"
+        in data["sources"]
+    )
+    assert (
+        "docs/esmc6b_accuracy_gpcr_transfer_audit.json"
         in data["sources"]
     )
 

@@ -101,6 +101,13 @@ are retained. The promoted calibration is
 `0.50336 × state + 0.59977 × portable_prior − 0.05107`. It is used only for
 expected ΔΔG magnitude; candidate order remains the 6B state score.
 
+This general-model gain does not solve GPCR transfer. On 97 quantitative ΔTm
+mutations across 11 receptors, calibrated expected ΔΔG reaches pooled
+Spearman `0.029` and macro within-receptor Spearman `0.244`. A comparator
+retrained in every fold after excluding the held-out receptor from upstream
+MPTherm data reaches `0.264` macro Spearman; nested fusions with the new state
+or prior reach at most `0.219`. No GPCR adapter is promoted from this audit.
+
 Training and evaluation are reproducible with:
 
 ```bash
@@ -133,6 +140,8 @@ are recorded in
 The post-hoc selection protocol, component coefficients, promotion gates, and
 calibrated checkpoint hashes are recorded in
 [`docs/esmc6b_accuracy_calibration_audit.json`](docs/esmc6b_accuracy_calibration_audit.json).
+The 11-receptor quantitative transfer audit is recorded in
+[`docs/esmc6b_accuracy_gpcr_transfer_audit.json`](docs/esmc6b_accuracy_gpcr_transfer_audit.json).
 
 The 6B hybrid uses separate caches because the validated 600M and 6B
 dependency stacks conflict:

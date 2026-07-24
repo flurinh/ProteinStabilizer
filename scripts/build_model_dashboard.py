@@ -107,6 +107,9 @@ def dashboard_data() -> dict[str, object]:
     accuracy_calibration = _load_optional(
         "docs/esmc6b_accuracy_calibration_audit.json"
     )
+    accuracy_gpcr_transfer = _load_optional(
+        "docs/esmc6b_accuracy_gpcr_transfer_audit.json"
+    )
 
     test_600m = single_600m["test"]
     test_6b = single_6b["test"]
@@ -1953,6 +1956,82 @@ def dashboard_data() -> dict[str, object]:
         )
         data["sources"].append(
             "docs/esmc6b_accuracy_calibration_audit.json"
+        )
+    if accuracy_gpcr_transfer is not None:
+        zero_shot = accuracy_gpcr_transfer["zero_shot_results"][
+            "calibrated_expected_ddg"
+        ]
+        comparator = accuracy_gpcr_transfer[
+            "receptor_clean_comparator"
+        ]
+        nested = accuracy_gpcr_transfer[
+            "nested_receptor_heldout_fusion"
+        ]
+        best_nested = max(
+            nested["mptherm_plus_six_b_state_macro_spearman"],
+            nested["mptherm_plus_portable_prior_macro_spearman"],
+            nested["mptherm_plus_expected_ddg_macro_spearman"],
+        )
+        data["transfer"].insert(
+            0,
+            {
+                "model": (
+                    "6B calibrated expected ΔΔG on GPCR-tm · zero-shot"
+                ),
+                "endpoint": "ΔTm rank · within-receptor macro",
+                "spearman": _round(
+                    zero_shot["macro_within_receptor_spearman"]
+                ),
+                "mae": None,
+                "rmse": None,
+                "rows": int(accuracy_gpcr_transfer["data"]["rows"]),
+            },
+        )
+        data["gpcr"]["accuracy_transfer"] = {
+            "rows": int(accuracy_gpcr_transfer["data"]["rows"]),
+            "receptors": int(
+                accuracy_gpcr_transfer["data"]["receptors"]
+            ),
+            "pooled_spearman": _round(
+                zero_shot["pooled_spearman"]
+            ),
+            "macro_spearman": _round(
+                zero_shot["macro_within_receptor_spearman"]
+            ),
+            "clean_mptherm_macro_spearman": _round(
+                comparator["macro_within_receptor_spearman"]
+            ),
+            "best_nested_fusion_macro_spearman": _round(
+                best_nested
+            ),
+            "decision": "rejected; retain existing GPCR rank",
+        }
+        optimization_audits.insert(
+            1 if optimization_audits else 0,
+            {
+                "candidate": (
+                    "6B expected-ΔΔG transfer to quantitative GPCR ΔTm"
+                ),
+                "validation": (
+                    f"zero-shot pooled ρ {zero_shot['pooled_spearman']:.3f}; "
+                    "within-receptor macro ρ "
+                    f"{zero_shot['macro_within_receptor_spearman']:.3f}"
+                ),
+                "frozen_test": (
+                    "best nested receptor-held-out fusion macro ρ "
+                    f"{best_nested:.3f} "
+                    "vs receptor-clean MPTherm "
+                    f"{comparator['macro_within_receptor_spearman']:.3f}"
+                ),
+                "decision": (
+                    "Rejected; MegaScale expected ΔΔG remains an "
+                    "out-of-domain GPCR diagnostic"
+                ),
+                "tone": "bad",
+            },
+        )
+        data["sources"].append(
+            "docs/esmc6b_accuracy_gpcr_transfer_audit.json"
         )
     data["optimization_audits"] = optimization_audits
     return data
