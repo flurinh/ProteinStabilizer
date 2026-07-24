@@ -143,6 +143,21 @@ calibrated checkpoint hashes are recorded in
 The 11-receptor quantitative transfer audit is recorded in
 [`docs/esmc6b_accuracy_gpcr_transfer_audit.json`](docs/esmc6b_accuracy_gpcr_transfer_audit.json).
 
+A second transfer check was frozen before inference from the Klenk et al.
+quantitative GPCR multi-mutant source data. The only new receptor, PTH1R,
+passed favorable direction for all three experimentally destabilizing
+variants and ranked them at Spearman `0.500`. The prior-seen NTR1 diagnostic
+ranked five stabilizing variants at `0.600`, but predicted the wrong direction
+for all five. This small, one-direction-per-receptor check does not validate
+additive 3–8-mutation prediction: use the model for bounded single-mutant
+screening, retain functional masks, and test combinations experimentally.
+The run needs only two 6B WT encodings, 24 masked 600M site contexts, and zero
+mutant-sequence embeddings; persisted caches make repeats encoder-free.
+Protocol and results are in
+[`docs/klenk2023_gpcr_multimutant_protocol.md`](docs/klenk2023_gpcr_multimutant_protocol.md)
+and
+[`docs/klenk2023_gpcr_multimutant_audit.json`](docs/klenk2023_gpcr_multimutant_audit.json).
+
 The 6B hybrid uses separate caches because the validated 600M and 6B
 dependency stacks conflict:
 
@@ -761,7 +776,10 @@ Full selection and bootstrap evidence are in
   only `0.171`; high-accuracy GPCR ddG prediction has not been demonstrated.
 - GPCR assays can disagree for the same mutation and ligand state.
 - More than two mutations are supported architecturally but extrapolate beyond
-  epistasis training.
+  epistasis training. In the frozen Klenk multi-mutant check, additive
+  constituent predictions passed direction for 3/3 new-receptor PTH1R
+  destabilizers but failed direction for 0/5 prior-seen NTR1 stabilizers;
+  additive sums over 3–8 mutations are therefore not an application claim.
 - Predictions are candidates for experimental screening, not evidence that a
   receptor will express, remain functional, or crystallize.
 

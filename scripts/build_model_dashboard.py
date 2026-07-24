@@ -110,6 +110,9 @@ def dashboard_data() -> dict[str, object]:
     accuracy_gpcr_transfer = _load_optional(
         "docs/esmc6b_accuracy_gpcr_transfer_audit.json"
     )
+    klenk_gpcr_multimutant = _load_optional(
+        "docs/klenk2023_gpcr_multimutant_audit.json"
+    )
 
     test_600m = single_600m["test"]
     test_6b = single_6b["test"]
@@ -2033,6 +2036,85 @@ def dashboard_data() -> dict[str, object]:
         data["sources"].append(
             "docs/esmc6b_accuracy_gpcr_transfer_audit.json"
         )
+    if klenk_gpcr_multimutant is not None:
+        klenk_results = klenk_gpcr_multimutant[
+            "results_by_receptor"
+        ]
+        pth1r = klenk_results["PTH1R_HUMAN"][
+            "calibrated_expected_ddg"
+        ]
+        ntr1 = klenk_results["NTR1_RAT"][
+            "calibrated_expected_ddg"
+        ]
+        pth1r_spearman = pth1r["spearman"]["statistic"]
+        ntr1_spearman = ntr1["spearman"]["statistic"]
+        data["transfer"].insert(
+            0,
+            {
+                "model": (
+                    "6B additive expected ΔΔG · new PTH1R lockbox"
+                ),
+                "endpoint": "multi-mutant ΔTm favorable rank",
+                "spearman": _round(pth1r_spearman),
+                "mae": None,
+                "rmse": None,
+                "rows": int(pth1r["rows"]),
+            },
+        )
+        data["gpcr"]["multimutant_transfer"] = {
+            "pth1r_rows": int(pth1r["rows"]),
+            "pth1r_spearman": _round(pth1r_spearman),
+            "pth1r_sign_accuracy": _round(
+                pth1r["favorable_sign_accuracy"]
+            ),
+            "ntr1_rows": int(ntr1["rows"]),
+            "ntr1_spearman": _round(ntr1_spearman),
+            "ntr1_sign_accuracy": _round(
+                ntr1["favorable_sign_accuracy"]
+            ),
+            "six_b_wt_sequences": int(
+                klenk_gpcr_multimutant["embedding_cost"][
+                    "cold_cache_six_b_full_wt_sequences"
+                ]
+            ),
+            "masked_sites": int(
+                klenk_gpcr_multimutant["embedding_cost"][
+                    "cold_cache_six_hundred_m_masked_site_contexts"
+                ]
+            ),
+            "decision": (
+                "No promotion: PTH1R passes direction on 3/3 "
+                "destabilizing variants, while additive NTR1 direction "
+                "fails 0/5 stabilizing variants."
+            ),
+        }
+        optimization_audits.insert(
+            1 if optimization_audits else 0,
+            {
+                "candidate": (
+                    "Additive 6B/600M GPCR multi-mutant transfer"
+                ),
+                "validation": (
+                    f"new PTH1R n={pth1r['rows']}: sign "
+                    f"{pth1r['favorable_sign_accuracy']:.0%}, "
+                    f"ρ {pth1r_spearman:.3f}"
+                ),
+                "frozen_test": (
+                    f"prior-seen NTR1 n={ntr1['rows']}: sign "
+                    f"{ntr1['favorable_sign_accuracy']:.0%}, "
+                    f"ρ {ntr1_spearman:.3f}"
+                ),
+                "decision": (
+                    "Not promoted for 3–8-mutation prediction; keep "
+                    "bounded single-mutant screening and experimental "
+                    "combination testing"
+                ),
+                "tone": "bad",
+            },
+        )
+        data["sources"].append(
+            "docs/klenk2023_gpcr_multimutant_audit.json"
+        )
     data["optimization_audits"] = optimization_audits
     return data
 
@@ -2443,6 +2525,13 @@ document.querySelector("#gpcr").innerHTML =
   (g.c5ar.consensus_ap == null ? "" :
     bar("Promoted consensus AP", g.c5ar.consensus_ap, 1, true)) +
   `<p class="foot">${g.c5ar.rows} substitutions · ${g.c5ar.positives} reported thermostable. The promoted 50/40/10 rank reaches top-50 ${g.c5ar.consensus_top50 ?? g.c5ar.rerank_top50}/34; its paired AP-difference interval is ${g.c5ar.consensus_ap_difference_ci95 ? `[${fmt(g.c5ar.consensus_ap_difference_ci95[0])}, ${fmt(g.c5ar.consensus_ap_difference_ci95[1])}]` : "not available"}. The 12-row official test and C5aR scan have both been consulted, so neither is untouched.</p>` +
+  (g.multimutant_transfer == null ? "" :
+    `<h3 style="margin-top:20px">Fixed GPCR multi-mutant transfer</h3>` +
+    bar("New PTH1R favorable rank", g.multimutant_transfer.pth1r_spearman, 1, true) +
+    bar("New PTH1R direction", g.multimutant_transfer.pth1r_sign_accuracy, 1, true) +
+    bar("Prior NTR1 favorable rank", g.multimutant_transfer.ntr1_spearman, 1) +
+    bar("Prior NTR1 direction", g.multimutant_transfer.ntr1_sign_accuracy, 1) +
+    `<p class="foot">The frozen-before-inference Klenk check used ${g.multimutant_transfer.six_b_wt_sequences} strict-FP32 6B WT encodings and ${g.multimutant_transfer.masked_sites} 600M masked sites, with zero mutant-sequence embeddings. PTH1R has only ${g.multimutant_transfer.pth1r_rows} variants and all are experimentally destabilizing; NTR1 has ${g.multimutant_transfer.ntr1_rows} stabilizing variants but every additive direction is wrong. ${g.multimutant_transfer.decision}</p>`) +
   `<h3 style="margin-top:20px">ProteinMPNN logic scaled to 6B</h3>` +
   bar("Development", s.development_candidate, 1) +
   bar("Official check", s.official_candidate, 1, true) +

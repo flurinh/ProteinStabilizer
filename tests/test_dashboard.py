@@ -75,7 +75,23 @@ def test_model_dashboard_is_generated_from_recorded_metrics(tmp_path) -> None:
         "best_nested_fusion_macro_spearman": 0.219,
         "decision": "rejected; retain existing GPCR rank",
     }
+    assert data["gpcr"]["multimutant_transfer"] == {
+        "pth1r_rows": 3,
+        "pth1r_spearman": 0.5,
+        "pth1r_sign_accuracy": 1.0,
+        "ntr1_rows": 5,
+        "ntr1_spearman": 0.6,
+        "ntr1_sign_accuracy": 0.0,
+        "six_b_wt_sequences": 2,
+        "masked_sites": 24,
+        "decision": (
+            "No promotion: PTH1R passes direction on 3/3 destabilizing "
+            "variants, while additive NTR1 direction fails 0/5 stabilizing "
+            "variants."
+        ),
+    }
     assert "Promoted GPCR evolutionary consensus" in html
+    assert "Fixed GPCR multi-mutant transfer" in html
     assert "Experimental ΔΔG (kcal/mol)" in html
     assert "108,408 five-fold OOF mutations" in html
     assert any(
@@ -96,6 +112,11 @@ def test_model_dashboard_is_generated_from_recorded_metrics(tmp_path) -> None:
     assert any(
         row["candidate"]
         == "6B expected-ΔΔG transfer to quantitative GPCR ΔTm"
+        for row in data["optimization_audits"]
+    )
+    assert any(
+        row["candidate"]
+        == "Additive 6B/600M GPCR multi-mutant transfer"
         for row in data["optimization_audits"]
     )
     assert any(
@@ -128,6 +149,7 @@ def test_model_dashboard_is_generated_from_recorded_metrics(tmp_path) -> None:
         "docs/esmc6b_accuracy_gpcr_transfer_audit.json"
         in data["sources"]
     )
+    assert "docs/klenk2023_gpcr_multimutant_audit.json" in data["sources"]
 
 
 def test_accuracy_scatter_uses_all_rows_for_metrics_and_bounded_plot(

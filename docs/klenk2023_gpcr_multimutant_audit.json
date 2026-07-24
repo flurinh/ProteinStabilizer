@@ -1,0 +1,261 @@
+{
+  "benchmark": {
+    "path": "/data/fast/tmp/protein-stabilizer/prospective-gpcr/klenk2023/klenk2023_gpcr_multimutant.csv",
+    "receptors": 2,
+    "rows": 8,
+    "sha256": "89b839f44f1c3b87aaed9c7c9d6c41b28ea904a2e11825cdf3e24aa403c275c0",
+    "status": "consumed by this fixed-model evaluation; no longer untouched"
+  },
+  "created_date": "2026-07-24",
+  "decision": {
+    "application_policy": "Retain the promoted model for bounded single-mutant screening. Do not treat sums over 3-8 mutations as reliable GPCR stabilization predictions; screen constituents, apply functional masks, then test combinations experimentally.",
+    "limitation": "Every variant within a receptor has the same experimental direction, so sign accuracy is a coarse catastrophic-failure gate rather than a balanced classification estimate.",
+    "new_receptor_pth1r": "Passed the catastrophic direction gate for all 3 variants and ranked delta-Tm with Spearman 0.5; too few rows, only destabilizing variants, and a different construct context prevent a performance or SOTA claim.",
+    "prior_receptor_ntr1": "Failed favorable direction for all 5 variants despite Spearman 0.6; the additive single-mutant rule does not recover these evolved, signaling-disrupted stabilizing combinations.",
+    "promotion": false
+  },
+  "embedding_cost": {
+    "cold_cache_six_b_full_wt_sequences": 2,
+    "cold_cache_six_b_mutant_sequence_passes": 0,
+    "cold_cache_six_hundred_m_masked_site_contexts": 24,
+    "repeat_encoder_cost": "zero ESM-C forward passes from persisted receptor caches",
+    "substitutions_scored": 456
+  },
+  "objective": "Fixed-model transfer check on quantitative evolved GPCR multi-mutants without equating degrees Celsius and kcal/mol.",
+  "prediction": {
+    "checkpoint": "/data/fast/projects/ProteinStabilizer/checkpoints/esmc_6b_accuracy_fp32/promoted_affine/accuracy_ensemble.pt",
+    "checkpoint_sha256": "cc293de9bc731ede202d34ac085fcf0597847a0c6d6e44619d92d1b8183106f1",
+    "combination_rule": "sum fixed constituent single-mutant predictions",
+    "epistasis": "not used; the learned epistasis head was trained only on double mutants, while these variants contain 3-8 mutations",
+    "gpcr_labels_used_for_fitting": false,
+    "sign_mapping": "favorable prediction = negative predicted delta-delta-G; favorable experiment = positive delta-Tm",
+    "unit_policy": "rank and direction only; no cross-unit MAE or calibration"
+  },
+  "provenance": {
+    "result_csv": {
+      "path": "/data/fast/tmp/protein-stabilizer/prospective-gpcr/klenk2023/klenk2023_gpcr_multimutant_predictions.csv",
+      "sha256": "d5a47e2205ed7a529a9e704924f50225e6efec082a9bd2fbf5f2da571b9407a7"
+    },
+    "screens": {
+      "P20789": {
+        "path": "/data/fast/tmp/protein-stabilizer/prospective-gpcr/klenk2023/screens/P20789_accuracy_6b.csv",
+        "rows": 171,
+        "sha256": "00f51db888f8f9aa70ef8b4ced262fee9080039df835aa5466f7bdee8e190d3e"
+      },
+      "Q03431": {
+        "path": "/data/fast/tmp/protein-stabilizer/prospective-gpcr/klenk2023/screens/Q03431_accuracy_6b.csv",
+        "rows": 285,
+        "sha256": "0693012e0145f077543de6e9fcf9f4d014fb3a3813774e9a047c7590d268a4bc"
+      }
+    }
+  },
+  "results_by_receptor": {
+    "NTR1_RAT": {
+      "benchmark_role": "prior_receptor_continuity",
+      "calibrated_expected_ddg": {
+        "favorable_sign_accuracy": 0.0,
+        "pearson": {
+          "pvalue": 0.6256288390159772,
+          "statistic": 0.29852564632426276
+        },
+        "rows": 5,
+        "sign_evaluable_rows": 5,
+        "spearman": {
+          "pvalue": 0.28475697986529375,
+          "statistic": 0.6
+        }
+      },
+      "experimental_delta_tm_range_c": [
+        3.7725,
+        7.485
+      ],
+      "portable_prior": {
+        "favorable_sign_accuracy": 0.0,
+        "pearson": {
+          "pvalue": 0.7613149048159525,
+          "statistic": 0.18858672217316416
+        },
+        "rows": 5,
+        "sign_evaluable_rows": 5,
+        "spearman": {
+          "pvalue": 0.28475697986529375,
+          "statistic": 0.6
+        }
+      },
+      "state": {
+        "favorable_sign_accuracy": 0.0,
+        "pearson": {
+          "pvalue": 0.5228690661914064,
+          "statistic": 0.3844284160646363
+        },
+        "rows": 5,
+        "sign_evaluable_rows": 5,
+        "spearman": {
+          "pvalue": 0.28475697986529375,
+          "statistic": 0.6
+        }
+      }
+    },
+    "PTH1R_HUMAN": {
+      "benchmark_role": "new_receptor_lockbox",
+      "calibrated_expected_ddg": {
+        "favorable_sign_accuracy": 1.0,
+        "pearson": {
+          "pvalue": 0.856909803048402,
+          "statistic": 0.2228778211504588
+        },
+        "rows": 3,
+        "sign_evaluable_rows": 3,
+        "spearman": {
+          "pvalue": 0.6666666666666667,
+          "statistic": 0.5
+        }
+      },
+      "experimental_delta_tm_range_c": [
+        -6.092499999999999,
+        -0.9275
+      ],
+      "portable_prior": {
+        "favorable_sign_accuracy": 1.0,
+        "pearson": {
+          "pvalue": 0.3434268263158583,
+          "statistic": -0.8579894786069703
+        },
+        "rows": 3,
+        "sign_evaluable_rows": 3,
+        "spearman": {
+          "pvalue": 0.0,
+          "statistic": -1.0
+        }
+      },
+      "state": {
+        "favorable_sign_accuracy": 0.6666666666666666,
+        "pearson": {
+          "pvalue": 0.5700849224775745,
+          "statistic": 0.6251385445441496
+        },
+        "rows": 3,
+        "sign_evaluable_rows": 3,
+        "spearman": {
+          "pvalue": 0.6666666666666667,
+          "statistic": 0.5
+        }
+      }
+    }
+  },
+  "rows": [
+    {
+      "additive_expected_general_ddg": 2.347460936754942,
+      "additive_portable_prior_ddg": 3.7912494912743564,
+      "additive_state_ddg": 0.6534290164709091,
+      "benchmark_role": "prior_receptor_continuity",
+      "experimental_delta_tm_mean_c": 7.485,
+      "experimental_delta_tm_sd_c": 0.9388113051442591,
+      "favorable_expected_general_ddg": -2.347460936754942,
+      "mutation_count": 5,
+      "mutation_set": "G107V,R167L,A170S,Q239T,N365K",
+      "protein_id": "NTR1_RAT",
+      "uniprot_id": "P20789",
+      "variant": "N8"
+    },
+    {
+      "additive_expected_general_ddg": 2.0101088285446167,
+      "additive_portable_prior_ddg": 3.2752737402915955,
+      "additive_state_ddg": 0.39512883126735676,
+      "benchmark_role": "prior_receptor_continuity",
+      "experimental_delta_tm_mean_c": 5.5475,
+      "experimental_delta_tm_sd_c": 1.3843741064707429,
+      "favorable_expected_general_ddg": -2.0101088285446167,
+      "mutation_count": 3,
+      "mutation_set": "R167L,Q239T,N365K",
+      "protein_id": "NTR1_RAT",
+      "uniprot_id": "P20789",
+      "variant": "N12"
+    },
+    {
+      "additive_expected_general_ddg": 2.7488741874694824,
+      "additive_portable_prior_ddg": 3.9599270224571224,
+      "additive_state_ddg": 1.1484649032354355,
+      "benchmark_role": "prior_receptor_continuity",
+      "experimental_delta_tm_mean_c": 3.7725,
+      "experimental_delta_tm_sd_c": 1.351428256820662,
+      "favorable_expected_general_ddg": -2.7488741874694824,
+      "mutation_count": 4,
+      "mutation_set": "A155T,R167L,Q239T,N365K",
+      "protein_id": "NTR1_RAT",
+      "uniprot_id": "P20789",
+      "variant": "N13"
+    },
+    {
+      "additive_expected_general_ddg": 4.033511102199554,
+      "additive_portable_prior_ddg": 5.562285512685776,
+      "additive_state_ddg": 1.994228556752205,
+      "benchmark_role": "prior_receptor_continuity",
+      "experimental_delta_tm_mean_c": 5.199999999999999,
+      "experimental_delta_tm_sd_c": 0.4389381125701737,
+      "favorable_expected_general_ddg": -4.033511102199554,
+      "mutation_count": 6,
+      "mutation_set": "A155T,R167L,Q239T,M293T,F358L,N365K",
+      "protein_id": "NTR1_RAT",
+      "uniprot_id": "P20789",
+      "variant": "N21"
+    },
+    {
+      "additive_expected_general_ddg": 3.1027937531471252,
+      "additive_portable_prior_ddg": 4.394314408302307,
+      "additive_state_ddg": 1.435443863272667,
+      "benchmark_role": "prior_receptor_continuity",
+      "experimental_delta_tm_mean_c": 5.4375,
+      "experimental_delta_tm_sd_c": 0.1997289830411869,
+      "favorable_expected_general_ddg": -3.1027937531471252,
+      "mutation_count": 5,
+      "mutation_set": "A155T,R167L,Q239T,N365K,R392C",
+      "protein_id": "NTR1_RAT",
+      "uniprot_id": "P20789",
+      "variant": "N23"
+    },
+    {
+      "additive_expected_general_ddg": 1.4588525295257568,
+      "additive_portable_prior_ddg": 1.3857867419719696,
+      "additive_state_ddg": 1.6528311669826508,
+      "benchmark_role": "new_receptor_lockbox",
+      "experimental_delta_tm_mean_c": -6.092499999999999,
+      "experimental_delta_tm_sd_c": 0.7297202660380666,
+      "favorable_expected_general_ddg": -1.4588525295257568,
+      "mutation_count": 4,
+      "mutation_set": "P271S,V283M,M312Q,V412C",
+      "protein_id": "PTH1R_HUMAN",
+      "uniprot_id": "Q03431",
+      "variant": "P34_05"
+    },
+    {
+      "additive_expected_general_ddg": 0.16980520263314253,
+      "additive_portable_prior_ddg": 1.4871045425534248,
+      "additive_state_ddg": -0.9273514449596405,
+      "benchmark_role": "new_receptor_lockbox",
+      "experimental_delta_tm_mean_c": -3.105,
+      "experimental_delta_tm_sd_c": 0.4793398237854504,
+      "favorable_expected_general_ddg": -0.16980520263314253,
+      "mutation_count": 5,
+      "mutation_set": "T294A,T325S,S341I,A369C,L373I",
+      "protein_id": "PTH1R_HUMAN",
+      "uniprot_id": "Q03431",
+      "variant": "P34_13"
+    },
+    {
+      "additive_expected_general_ddg": 1.2720739543437958,
+      "additive_portable_prior_ddg": 2.6129574328660965,
+      "additive_state_ddg": 0.22533808648586295,
+      "benchmark_role": "new_receptor_lockbox",
+      "experimental_delta_tm_mean_c": -0.9275,
+      "experimental_delta_tm_sd_c": 0.7287146217827661,
+      "favorable_expected_general_ddg": -1.2720739543437958,
+      "mutation_count": 8,
+      "mutation_set": "F184W,G188S,L368M,A369I,L373I,L407V,T427A,F461Y",
+      "protein_id": "PTH1R_HUMAN",
+      "uniprot_id": "Q03431",
+      "variant": "P14_12"
+    }
+  ],
+  "schema": "protein-stabilizer.klenk2023-gpcr-multimutant-audit.v1"
+}

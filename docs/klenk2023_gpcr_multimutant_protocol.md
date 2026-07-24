@@ -1,6 +1,7 @@
 # Frozen GPCR multi-mutant transfer check
 
-Status: frozen before model inference on 2026-07-24.
+Status: frozen before model inference on 2026-07-24; consumed by the first
+fixed-model evaluation later that day.
 
 The next external check uses the source data from Klenk et al.,
 “A Vaccinia-based system for directed evolution of GPCRs in mammalian cells”
@@ -53,3 +54,33 @@ python scripts/prepare_klenk2023_gpcr_multimutant.py \
   --output-dir \
   /data/fast/tmp/protein-stabilizer/prospective-gpcr/klenk2023
 ```
+
+Then run the fixed cache-efficient evaluation with:
+
+```bash
+MASKED_DEVICE=cuda STATE_DEVICE=cuda \
+  bash scripts/run_klenk2023_gpcr_multimutant.sh
+```
+
+The first run was executed on CPU because the sole GPU was occupied; both
+encoders retained float32 inference and storage. It required two 6B WT
+encodings, 24 600M masked-site contexts, and no mutant-sequence embeddings.
+Persisted caches make subsequent scoring encoder-free.
+
+## First fixed-model result
+
+The only new receptor, PTH1R, has three experimentally destabilizing variants.
+The fixed additive expected-ΔΔG prediction got favorable direction right for
+all three and ranked their ΔTm severity at Spearman `0.500`. This is a useful
+catastrophic-direction check, not a performance claim: the cohort is tiny,
+contains no stabilizing PTH1R variant, and uses a truncated assay construct.
+
+The five prior-seen NTR1 variants are all experimentally stabilizing. Their
+additive expected-ΔΔG rank reached Spearman `0.600`, but every predicted
+direction was wrong. These variants share a signaling-disrupting DRY-site
+mutation and contain three to six substitutions, so the result directly
+rejects reliable application use of simple single-mutant sums for evolved
+GPCR combinations. The operational policy remains bounded single-mutant
+screening with functional masks, followed by experimental combination tests.
+Machine-readable results and hashes are in
+`docs/klenk2023_gpcr_multimutant_audit.json`.
