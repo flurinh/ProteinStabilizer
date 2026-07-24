@@ -21,6 +21,9 @@ PORTABLE_PRIOR_FEATURE_SCHEMA = (
 PORTABLE_PRIOR_MODEL_SCHEMA = (
     "protein-stabilizer.portable-structural-prior-model.v1"
 )
+AFFINE_DDG_CALIBRATION_SCHEMA = (
+    "protein-stabilizer.affine-ddg-calibration.v1"
+)
 MASKED_CHEMISTRY_DIMENSION = 70
 BACKBONE_GEOMETRY_DIMENSION = 18
 PROTEINMPNN_DIMENSION = 128
@@ -362,6 +365,46 @@ def blend_state_and_prior(
     return (
         config.state_weight * state + config.expert_weight * prior
     ).astype(np.float32)
+
+
+def apply_affine_ddg_calibration(
+    state_prediction: np.ndarray,
+    prior_prediction: np.ndarray,
+    calibration: dict[str, object],
+    *,
+    self_mask: np.ndarray | None = None,
+) -> np.ndarray:
+    """Apply a selected monotone affine calibration to the two components."""
+
+    if calibration.get("schema") != AFFINE_DDG_CALIBRATION_SCHEMA:
+        raise RuntimeError("affine ddG calibration schema mismatch")
+    state = np.asarray(state_prediction, dtype=np.float32)
+    prior = np.asarray(prior_prediction, dtype=np.float32)
+    if state.shape != prior.shape:
+        raise ValueError("state and portable-prior predictions must align")
+    coefficient = calibration.get("coefficients")
+    if not isinstance(coefficient, dict):
+        raise RuntimeError("affine ddG calibration lacks coefficients")
+    state_scale = float(coefficient["state"])
+    prior_scale = float(coefficient["portable_prior"])
+    intercept = float(coefficient["intercept"])
+    if (
+        state_scale < 0.0
+        or prior_scale < 0.0
+        or not np.isfinite([state_scale, prior_scale, intercept]).all()
+    ):
+        raise RuntimeError("affine ddG calibration is not monotone/finite")
+    result = (
+        state_scale * state + prior_scale * prior + intercept
+    ).astype(np.float32)
+    if self_mask is not None:
+        mask = np.asarray(self_mask, dtype=bool)
+        if mask.shape != result.shape:
+            raise ValueError("self-mutation mask must align with predictions")
+        result[mask] = 0.0
+    if np.any(~np.isfinite(result)):
+        raise RuntimeError("affine ddG calibration produced invalid values")
+    return result
 
 
 def save_portable_prior(

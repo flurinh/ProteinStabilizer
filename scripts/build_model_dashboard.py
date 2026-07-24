@@ -80,7 +80,12 @@ def dashboard_data() -> dict[str, object]:
     evolutionary_gpcr = _load_optional(
         "docs/gpcr_evolutionary_consensus_audit.json"
     )
-    ddg_scatter = _load_optional("docs/generic_ddg_scatter.json")
+    ddg_scatter_path = (
+        "docs/esmc6b_accuracy_scatter.json"
+        if (ROOT / "docs/esmc6b_accuracy_scatter.json").is_file()
+        else "docs/generic_ddg_scatter.json"
+    )
+    ddg_scatter = _load_optional(ddg_scatter_path)
     ddg_calibration = _load_optional("docs/ddg_calibration_audit.json")
     ddg_loss_ablation = _load_optional("docs/ddg_loss_ablation_audit.json")
     ddg_aligned_retrieval = _load_optional(
@@ -95,6 +100,12 @@ def dashboard_data() -> dict[str, object]:
     )
     accuracy_optimization = _load_optional(
         "docs/accuracy_optimization_audit.json"
+    )
+    accuracy_6b = _load_optional(
+        "docs/esmc6b_accuracy_scale_audit.json"
+    )
+    accuracy_calibration = _load_optional(
+        "docs/esmc6b_accuracy_calibration_audit.json"
     )
 
     test_600m = single_600m["test"]
@@ -1173,7 +1184,7 @@ def dashboard_data() -> dict[str, object]:
         )
     if ddg_scatter is not None:
         data["ddg_scatter"] = ddg_scatter
-        data["sources"].append("docs/generic_ddg_scatter.json")
+        data["sources"].append(ddg_scatter_path)
     optimization_audits: list[dict[str, object]] = []
     if ddg_calibration is not None:
         validation = ddg_calibration["validation"]
@@ -1668,6 +1679,281 @@ def dashboard_data() -> dict[str, object]:
         data["sources"].append(
             "docs/accuracy_optimization_audit.json"
         )
+    if accuracy_6b is not None:
+        development = accuracy_6b["development_oof"]
+        shadow = accuracy_6b["family_shadow"]
+        shadow_state = shadow["state"]
+        shadow_blend = shadow["blend"]
+        interval = shadow_blend[
+            "protein_cluster_bootstrap_mae_95_ci"
+        ]
+        final_training = accuracy_6b["final_training"]
+        application = accuracy_6b["melanopsin_application"]
+        comparison = accuracy_6b["comparison_to_600m_same_logic"]
+        data["status"].update(
+            {
+                "headline": (
+                    "The strict-FP32 6B state + 600M masked-prior ensemble "
+                    f"improves family-shadow MAE to "
+                    f"{_round(shadow_blend['mae'], 3)} kcal/mol; the 6B "
+                    "state remains the stabilizer-ranking route"
+                ),
+                "best_ddg": (
+                    "6B WT state + 600M masked/structure prior · "
+                    "frozen-design family-shadow magnitude estimate"
+                ),
+                "training": (
+                    f"{development['rows']:,} five-fold OOF mutations · "
+                    f"{shadow['shadow_rows']:,} family-shadow mutations · "
+                    f"{final_training['state_refinement_epochs']} final "
+                    "structure epochs + "
+                    f"{final_training['portable_prior_trees']}-tree prior"
+                ),
+                "structure_audit": (
+                    "The same selected logic improves over 600M at 6B, but "
+                    "sub-0.30 and quantitative GPCR accuracy remain "
+                    "unproven without a prospective receptor-held-out set"
+                ),
+            }
+        )
+        data["expected_ddg"].update(
+            {
+                "family_shadow_mae": _round(shadow_blend["mae"], 4),
+                "family_shadow_rmse": _round(shadow_blend["rmse"], 4),
+                "family_shadow_mae_ci95": [
+                    _round(value, 4) for value in interval
+                ],
+                "family_shadow_spearman": _round(
+                    shadow_blend["spearman"], 4
+                ),
+                "family_shadow_state_ap": _round(
+                    shadow_state["average_precision"], 4
+                ),
+                "family_shadow_blend_ap": _round(
+                    shadow_blend["average_precision"], 4
+                ),
+                "interpretation": (
+                    "The scaled model's frozen-design family-shadow estimate "
+                    "is 0.465 kcal/mol MAE (95% protein-bootstrap CI "
+                    "0.420–0.511). It improves the same 600M logic, but the "
+                    "families appeared in earlier cross-validation reports "
+                    "and MegaScale contains no membrane labels. GPCR values "
+                    "remain out-of-domain screening evidence."
+                ),
+            }
+        )
+        data["losses"].insert(
+            0,
+            {
+                "model": "6B hybrid accuracy state refinement",
+                "objective": "Huber + rank + stabilizer retrieval",
+                "members": 1,
+                "final_median": _round(
+                    final_training["final_training_loss"], 4
+                ),
+                "final_range": None,
+                "note": (
+                    "22 native-FP32 head epochs; frozen 6B WT states and "
+                    "cached 600M masked contexts. TF32 disabled."
+                ),
+            },
+        )
+        data["models"].insert(
+            0,
+            {
+                "name": "ESM-C 6B/600M portable accuracy ensemble",
+                "role": (
+                    "Expected-ddG magnitude from 6B state + 600M prior; "
+                    "6B state component used for stabilizer ranking"
+                ),
+                "status": "limited",
+                "target": (
+                    "ΔΔG, kcal/mol · direction accuracy "
+                    f"{_round(shadow_blend['direction_accuracy'])} · "
+                    f"state AP {_round(shadow_state['average_precision'])}"
+                ),
+                "test": (
+                    "Frozen-design family-shadow resplit; not a never-seen "
+                    "dataset and not GPCR calibrated"
+                ),
+                "rows": int(shadow["shadow_rows"]),
+                "spearman": _round(shadow_blend["spearman"]),
+                "pearson": _round(shadow_blend["pearson"]),
+                "mae": _round(shadow_blend["mae"]),
+                "rmse": _round(shadow_blend["rmse"]),
+            },
+        )
+        data["same_project_comparisons"].insert(
+            0,
+            {
+                "model": "Scaled 6B/600M portable accuracy ensemble",
+                "input": (
+                    "6B full WT state + 600M masked marginals + "
+                    "ProteinMPNN/backbone geometry"
+                ),
+                "benchmark": (
+                    "Five family folds plus frozen-design family shadow"
+                ),
+                "metric": (
+                    f"OOF MAE {development['state']['mae']:.4f}→"
+                    f"{development['blend']['mae']:.4f}; shadow "
+                    f"{shadow_state['mae']:.4f}→{shadow_blend['mae']:.4f}; "
+                    f"shadow ρ {shadow_state['spearman']:.4f}→"
+                    f"{shadow_blend['spearman']:.4f}"
+                ),
+                "decision": (
+                    "Promoted as the best current expected-ddG route; retain "
+                    "the 6B state score for stabilizer ranking"
+                ),
+                "tone": "good",
+            },
+        )
+        optimization_audits.insert(
+            0,
+            {
+                "candidate": "Strict-FP32 6B accuracy scale-up",
+                "validation": (
+                    f"family OOF MAE {development['state']['mae']:.4f}→"
+                    f"{development['blend']['mae']:.4f}; all five folds "
+                    "improved"
+                ),
+                "frozen_test": (
+                    f"family-shadow MAE {shadow_state['mae']:.4f}→"
+                    f"{shadow_blend['mae']:.4f}; ρ "
+                    f"{shadow_state['spearman']:.4f}→"
+                    f"{shadow_blend['spearman']:.4f}; blend 95% CI "
+                    f"{interval[0]:.4f}–{interval[1]:.4f}"
+                ),
+                "decision": (
+                    "Promoted; same-logic shadow MAE improves over 600M by "
+                    f"{comparison['family_shadow_blend_mae']['relative_improvement']:.1%}. "
+                    f"Melanopsin cache-only run scored "
+                    f"{application['substitutions_scored']:,} substitutions"
+                ),
+                "tone": "good",
+            },
+        )
+        data["sources"].append(
+            "docs/esmc6b_accuracy_scale_audit.json"
+        )
+    if accuracy_calibration is not None:
+        calibrated_oof = accuracy_calibration["metrics"][
+            "all_development_oof"
+        ]["calibrated"]
+        calibrated_shadow = accuracy_calibration["metrics"][
+            "family_shadow"
+        ]["calibrated"]
+        calibrated_regression = calibrated_shadow["regression"]
+        calibrated_interval = calibrated_shadow[
+            "protein_cluster_bootstrap_mae_95_ci"
+        ]
+        formula = accuracy_calibration["calibration"]["formula"]
+        data["status"].update(
+            {
+                "headline": (
+                    "The promoted strict-FP32 6B state + 600M affine "
+                    "estimator "
+                    f"reaches {_round(calibrated_regression['mae'], 3)} "
+                    "kcal/mol family-shadow MAE; the 6B state remains the "
+                    "stabilizer-ranking route"
+                ),
+                "best_ddg": (
+                    "Affine-calibrated 6B WT state + 600M masked/structure "
+                    "prior · frozen family-shadow estimate"
+                ),
+                "structure_audit": (
+                    "Monotone calibration transfers from tuning fold 0 to "
+                    "confirmation folds 1–4 and the family shadow. "
+                    "Sub-0.30 and quantitative GPCR accuracy remain "
+                    "unproven without a prospective receptor-held-out set."
+                ),
+            }
+        )
+        data["expected_ddg"].update(
+            {
+                "development_oof_mae": _round(
+                    calibrated_oof["regression"]["mae"], 4
+                ),
+                "family_shadow_mae": _round(
+                    calibrated_regression["mae"], 4
+                ),
+                "family_shadow_rmse": _round(
+                    calibrated_regression["rmse"], 4
+                ),
+                "family_shadow_mae_ci95": [
+                    _round(value, 4) for value in calibrated_interval
+                ],
+                "family_shadow_spearman": _round(
+                    calibrated_regression["spearman"], 4
+                ),
+                "family_shadow_blend_ap": _round(
+                    calibrated_shadow["retrieval"]["average_precision"], 4
+                ),
+                "calibration_formula": formula,
+                "interpretation": (
+                    "The selected monotone affine calibration reduces "
+                    "family-shadow MAE from 0.4649 to 0.4583 kcal/mol "
+                    "(95% protein-bootstrap CI 0.4141–0.5104), while "
+                    "state-ranked top-50 stabilizer hits are retained. "
+                    "The families appeared in earlier cross-validation "
+                    "reports and MegaScale contains no membrane labels; "
+                    "GPCR values remain out-of-domain screening evidence."
+                ),
+            }
+        )
+        current = data["models"][0]
+        if current["name"] == (
+            "ESM-C 6B/600M portable accuracy ensemble"
+        ):
+            current.update(
+                {
+                    "name": (
+                        "ESM-C 6B/600M calibrated accuracy ensemble"
+                    ),
+                    "role": (
+                        "Affine expected-ddG magnitude from 6B state + "
+                        "600M prior; 6B state used for stabilizer ranking"
+                    ),
+                    "target": (
+                        "ΔΔG, kcal/mol · direction accuracy "
+                        f"{_round(calibrated_regression['direction_accuracy'])}"
+                    ),
+                    "spearman": _round(
+                        calibrated_regression["spearman"]
+                    ),
+                    "pearson": _round(
+                        calibrated_regression["pearson"]
+                    ),
+                    "mae": _round(calibrated_regression["mae"]),
+                    "rmse": _round(calibrated_regression["rmse"]),
+                }
+            )
+        optimization_audits.insert(
+            0,
+            {
+                "candidate": "Monotone affine ΔΔG calibration",
+                "validation": (
+                    "confirmation folds 1–4 MAE "
+                    f"{accuracy_calibration['metrics']['confirmation_folds_1_to_4']['baseline']['regression']['mae']:.4f}→"
+                    f"{accuracy_calibration['metrics']['confirmation_folds_1_to_4']['calibrated']['regression']['mae']:.4f}"
+                ),
+                "frozen_test": (
+                    "family-shadow MAE "
+                    f"{accuracy_calibration['metrics']['family_shadow']['baseline']['regression']['mae']:.4f}→"
+                    f"{calibrated_regression['mae']:.4f}; ρ "
+                    f"{accuracy_calibration['metrics']['family_shadow']['baseline']['regression']['spearman']:.4f}→"
+                    f"{calibrated_regression['spearman']:.4f}"
+                ),
+                "decision": (
+                    "Promoted for expected-ΔΔG magnitude; state ranking "
+                    "unchanged; outer partition excluded"
+                ),
+                "tone": "good",
+            },
+        )
+        data["sources"].append(
+            "docs/esmc6b_accuracy_calibration_audit.json"
+        )
     data["optimization_audits"] = optimization_audits
     return data
 
@@ -1954,12 +2240,13 @@ const scatter = DATA.ddg_scatter;
 if (scatter) {
   const m = scatter.metrics;
   document.querySelector("#scatter-stats").innerHTML = [
-    ["Held-out mutations", scatter.rows.toLocaleString()],
+    ["Evaluated mutations", (scatter.evaluated_rows || scatter.rows).toLocaleString()],
+    ...(scatter.evaluated_rows && scatter.evaluated_rows !== scatter.rows ? [["Plotted points", scatter.rows.toLocaleString()]] : []),
     ["Pearson r", fmt(m.pearson)],
     ["Spearman ρ", fmt(m.spearman)],
     ["MAE", `${fmt(m.mae)} kcal/mol`],
     ["RMSE", `${fmt(m.rmse)} kcal/mol`],
-    ...(e.generic_mae_ci95 ? [["MAE protein CI", `${fmt(e.generic_mae_ci95[0])}–${fmt(e.generic_mae_ci95[1])}`]] : []),
+    ...(m.protein_cluster_bootstrap_mae_95_ci ? [["MAE protein CI", `${fmt(m.protein_cluster_bootstrap_mae_95_ci[0])}–${fmt(m.protein_cluster_bootstrap_mae_95_ci[1])}`]] : []),
     ["Calibration", `slope ${fmt(scatter.calibration.slope)} · intercept ${fmt(scatter.calibration.intercept)}`],
   ].map(([label, value]) => `<div class="scatter-stat"><span>${label}</span><b>${value}</b></div>`).join("");
 

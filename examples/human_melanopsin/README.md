@@ -35,6 +35,22 @@ component determines stabilizer rank. By default, the shortlist requires both
 components to predict negative ddG. On the supplied 270-site mask, 5,130
 substitutions are evaluated in one WT batch plus 16 masked batches.
 
+Run the scaled accuracy model with a strict-FP32 6B WT state and the validated
+600M masked prior:
+
+```bash
+bash examples/human_melanopsin/run_accuracy_6b.sh
+```
+
+The script deliberately uses two environments. First, the 600M runtime writes
+a target-specific, provenance-checked masked-site cache. Then the 6B runtime
+loads the promoted 6B accuracy checkpoint, reuses a persistent WT embedding
+cache, and consumes the 600M cache without loading the 600M encoder. Expected
+ΔΔG uses the fold-0-selected, confirmation-gated monotone affine calibration;
+candidate order remains the exact 6B state score. Repeated runs with the same
+sequence, mask, and checkpoints require no masked-site passes and no 6B WT
+pass.
+
 Melanopsin is 478 residues, whereas this quantitative head was trained on
 30–72-residue MegaScale proteins with no membrane labels. Its ddG field is
 therefore a domain-shift extrapolation, not GPCR-calibrated kcal/mol. Use the

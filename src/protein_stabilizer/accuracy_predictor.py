@@ -13,11 +13,16 @@ import torch
 
 from .accuracy import (
     PortablePriorConfig,
+    apply_affine_ddg_calibration,
     backbone_geometry_features,
     blend_state_and_prior,
     load_portable_prior,
     portable_prior_features,
     predict_portable_prior,
+)
+from .accuracy_data import (
+    load_target_masked_marginals,
+    load_target_state_embeddings,
 )
 from .accuracy_training import ACCURACY_ENSEMBLE_SCHEMA
 from .data import (
@@ -34,7 +39,11 @@ from .full_structure import (
     load_trainable_proteinmpnn,
 )
 from .structure import ProteinMPNNBackboneEmbedder
-from .v2_predictor import _bounded_candidate_indices, _compact_position_ranges
+from .v2_predictor import (
+    _bounded_candidate_indices,
+    _compact_position_ranges,
+    _embed_requests_cached,
+)
 
 
 ACCURACY_SCREEN_SCHEMA = "protein-stabilizer.accuracy-screen.v1"
@@ -98,18 +107,39 @@ def _load_accuracy_checkpoint(
 
 def _validate_runtime_provenance(
     checkpoint: Mapping[str, object],
-    embedder: ESMCEmbedder,
+    state_model_provenance: Mapping[str, object],
+    masked_model_provenance: Mapping[str, object],
     structure_embedder: ProteinMPNNBackboneEmbedder,
     dynamic_provenance: Mapping[str, object],
 ) -> None:
     feature_provenance = checkpoint["feature_provenance"]
+    state_model = feature_provenance["hierarchy_rows"][0][
+        "hierarchy_provenance"
+    ]
     masked_model = feature_provenance["masked_marginal"][
         "model_provenance"
     ]
-    if embedder.provenance.checkpoint_sha256 != masked_model[
-        "checkpoint_sha256"
-    ]:
-        raise RuntimeError("runtime ESM-C checkpoint differs from training")
+    numeric_fields = (
+        "checkpoint_sha256",
+        "embedding_dimension",
+        "inference_dtype",
+        "storage_dtype",
+        "residue_policy",
+    )
+    for label, runtime, trained in (
+        ("state", state_model_provenance, state_model),
+        ("masked", masked_model_provenance, masked_model),
+    ):
+        mismatched = [
+            name
+            for name in numeric_fields
+            if runtime.get(name) != trained.get(name)
+        ]
+        if mismatched:
+            raise RuntimeError(
+                f"runtime {label} ESM-C provenance differs from training "
+                f"for {mismatched}"
+            )
     row_provenance = feature_provenance["hierarchy_rows"][0][
         "structure_provenance"
     ]["proteinmpnn"]
@@ -150,7 +180,10 @@ def screen_accuracy_single_mutants(
     top: int = 50,
     max_per_site: int | None = None,
     require_component_agreement: bool = True,
-    embedder: ESMCEmbedder | None = None,
+    embedder: object | None = None,
+    masked_marginal_path: Path | None = None,
+    embedding_cache: Path | None = None,
+    state_cache_only: bool = False,
 ) -> dict[str, object]:
     """Screen all substitutions with separate ddG and retrieval outputs."""
 
@@ -197,10 +230,19 @@ def screen_accuracy_single_mutants(
         torch.set_float32_matmul_precision("highest")
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
-    active_embedder = embedder or ESMCEmbedder(
-        model_name=model_name,
-        device=device,
-        storage_dtype="float32",
+    if state_cache_only and embedding_cache is None:
+        raise ValueError(
+            "state-cache-only inference requires an embedding cache"
+        )
+    active_embedder = (
+        None
+        if state_cache_only
+        else embedder
+        or ESMCEmbedder(
+            model_name=model_name,
+            device=device,
+            storage_dtype="float32",
+        )
     )
     state_model, prior, config, checkpoint, dynamic_provenance = (
         _load_accuracy_checkpoint(
@@ -214,24 +256,84 @@ def screen_accuracy_single_mutants(
         device=device,
         storage_dtype="float32",
     )
+
+    if state_cache_only:
+        esm_residue, state_cache_provenance = (
+            load_target_state_embeddings(
+                Path(embedding_cache),
+                wt_sequence,
+            )
+        )
+        state_model_provenance = state_cache_provenance[
+            "model_provenance"
+        ]
+        state_embedding_stats = {
+            "requested": 1,
+            "computed": 0,
+            "cache_hits": 1,
+        }
+    else:
+        assert active_embedder is not None
+        full_request = EmbeddingRequest(
+            wt_sequence, tuple(range(1, len(wt_sequence) + 1))
+        )
+        embedded, state_embedding_stats = _embed_requests_cached(
+            active_embedder,
+            [full_request],
+            window_radius=4,
+            max_tokens=max_tokens,
+            max_batch_size=max_batch_size,
+            cache_path=embedding_cache,
+        )
+        esm_residue = np.asarray(
+            embedded[0].windows[:, 4], dtype=np.float32
+        )
+        state_model_provenance = json.loads(
+            active_embedder.provenance.canonical_json()
+        )
+        state_cache_provenance = (
+            None
+            if embedding_cache is None
+            else {
+                "path": str(Path(embedding_cache).resolve()),
+                "sha256": file_sha256(Path(embedding_cache).resolve()),
+                "model_provenance": state_model_provenance,
+            }
+        )
+    if masked_marginal_path is None:
+        if active_embedder is None:
+            raise ValueError(
+                "state-cache-only inference requires a masked-marginal cache"
+            )
+        masked_by_site = (
+            active_embedder.masked_marginal_log_probabilities(
+                wt_sequence,
+                allowed,
+                max_tokens=max_tokens,
+                max_batch_size=max_batch_size,
+            )
+        )
+        masked_model_provenance = json.loads(
+            active_embedder.provenance.canonical_json()
+        )
+        masked_cache_provenance = None
+    else:
+        masked_by_site, masked_cache_provenance = (
+            load_target_masked_marginals(
+                masked_marginal_path,
+                wt_sequence,
+                allowed,
+            )
+        )
+        masked_model_provenance = masked_cache_provenance[
+            "model_provenance"
+        ]
     _validate_runtime_provenance(
         checkpoint,
-        active_embedder,
+        state_model_provenance,
+        masked_model_provenance,
         structure_embedder,
         dynamic_provenance,
-    )
-
-    full_request = EmbeddingRequest(
-        wt_sequence, tuple(range(1, len(wt_sequence) + 1))
-    )
-    esm_residue = active_embedder.encode([full_request])[0].astype(
-        np.float32
-    )
-    masked_by_site = active_embedder.masked_marginal_log_probabilities(
-        wt_sequence,
-        allowed,
-        max_tokens=max_tokens,
-        max_batch_size=max_batch_size,
     )
     coordinates, coordinate_mask, chain = (
         structure_embedder.backbone_coordinates(
@@ -324,8 +426,16 @@ def screen_accuracy_single_mutants(
         static_proteinmpnn[None],
     )
     prior_ddg = predict_portable_prior(prior, features, wt, mutant)
-    expected_ddg = blend_state_and_prior(
-        state_ddg, prior_ddg, config=config
+    ddg_calibration = checkpoint.get("ddg_calibration")
+    expected_ddg = (
+        blend_state_and_prior(state_ddg, prior_ddg, config=config)
+        if ddg_calibration is None
+        else apply_affine_ddg_calibration(
+            state_ddg,
+            prior_ddg,
+            ddg_calibration,
+            self_mask=wt == mutant,
+        )
     )
 
     stabilizer_order = np.argsort(state_ddg, kind="stable")
@@ -398,6 +508,8 @@ def screen_accuracy_single_mutants(
         "routing": {
             "expected_general_ddg_kcal_mol": (
                 "0.60 exact state ddG + 0.40 portable prior ddG"
+                if ddg_calibration is None
+                else str(ddg_calibration["formula"])
             ),
             "stabilizer_ranking": (
                 "exact state score; selected because it retained higher "
@@ -432,19 +544,36 @@ def screen_accuracy_single_mutants(
             ),
         },
         "embedding_cost": {
-            "full_wt_forward_batches": 1,
-            "masked_site_contexts": len(allowed),
+            "full_wt_forward_batches": int(
+                state_embedding_stats["computed"]
+            ),
+            "full_wt_cache_hits": int(
+                state_embedding_stats["cache_hits"]
+            ),
+            "masked_site_contexts": (
+                len(allowed) if masked_marginal_path is None else 0
+            ),
+            "masked_site_cache_hits": (
+                0 if masked_marginal_path is None else len(allowed)
+            ),
             "masked_forward_batches": int(
-                np.ceil(
+                0
+                if masked_marginal_path is not None
+                else np.ceil(
                     len(allowed)
                     / min(
                         max_batch_size,
-                        max(1, max_tokens // (len(wt_sequence) + 2)),
+                        max(
+                            1,
+                            max_tokens // (len(wt_sequence) + 2),
+                        ),
                     )
                 )
             ),
             "mutant_sequence_passes": 0,
             "substitutions_scored_per_site": 19,
+            "state_embedding_cache": state_cache_provenance,
+            "masked_marginal_cache": masked_cache_provenance,
         },
         "protected_mask": {
             "policy": "hard exclusion before embedding and candidate generation",
@@ -470,12 +599,14 @@ def screen_accuracy_single_mutants(
             ),
         },
         "model": {
-            "name": model_name,
+            "state_model": state_model_provenance["model_name"],
+            "masked_model": masked_model_provenance["model_name"],
             "checkpoint": str(Path(checkpoint_path).resolve()),
             "checkpoint_sha256": file_sha256(
                 Path(checkpoint_path).resolve()
             ),
             "configuration": asdict(config),
+            "ddg_calibration": ddg_calibration,
             "feature_schema": checkpoint["feature_provenance"]["schema"],
         },
     }

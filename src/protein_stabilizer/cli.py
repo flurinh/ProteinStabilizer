@@ -9,7 +9,11 @@ from typing import Sequence
 
 import numpy as np
 
-from .accuracy_data import build_masked_marginal_cache
+from .accuracy_data import (
+    build_masked_marginal_cache,
+    build_target_masked_marginal_cache,
+    load_target_state_embeddings,
+)
 from .accuracy_training import (
     cross_validate_accuracy_ensemble,
     evaluate_accuracy_outer,
@@ -18,11 +22,18 @@ from .accuracy_training import (
 )
 from .accuracy_predictor import screen_accuracy_single_mutants
 from .alphafold import fetch_alphafold_structure
-from .data import DatasetPaths, all_embedding_requests, single_embedding_requests
+from .data import (
+    DatasetPaths,
+    EmbeddingRequest,
+    all_embedding_requests,
+    normalize_sequence,
+    single_embedding_requests,
+)
 from .embeddings import (
     ESMCEmbedder,
     build_embedding_cache,
     build_hierarchy_embedding_cache,
+    file_sha256,
 )
 from .esmc6b import (
     DEFAULT_ESMC6B_MODEL,
@@ -34,6 +45,7 @@ from .esmc6b import (
 from .features import build_feature_files
 from .full_structure_data import (
     build_full_sequence_embeddings,
+    build_full_structure_from_hierarchy_cache,
     build_full_structure_dataset,
 )
 from .full_structure_training import (
@@ -78,6 +90,7 @@ from .v2_transfer import (
     train_transfer_adapters,
 )
 from .v2_predictor import (
+    _embed_requests_cached,
     predict_hierarchical_mutations,
     screen_hierarchical_double_mutants,
     screen_hierarchical_single_mutants,
@@ -143,6 +156,9 @@ DEFAULT_ACCURACY_CHECKPOINTS = (
     ROOT / "checkpoints/esmc_600m_accuracy_fp32"
 )
 DEFAULT_ACCURACY_FINAL = DEFAULT_ACCURACY_CHECKPOINTS / "promoted"
+DEFAULT_ESMC6B_ACCURACY_FINAL = (
+    ROOT / "checkpoints/esmc_6b_accuracy_fp32/promoted_affine"
+)
 DEFAULT_MASKED_MARGINALS = Path(
     "/data/fast/tmp/protein-stabilizer/study/"
     "esmc600m_masked_marginals.h5"
@@ -338,6 +354,16 @@ def command_features_full_structure(
     )
 
 
+def command_features_full_structure_from_hierarchy(
+    args: argparse.Namespace,
+) -> dict[str, object]:
+    return build_full_structure_from_hierarchy_cache(
+        args.source_data,
+        args.hierarchy_cache,
+        args.output,
+    )
+
+
 def command_train_full_structure(
     args: argparse.Namespace,
 ) -> dict[str, object]:
@@ -393,6 +419,9 @@ def command_cross_validate_accuracy(
         args.output,
         protein_batch_size=args.protein_batch_size,
         device=args.device,
+        allow_cross_scale_masked_prior=(
+            args.allow_cross_scale_masked_prior
+        ),
     )
 
 
@@ -415,6 +444,9 @@ def command_evaluate_accuracy_shadow(
         weight_decay=args.weight_decay,
         seed=args.seed,
         device=args.device,
+        allow_cross_scale_masked_prior=(
+            args.allow_cross_scale_masked_prior
+        ),
     )
 
 
@@ -434,6 +466,9 @@ def command_train_accuracy(
         weight_decay=args.weight_decay,
         seed=args.seed,
         device=args.device,
+        allow_cross_scale_masked_prior=(
+            args.allow_cross_scale_masked_prior
+        ),
     )
 
 
@@ -449,6 +484,9 @@ def command_evaluate_accuracy_outer(
         args.output,
         protein_batch_size=args.protein_batch_size,
         device=args.device,
+        allow_cross_scale_masked_prior=(
+            args.allow_cross_scale_masked_prior
+        ),
     )
 
 
@@ -1002,6 +1040,149 @@ def command_screen_accuracy(args: argparse.Namespace) -> dict[str, object]:
         max_per_site=args.max_per_site,
         require_component_agreement=args.require_component_agreement,
         embedder=embedder,
+        embedding_cache=args.embedding_cache,
+    )
+
+
+def command_cache_accuracy_target(
+    args: argparse.Namespace,
+) -> dict[str, object]:
+    sequence = (
+        args.sequence
+        if args.sequence is not None
+        else _read_fasta(args.fasta)
+    )
+    protected = _protected_mask(
+        sequence,
+        args.protected_positions,
+        args.protected_mask,
+    )
+    requested = _parse_positions(args.positions)
+    positions = tuple(
+        position
+        for position in (
+            range(1, len(sequence) + 1)
+            if requested is None
+            else requested
+        )
+        if position not in protected
+    )
+    return build_target_masked_marginal_cache(
+        sequence,
+        positions,
+        args.output,
+        model_name=args.model,
+        device=args.device,
+        max_tokens=args.max_tokens,
+        max_batch_size=args.max_batch_size,
+    )
+
+
+def command_cache_accuracy_state_6b(
+    args: argparse.Namespace,
+) -> dict[str, object]:
+    sequence = (
+        args.sequence
+        if args.sequence is not None
+        else _read_fasta(args.fasta)
+    )
+    sequence = normalize_sequence(sequence)
+    request = EmbeddingRequest(
+        sequence, tuple(range(1, len(sequence) + 1))
+    )
+    output = Path(args.output).resolve()
+    if output.is_file():
+        try:
+            _, cached = load_target_state_embeddings(output, sequence)
+        except RuntimeError:
+            cached = None
+        if cached is not None:
+            model = cached["model_provenance"]
+            if (
+                model.get("model_name") != args.model
+                or model.get("inference_dtype") != "float32"
+                or model.get("storage_dtype") != "float32"
+            ):
+                raise RuntimeError(
+                    "completed target state cache has incompatible "
+                    "model/numeric provenance"
+                )
+            return {
+                "schema": "protein-stabilizer.target-state-cache.v1",
+                "output": str(output),
+                "output_sha256": file_sha256(output),
+                "sequence_length": len(sequence),
+                "computed": 0,
+                "cache_hits": 1,
+                "model_provenance": model,
+            }
+    embedder = ESMC6BEmbedder(
+        args.model,
+        args.device,
+        inference_dtype="float32",
+        storage_dtype="float32",
+    )
+    _, stats = _embed_requests_cached(
+        embedder,
+        [request],
+        window_radius=4,
+        max_tokens=args.max_tokens,
+        max_batch_size=1,
+        cache_path=output,
+    )
+    _, cached = load_target_state_embeddings(output, sequence)
+    return {
+        "schema": "protein-stabilizer.target-state-cache.v1",
+        "output": str(output),
+        "output_sha256": file_sha256(output),
+        "sequence_length": len(sequence),
+        **stats,
+        "model_provenance": cached["model_provenance"],
+    }
+
+
+def command_screen_accuracy_6b(
+    args: argparse.Namespace,
+) -> dict[str, object]:
+    sequence = (
+        args.sequence
+        if args.sequence is not None
+        else _read_fasta(args.fasta)
+    )
+    protected = _protected_mask(
+        sequence,
+        args.protected_positions,
+        args.protected_mask,
+    )
+    pdb_path, structure_residue_mask, structure_provenance = (
+        _resolve_structure(args, sequence)
+    )
+    if pdb_path is None:
+        raise ValueError(
+            "screen-accuracy-6b requires --pdb or --uniprot because the "
+            "promoted model uses backbone geometry"
+        )
+    return screen_accuracy_single_mutants(
+        sequence,
+        args.accuracy_checkpoint,
+        args.output,
+        pdb_path=pdb_path,
+        proteinmpnn_repository=args.proteinmpnn_repository,
+        positions=_parse_positions(args.positions),
+        protected_positions=tuple(protected),
+        protected_reasons=protected,
+        structure_residue_mask=structure_residue_mask,
+        structure_source_provenance=structure_provenance,
+        model_name=args.model,
+        device=args.device,
+        max_tokens=args.max_tokens,
+        max_batch_size=args.max_batch_size,
+        top=args.top,
+        max_per_site=args.max_per_site,
+        require_component_agreement=args.require_component_agreement,
+        masked_marginal_path=args.masked_marginals_cache,
+        embedding_cache=args.embedding_cache,
+        state_cache_only=True,
     )
 
 
@@ -1458,6 +1639,32 @@ def build_parser() -> argparse.ArgumentParser:
         "--outer-fraction", type=float, default=0.20
     )
     features_full_structure.add_argument("--folds", type=int, default=5)
+    features_full_structure_from_hierarchy = subparsers.add_parser(
+        "features-full-structure-from-hierarchy"
+    )
+    features_full_structure_from_hierarchy.add_argument(
+        "--source-data",
+        type=Path,
+        default=DEFAULT_FULL_STRUCTURE_DATA,
+        help=(
+            "validated full-structure bank supplying mutation rows, family "
+            "splits, sequences, and backbones"
+        ),
+    )
+    features_full_structure_from_hierarchy.add_argument(
+        "--hierarchy-cache",
+        type=Path,
+        default=DEFAULT_ESMC6B_HIERARCHY_CACHE,
+        help=(
+            "strict-FP32 hierarchy cache whose overlapping WT windows are "
+            "reconstructed into full residue tensors"
+        ),
+    )
+    features_full_structure_from_hierarchy.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_6B_FULL_STRUCTURE_DATA,
+    )
     train_full_structure = subparsers.add_parser(
         "train-full-structure"
     )
@@ -1574,6 +1781,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     accuracy_parent.add_argument(
         "--protein-batch-size", type=int, default=8
+    )
+    accuracy_parent.add_argument(
+        "--allow-cross-scale-masked-prior",
+        action="store_true",
+        help=(
+            "permit a separately provenance-checked masked ESM-C checkpoint "
+            "for a heterogeneous scale ensemble; disabled by default"
+        ),
     )
     accuracy_parent.add_argument("--device", default="cuda")
     cross_validate_accuracy = subparsers.add_parser(
@@ -2265,6 +2480,136 @@ def build_parser() -> argparse.ArgumentParser:
     screen_accuracy.add_argument(
         "--max-batch-size", type=int, default=128
     )
+    screen_accuracy.add_argument(
+        "--embedding-cache",
+        type=Path,
+        default=DEFAULT_APPLICATION_600M_CACHE,
+        help="persistent provenance-checked WT state embedding cache",
+    )
+    cache_accuracy_target = subparsers.add_parser(
+        "cache-accuracy-target"
+    )
+    cache_accuracy_target.add_argument("--sequence")
+    cache_accuracy_target.add_argument("--fasta", type=Path)
+    cache_accuracy_target.add_argument(
+        "--positions", help="comma-separated positions/ranges; default all"
+    )
+    cache_accuracy_target.add_argument(
+        "--protected-positions",
+        help="one-based positions/ranges that are never mutated",
+    )
+    cache_accuracy_target.add_argument(
+        "--protected-mask",
+        type=Path,
+        help=(
+            "text mask with one position/range and optional tab-separated "
+            "reason per line"
+        ),
+    )
+    cache_accuracy_target.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="persistent target-specific masked probability cache",
+    )
+    cache_accuracy_target.add_argument(
+        "--model", default="esmc_600m", choices=["esmc_600m"]
+    )
+    cache_accuracy_target.add_argument("--device", default="cuda")
+    cache_accuracy_target.add_argument(
+        "--max-tokens", type=int, default=8192
+    )
+    cache_accuracy_target.add_argument(
+        "--max-batch-size", type=int, default=128
+    )
+    cache_accuracy_state_6b = subparsers.add_parser(
+        "cache-accuracy-state-6b"
+    )
+    cache_accuracy_state_6b.add_argument("--sequence")
+    cache_accuracy_state_6b.add_argument("--fasta", type=Path)
+    cache_accuracy_state_6b.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_APPLICATION_6B_CACHE,
+        help="persistent strict-FP32 6B WT state embedding cache",
+    )
+    cache_accuracy_state_6b.add_argument(
+        "--model", default=DEFAULT_ESMC6B_MODEL
+    )
+    cache_accuracy_state_6b.add_argument("--device", default="cuda")
+    cache_accuracy_state_6b.add_argument(
+        "--max-tokens", type=int, default=8192
+    )
+    screen_accuracy_6b = subparsers.add_parser("screen-accuracy-6b")
+    screen_accuracy_6b.add_argument("--sequence")
+    screen_accuracy_6b.add_argument("--fasta", type=Path)
+    screen_accuracy_6b.add_argument(
+        "--positions", help="comma-separated positions/ranges; default all"
+    )
+    screen_accuracy_6b.add_argument(
+        "--protected-positions",
+        help="one-based positions/ranges that are never mutated",
+    )
+    screen_accuracy_6b.add_argument(
+        "--protected-mask",
+        type=Path,
+        help=(
+            "text mask with one position/range and optional tab-separated "
+            "reason per line"
+        ),
+    )
+    screen_accuracy_6b.add_argument(
+        "--output",
+        type=Path,
+        default=ROOT / "artifacts/screen_accuracy_6b.csv",
+    )
+    screen_accuracy_6b.add_argument("--top", type=int, default=50)
+    screen_accuracy_6b.add_argument(
+        "--max-per-site",
+        type=int,
+        help="maximum substitutions from one site in the returned shortlist",
+    )
+    screen_accuracy_6b.add_argument(
+        "--require-component-agreement",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "only suggest mutations whose state score and general ddG "
+            "ensemble both predict stabilization"
+        ),
+    )
+    screen_accuracy_6b.add_argument(
+        "--accuracy-checkpoint",
+        type=Path,
+        default=DEFAULT_ESMC6B_ACCURACY_FINAL
+        / "accuracy_ensemble.pt",
+    )
+    screen_accuracy_6b.add_argument(
+        "--masked-marginals-cache",
+        type=Path,
+        required=True,
+        help=(
+            "target cache produced by cache-accuracy-target in the 600M "
+            "runtime"
+        ),
+    )
+    screen_accuracy_6b.add_argument(
+        "--model", default=DEFAULT_ESMC6B_MODEL
+    )
+    screen_accuracy_6b.add_argument("--device", default="cuda")
+    _add_structure_arguments(screen_accuracy_6b)
+    screen_accuracy_6b.add_argument(
+        "--max-tokens", type=int, default=8192
+    )
+    screen_accuracy_6b.add_argument(
+        "--max-batch-size", type=int, default=1
+    )
+    screen_accuracy_6b.add_argument(
+        "--embedding-cache",
+        type=Path,
+        default=DEFAULT_APPLICATION_6B_CACHE,
+        help="persistent provenance-checked 6B WT state embedding cache",
+    )
     screen_v2_6b = subparsers.add_parser("screen-v2-6b")
     screen_v2_6b.add_argument("--sequence")
     screen_v2_6b.add_argument("--fasta", type=Path)
@@ -2450,6 +2795,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         "rank-gpcr-consensus",
         "predict-6b",
         "screen-accuracy",
+        "cache-accuracy-target",
+        "cache-accuracy-state-6b",
+        "screen-accuracy-6b",
     } and (
         args.sequence is None
     ) == (
@@ -2463,6 +2811,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         "embed-full-structure": command_embed_full_structure,
         "cache-masked-marginals": command_cache_masked_marginals,
         "features-full-structure": command_features_full_structure,
+        "features-full-structure-from-hierarchy": (
+            command_features_full_structure_from_hierarchy
+        ),
         "train-full-structure": command_train_full_structure,
         "evaluate-full-structure-outer": (
             command_evaluate_full_structure_outer
@@ -2471,6 +2822,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         "evaluate-accuracy-shadow": command_evaluate_accuracy_shadow,
         "train-accuracy": command_train_accuracy,
         "evaluate-accuracy-outer": command_evaluate_accuracy_outer,
+        "cache-accuracy-target": command_cache_accuracy_target,
+        "cache-accuracy-state-6b": command_cache_accuracy_state_6b,
         "structure-v2": command_structure_v2,
         "structure-v2-aligned": command_structure_v2_aligned,
         "features-v2": command_features_v2,
@@ -2501,6 +2854,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "screen": command_screen,
         "screen-v2": command_screen_v2,
         "screen-accuracy": command_screen_accuracy,
+        "screen-accuracy-6b": command_screen_accuracy_6b,
         "screen-v2-6b": command_screen_v2_6b,
         "screen-v2-pairs": command_screen_v2_pairs,
         "screen-v2-pairs-6b": command_screen_v2_pairs_6b,

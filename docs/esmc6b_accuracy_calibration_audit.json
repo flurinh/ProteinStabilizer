@@ -1,0 +1,426 @@
+{
+  "artifacts": {
+    "calibrated_checkpoint": "/data/fast/projects/ProteinStabilizer/checkpoints/esmc_6b_accuracy_fp32/promoted_affine/accuracy_ensemble.pt",
+    "calibrated_checkpoint_sha256": "cc293de9bc731ede202d34ac085fcf0597847a0c6d6e44619d92d1b8183106f1",
+    "calibrated_predictions": "/data/fast/projects/ProteinStabilizer/checkpoints/esmc_6b_accuracy_fp32/promoted_affine/calibrated_oof_predictions.csv",
+    "calibrated_predictions_sha256": "bffd4fef6fa8fc7eafda7866af9d99dc9e39980ad0230d25918719d7decc3181",
+    "oof_predictions": "/data/fast/projects/ProteinStabilizer/checkpoints/esmc_6b_accuracy_fp32/cv_hybrid/accuracy_oof_predictions.csv",
+    "oof_predictions_sha256": "ae11a373ad5f1243c6d782e4673f991981d1c50e773d9afa7a27dec8fcb708fa",
+    "shadow_predictions": "/data/fast/projects/ProteinStabilizer/checkpoints/esmc_6b_accuracy_fp32/shadow_hybrid_components/shadow_predictions.csv",
+    "shadow_predictions_sha256": "fc5a71d631ff75cbbd72ee493bc9f0563d92b14588dba1efdad6b062cadd4bd1",
+    "source_checkpoint": "/data/fast/projects/ProteinStabilizer/checkpoints/esmc_6b_accuracy_fp32/promoted_hybrid/accuracy_ensemble.pt",
+    "source_checkpoint_sha256": "287b1b2c76e2951b1d26b04d55f18a9d6e7dfbe5a889b37281d53b370c954335"
+  },
+  "calibration": {
+    "coefficients": {
+      "intercept": -0.05106622954573248,
+      "portable_prior": 0.5997719588431042,
+      "state": 0.503355322407286
+    },
+    "formula": "0.503355322407 * state_ddg + 0.599771958843 * portable_prior_ddg -0.051066229546",
+    "schema": "protein-stabilizer.affine-ddg-calibration.v1",
+    "selection": {
+      "bounds": {
+        "component_scales": [
+          0.0,
+          2.0
+        ],
+        "intercept_kcal_mol": [
+          -1.0,
+          1.0
+        ]
+      },
+      "confirmation_folds": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "monotone_nonnegative_component_scales": true,
+      "objective": "micro MAE",
+      "outer_used": false,
+      "tuning_fold": 0
+    },
+    "self_mutation_policy": "force exactly zero at application time"
+  },
+  "created_date": "2026-07-24",
+  "decision": {
+    "expected_ddg": "calibrated affine state/prior estimate",
+    "gpcr_quantitative_accuracy_established": false,
+    "promoted": true,
+    "stabilizer_ranking": "unchanged 6B state score",
+    "sub_0_3_supported": false
+  },
+  "metrics": {
+    "all_development_oof": {
+      "baseline": {
+        "macro_protein_mae": 0.4626545775987007,
+        "macro_protein_spearman": 0.7878324958488094,
+        "protein_cluster_bootstrap_mae_95_ci": [
+          0.4508362837135792,
+          0.4913626715540886
+        ],
+        "protein_count": 110,
+        "regression": {
+          "direction_accuracy": 0.8002453693454358,
+          "mae": 0.4717544001944429,
+          "n": 108408,
+          "pearson": 0.7861110029340257,
+          "rmse": 0.6460832898719007,
+          "spearman": 0.7651871339128076
+        },
+        "retrieval": {
+          "auroc": 0.8019134737821859,
+          "average_precision": 0.21557432630611373,
+          "enrichment_at_10_percent": 4.137500670036009,
+          "enrichment_at_20": 20.034332648870638,
+          "enrichment_at_50": 16.472673511293635,
+          "hits_at_10_percent": 2015,
+          "hits_at_20": 18,
+          "hits_at_50": 37,
+          "n": 108408,
+          "positives": 4870,
+          "precision_at_10_percent": 0.18586846231897428,
+          "precision_at_20": 0.9,
+          "precision_at_50": 0.74,
+          "prevalence": 0.0449228839200059,
+          "recall_at_10_percent": 0.4137577002053388,
+          "recall_at_20": 0.003696098562628337,
+          "recall_at_50": 0.0075975359342915815,
+          "threshold": -0.5
+        }
+      },
+      "calibrated": {
+        "macro_protein_mae": 0.4594448064232921,
+        "macro_protein_spearman": 0.7901592069343307,
+        "protein_cluster_bootstrap_mae_95_ci": [
+          0.4480107545852661,
+          0.4861860632896423
+        ],
+        "protein_count": 110,
+        "regression": {
+          "direction_accuracy": 0.8009003025606967,
+          "mae": 0.4680907865153599,
+          "n": 108408,
+          "pearson": 0.7879331419287611,
+          "rmse": 0.6416055476311269,
+          "spearman": 0.7671800766891275
+        },
+        "retrieval": {
+          "auroc": 0.7855147370626814,
+          "average_precision": 0.1953041316165556,
+          "enrichment_at_10_percent": 3.7986978856410007,
+          "enrichment_at_20": 21.14735112936345,
+          "enrichment_at_50": 15.582258726899383,
+          "hits_at_10_percent": 1850,
+          "hits_at_20": 19,
+          "hits_at_50": 35,
+          "n": 108408,
+          "positives": 4870,
+          "precision_at_10_percent": 0.17064846416382254,
+          "precision_at_20": 0.95,
+          "precision_at_50": 0.7,
+          "prevalence": 0.0449228839200059,
+          "recall_at_10_percent": 0.3798767967145791,
+          "recall_at_20": 0.0039014373716632442,
+          "recall_at_50": 0.007186858316221766,
+          "threshold": -0.5
+        }
+      }
+    },
+    "confirmation_folds_1_to_4": {
+      "baseline": {
+        "macro_protein_mae": 0.4560344047568064,
+        "macro_protein_spearman": 0.7961455152097737,
+        "protein_cluster_bootstrap_mae_95_ci": [
+          0.4450547628104687,
+          0.4877020500600338
+        ],
+        "protein_count": 88,
+        "regression": {
+          "direction_accuracy": 0.8018859235038109,
+          "mae": 0.4653812032361743,
+          "n": 86854,
+          "pearson": 0.7966828930541646,
+          "rmse": 0.6348255227111193,
+          "spearman": 0.7722872920279571
+        },
+        "retrieval": {
+          "auroc": 0.8094951347387719,
+          "average_precision": 0.2295662548773878,
+          "enrichment_at_10_percent": 4.315162599876805,
+          "enrichment_at_20": 18.085163977095263,
+          "enrichment_at_50": 17.1809057782405,
+          "hits_at_10_percent": 1658,
+          "hits_at_20": 16,
+          "hits_at_50": 38,
+          "n": 86854,
+          "positives": 3842,
+          "precision_at_10_percent": 0.19088187888556296,
+          "precision_at_20": 0.8,
+          "precision_at_50": 0.76,
+          "prevalence": 0.04423515324567665,
+          "recall_at_10_percent": 0.43154606975533577,
+          "recall_at_20": 0.004164497657470068,
+          "recall_at_50": 0.00989068193649141,
+          "threshold": -0.5
+        }
+      },
+      "baseline_suggestions": {
+        "eligibility": "state_ddg < 0 and expected_ddg < 0",
+        "eligible_rows": 9760,
+        "hits_at_100": 69,
+        "hits_at_20": 17,
+        "hits_at_50": 37,
+        "hits_at_500": 271,
+        "precision_at_100": 0.69,
+        "precision_at_20": 0.85,
+        "precision_at_50": 0.74,
+        "precision_at_500": 0.542,
+        "ranker": "state_ddg"
+      },
+      "calibrated": {
+        "macro_protein_mae": 0.45341278386810574,
+        "macro_protein_spearman": 0.7975048303573601,
+        "protein_cluster_bootstrap_mae_95_ci": [
+          0.44006598740816116,
+          0.4844338856637478
+        ],
+        "protein_count": 88,
+        "regression": {
+          "direction_accuracy": 0.8025882515485758,
+          "mae": 0.46208649118101336,
+          "n": 86854,
+          "pearson": 0.7980230879272506,
+          "rmse": 0.6306629981528561,
+          "spearman": 0.7732804487483803
+        },
+        "retrieval": {
+          "auroc": 0.7929617223482777,
+          "average_precision": 0.20817769787294885,
+          "enrichment_at_10_percent": 3.9872310633361074,
+          "enrichment_at_20": 20.345809474232173,
+          "enrichment_at_50": 15.372389380530976,
+          "hits_at_10_percent": 1532,
+          "hits_at_20": 18,
+          "hits_at_50": 34,
+          "n": 86854,
+          "positives": 3842,
+          "precision_at_10_percent": 0.17637577711259497,
+          "precision_at_20": 0.9,
+          "precision_at_50": 0.68,
+          "prevalence": 0.04423515324567665,
+          "recall_at_10_percent": 0.398750650702759,
+          "recall_at_20": 0.004685059864653826,
+          "recall_at_50": 0.008849557522123894,
+          "threshold": -0.5
+        }
+      },
+      "calibrated_suggestions": {
+        "eligibility": "state_ddg < 0 and expected_ddg < 0",
+        "eligible_rows": 9534,
+        "hits_at_100": 69,
+        "hits_at_20": 17,
+        "hits_at_50": 37,
+        "hits_at_500": 270,
+        "precision_at_100": 0.69,
+        "precision_at_20": 0.85,
+        "precision_at_50": 0.74,
+        "precision_at_500": 0.54,
+        "ranker": "state_ddg"
+      }
+    },
+    "family_shadow": {
+      "baseline": {
+        "macro_protein_mae": 0.45554410371079174,
+        "macro_protein_spearman": 0.8194999426800084,
+        "protein_cluster_bootstrap_mae_95_ci": [
+          0.419848457723856,
+          0.5125804901123047
+        ],
+        "protein_count": 22,
+        "regression": {
+          "direction_accuracy": 0.820605360665993,
+          "mae": 0.464860213032382,
+          "n": 20781,
+          "pearson": 0.8040956241643794,
+          "rmse": 0.6398520611540263,
+          "spearman": 0.7769812719543836
+        },
+        "retrieval": {
+          "auroc": 0.780477345275898,
+          "average_precision": 0.16206703586033355,
+          "enrichment_at_10_percent": 4.271892911557716,
+          "enrichment_at_20": 10.15831005586592,
+          "enrichment_at_50": 11.60949720670391,
+          "hits_at_10_percent": 306,
+          "hits_at_20": 7,
+          "hits_at_50": 20,
+          "n": 20781,
+          "positives": 716,
+          "precision_at_10_percent": 0.1471861471861472,
+          "precision_at_20": 0.35,
+          "precision_at_50": 0.4,
+          "prevalence": 0.03445454982917088,
+          "recall_at_10_percent": 0.4273743016759777,
+          "recall_at_20": 0.009776536312849162,
+          "recall_at_50": 0.027932960893854747,
+          "threshold": -0.5
+        }
+      },
+      "baseline_suggestions": {
+        "eligibility": "state_ddg < 0 and expected_ddg < 0",
+        "eligible_rows": 2424,
+        "hits_at_100": 41,
+        "hits_at_20": 6,
+        "hits_at_50": 18,
+        "hits_at_500": 153,
+        "precision_at_100": 0.41,
+        "precision_at_20": 0.3,
+        "precision_at_50": 0.36,
+        "precision_at_500": 0.306,
+        "ranker": "state_ddg"
+      },
+      "calibrated": {
+        "macro_protein_mae": 0.44908515133509036,
+        "macro_protein_spearman": 0.8197469239271449,
+        "protein_cluster_bootstrap_mae_95_ci": [
+          0.41407795920968055,
+          0.5103866308927536
+        ],
+        "protein_count": 22,
+        "regression": {
+          "direction_accuracy": 0.819402338674751,
+          "mae": 0.4582943195591643,
+          "n": 20781,
+          "pearson": 0.8088835127640244,
+          "rmse": 0.6310331718164475,
+          "spearman": 0.7796078883063509
+        },
+        "retrieval": {
+          "auroc": 0.7601219221886412,
+          "average_precision": 0.14027497456824578,
+          "enrichment_at_10_percent": 3.6855546687948917,
+          "enrichment_at_20": 13.060684357541898,
+          "enrichment_at_50": 12.770446927374302,
+          "hits_at_10_percent": 264,
+          "hits_at_20": 9,
+          "hits_at_50": 22,
+          "n": 20781,
+          "positives": 716,
+          "precision_at_10_percent": 0.12698412698412698,
+          "precision_at_20": 0.45,
+          "precision_at_50": 0.44,
+          "prevalence": 0.03445454982917088,
+          "recall_at_10_percent": 0.3687150837988827,
+          "recall_at_20": 0.012569832402234637,
+          "recall_at_50": 0.030726256983240222,
+          "threshold": -0.5
+        }
+      },
+      "calibrated_suggestions": {
+        "eligibility": "state_ddg < 0 and expected_ddg < 0",
+        "eligible_rows": 2381,
+        "hits_at_100": 40,
+        "hits_at_20": 6,
+        "hits_at_50": 18,
+        "hits_at_500": 148,
+        "precision_at_100": 0.4,
+        "precision_at_20": 0.3,
+        "precision_at_50": 0.36,
+        "precision_at_500": 0.296,
+        "ranker": "state_ddg"
+      }
+    },
+    "tuning_fold_0": {
+      "baseline": {
+        "macro_protein_mae": 0.4891352689662782,
+        "macro_protein_spearman": 0.7545804184049526,
+        "protein_cluster_bootstrap_mae_95_ci": [
+          0.44942620396614075,
+          0.5476322799921036
+        ],
+        "protein_count": 22,
+        "regression": {
+          "direction_accuracy": 0.793634592187065,
+          "mae": 0.4974358351305781,
+          "n": 21554,
+          "pearson": 0.7435720124435576,
+          "rmse": 0.6895876654297629,
+          "spearman": 0.7405028487430546
+        },
+        "retrieval": {
+          "auroc": 0.7709846551265909,
+          "average_precision": 0.1649323867348585,
+          "enrichment_at_10_percent": 3.4231716032716584,
+          "enrichment_at_20": 10.483463035019454,
+          "enrichment_at_50": 10.064124513618676,
+          "hits_at_10_percent": 352,
+          "hits_at_20": 10,
+          "hits_at_50": 24,
+          "n": 21554,
+          "positives": 1028,
+          "precision_at_10_percent": 0.16326530612244897,
+          "precision_at_20": 0.5,
+          "precision_at_50": 0.48,
+          "prevalence": 0.04769416349633479,
+          "recall_at_10_percent": 0.3424124513618677,
+          "recall_at_20": 0.009727626459143969,
+          "recall_at_50": 0.023346303501945526,
+          "threshold": -0.5
+        }
+      },
+      "calibrated": {
+        "macro_protein_mae": 0.48357289664403724,
+        "macro_protein_spearman": 0.760776713242213,
+        "protein_cluster_bootstrap_mae_95_ci": [
+          0.4485779829323292,
+          0.5418253868818284
+        ],
+        "protein_count": 22,
+        "regression": {
+          "direction_accuracy": 0.7940985431938388,
+          "mae": 0.4922856954403542,
+          "n": 21554,
+          "pearson": 0.7472991943041142,
+          "rmse": 0.6839277834192697,
+          "spearman": 0.7460427940720437
+        },
+        "retrieval": {
+          "auroc": 0.7552907416274927,
+          "average_precision": 0.14972886165051222,
+          "enrichment_at_10_percent": 3.0341748301726064,
+          "enrichment_at_20": 11.5318093385214,
+          "enrichment_at_50": 7.967431906614785,
+          "hits_at_10_percent": 312,
+          "hits_at_20": 11,
+          "hits_at_50": 19,
+          "n": 21554,
+          "positives": 1028,
+          "precision_at_10_percent": 0.14471243042671614,
+          "precision_at_20": 0.55,
+          "precision_at_50": 0.38,
+          "prevalence": 0.04769416349633479,
+          "recall_at_10_percent": 0.3035019455252918,
+          "recall_at_20": 0.010700389105058366,
+          "recall_at_50": 0.01848249027237354,
+          "threshold": -0.5
+        }
+      }
+    }
+  },
+  "promotion_gates": {
+    "confirmation_direction_not_lower": true,
+    "confirmation_mae_improves_by_0_001": true,
+    "confirmation_rmse_improves": true,
+    "confirmation_spearman_not_lower": true,
+    "confirmation_top50_hits_retained": true,
+    "outer_excluded": true,
+    "passed": true,
+    "shadow_mae_improves_by_0_001": true,
+    "shadow_rmse_improves": true,
+    "shadow_spearman_not_lower": true,
+    "shadow_top50_hits_retained": true
+  },
+  "schema": "protein-stabilizer.accuracy-calibration-audit.v1"
+}

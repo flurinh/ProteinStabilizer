@@ -23,7 +23,12 @@ from .data import (
     sequence_hash,
     single_rows,
 )
-from .embeddings import ESMCEmbedder, file_sha256, token_batches
+from .embeddings import (
+    HIERARCHY_CACHE_SCHEMA,
+    ESMCEmbedder,
+    file_sha256,
+    token_batches,
+)
 from .structure import _extract_pdb_archive
 
 
@@ -813,4 +818,338 @@ def build_full_structure_dataset(
         "embedding_dimension": int(residue_embeddings.shape[-1]),
         "storage_dtype": str(storage_dtype),
         "clustering": clustering,
+    }
+
+
+def build_full_structure_from_hierarchy_cache(
+    source_data_path: Path,
+    hierarchy_cache_path: Path,
+    output_path: Path,
+) -> dict[str, object]:
+    """Reconstruct full WT tensors from cached contextual hierarchy windows.
+
+    The hierarchy cache stores full-context final-layer vectors in overlapping
+    windows. MegaScale proteins with single-mutant measurements have enough WT
+    windows to recover every residue exactly, so scaling the downstream model
+    does not require another encoder pass. Double-only proteins are excluded
+    because their cache coverage is not guaranteed to span the full sequence.
+    """
+
+    source_path = Path(source_data_path).resolve()
+    cache_path = Path(hierarchy_cache_path).resolve()
+    output = Path(output_path).resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if output.exists():
+        raise FileExistsError(
+            f"reconstructed full-structure bank already exists: {output}"
+        )
+    cache_sha256 = file_sha256(cache_path)
+    source_sha256 = file_sha256(source_path)
+    partial = output.with_suffix(output.suffix + ".partial")
+    partial.unlink(missing_ok=True)
+
+    with (
+        h5py.File(source_path, "r") as source,
+        h5py.File(cache_path, "r") as cache,
+    ):
+        if source.attrs.get("schema") != FULL_STRUCTURE_DATA_SCHEMA:
+            raise RuntimeError("source full-structure data schema mismatch")
+        if cache.attrs.get("schema") != HIERARCHY_CACHE_SCHEMA:
+            raise RuntimeError("hierarchy cache schema mismatch")
+        model_provenance = json.loads(str(cache.attrs["model_provenance"]))
+        if model_provenance.get("inference_dtype") != "float32":
+            raise RuntimeError(
+                "full-structure reconstruction requires FP32 inference provenance"
+            )
+        if model_provenance.get("storage_dtype") != "float32":
+            raise RuntimeError(
+                "full-structure reconstruction requires FP32 storage provenance"
+            )
+        dimension = int(model_provenance["embedding_dimension"])
+        if cache["global_mean"].shape[1] != dimension:
+            raise RuntimeError("hierarchy global dimension disagrees with provenance")
+        radius = int(cache.attrs["window_radius"])
+        if cache["window_embeddings"].shape[1:] != (
+            2 * radius + 1,
+            dimension,
+        ):
+            raise RuntimeError("hierarchy window tensor shape mismatch")
+
+        proteins = source["proteins"]
+        protein_ids = np.asarray(proteins["protein_id"].asstr()[:])
+        sequences = np.asarray(proteins["sequence"].asstr()[:])
+        lengths = np.asarray(proteins["length"], dtype=np.int64)
+        source_single_protein = np.asarray(
+            source["singles/protein_index"], dtype=np.int64
+        )
+        selected = np.unique(source_single_protein)
+        if not len(selected):
+            raise RuntimeError("source data contains no single-mutant proteins")
+        maximum_length = int(proteins["esm_residue"].shape[1])
+        if np.any(lengths[selected] > maximum_length):
+            raise RuntimeError("source protein length exceeds padded tensor")
+
+        cache_hashes = np.asarray(cache["sequence_hashes"].asstr()[:])
+        cache_sequences = np.asarray(cache["sequences"].asstr()[:])
+        if len(set(cache_hashes.tolist())) != len(cache_hashes):
+            raise RuntimeError("hierarchy cache contains duplicate sequence hashes")
+        cache_by_hash = {
+            digest: index for index, digest in enumerate(cache_hashes)
+        }
+        cache_indices = np.empty(len(selected), dtype=np.int64)
+        for output_index, source_index in enumerate(selected):
+            digest = sequence_hash(str(sequences[source_index]))
+            if digest not in cache_by_hash:
+                raise RuntimeError(
+                    f"hierarchy cache lacks WT {protein_ids[source_index]}"
+                )
+            cache_index = cache_by_hash[digest]
+            if str(cache_sequences[cache_index]) != str(
+                sequences[source_index]
+            ):
+                raise RuntimeError(
+                    f"hierarchy cache sequence mismatch for "
+                    f"{protein_ids[source_index]}"
+                )
+            cache_indices[output_index] = cache_index
+
+        site_sequence = np.asarray(
+            cache["site_sequence_index"], dtype=np.int64
+        )
+        site_position = np.asarray(cache["site_position"], dtype=np.int64)
+        wanted_cache_indices = set(cache_indices.tolist())
+        rows_by_cache: dict[int, list[int]] = {
+            index: [] for index in wanted_cache_indices
+        }
+        for row, cache_index in enumerate(site_sequence):
+            value = int(cache_index)
+            if value in wanted_cache_indices:
+                rows_by_cache[value].append(row)
+
+        residue = np.zeros(
+            (len(selected), maximum_length, dimension), dtype=np.float32
+        )
+        global_mean = np.stack(
+            [
+                np.asarray(
+                    cache["global_mean"][int(cache_index)],
+                    dtype=np.float32,
+                )
+                for cache_index in cache_indices
+            ]
+        )
+        maximum_overlap_difference = 0.0
+        maximum_global_difference = 0.0
+        minimum_windows = None
+        for output_index, (source_index, cache_index) in enumerate(
+            zip(selected, cache_indices, strict=True)
+        ):
+            cache_rows = np.asarray(
+                rows_by_cache[int(cache_index)], dtype=np.int64
+            )
+            if not len(cache_rows):
+                raise RuntimeError(
+                    f"hierarchy cache has no WT windows for "
+                    f"{protein_ids[source_index]}"
+                )
+            minimum_windows = (
+                len(cache_rows)
+                if minimum_windows is None
+                else min(minimum_windows, len(cache_rows))
+            )
+            windows = np.asarray(
+                cache["window_embeddings"][cache_rows], dtype=np.float32
+            )
+            window_mask = np.asarray(
+                cache["window_mask"][cache_rows], dtype=bool
+            )
+            positions = site_position[cache_rows]
+            coverage = np.zeros(int(lengths[source_index]), dtype=np.int16)
+            for window, active, center in zip(
+                windows, window_mask, positions, strict=True
+            ):
+                for offset in np.flatnonzero(active):
+                    position = int(center) - radius + int(offset) - 1
+                    if position < 0 or position >= int(lengths[source_index]):
+                        raise RuntimeError(
+                            "hierarchy window mask points outside the sequence"
+                        )
+                    if coverage[position]:
+                        difference = float(
+                            np.max(
+                                np.abs(
+                                    residue[output_index, position]
+                                    - window[offset]
+                                )
+                            )
+                        )
+                        maximum_overlap_difference = max(
+                            maximum_overlap_difference, difference
+                        )
+                        if difference > 1.0e-6:
+                            raise RuntimeError(
+                                "overlapping hierarchy windows disagree"
+                            )
+                    else:
+                        residue[output_index, position] = window[offset]
+                    coverage[position] += 1
+            if np.any(coverage == 0):
+                missing = np.flatnonzero(coverage == 0) + 1
+                raise RuntimeError(
+                    f"hierarchy cache cannot reconstruct "
+                    f"{protein_ids[source_index]} positions "
+                    f"{missing.tolist()}"
+                )
+            reconstructed_mean = residue[
+                output_index, : lengths[source_index]
+            ].mean(axis=0)
+            global_difference = float(
+                np.max(
+                    np.abs(
+                        reconstructed_mean - global_mean[output_index]
+                    )
+                )
+            )
+            maximum_global_difference = max(
+                maximum_global_difference, global_difference
+            )
+            if not np.allclose(
+                reconstructed_mean,
+                global_mean[output_index],
+                atol=1.0e-5,
+                rtol=1.0e-5,
+            ):
+                raise RuntimeError(
+                    f"reconstructed global mean mismatch for "
+                    f"{protein_ids[source_index]}"
+                )
+
+        old_to_new = np.full(len(protein_ids), -1, dtype=np.int64)
+        old_to_new[selected] = np.arange(len(selected), dtype=np.int64)
+
+        def write_mutations(
+            destination: h5py.Group,
+            source_group: h5py.Group,
+        ) -> int:
+            old_protein = np.asarray(
+                source_group["protein_index"], dtype=np.int64
+            )
+            keep = old_to_new[old_protein] >= 0
+            destination.create_dataset(
+                "protein_index",
+                data=old_to_new[old_protein[keep]].astype(np.int32),
+            )
+            for name in (
+                "position",
+                "wt_amino_acid",
+                "mutant_amino_acid",
+                "target",
+            ):
+                destination.create_dataset(
+                    name, data=np.asarray(source_group[name])[keep]
+                )
+            _string_dataset(
+                destination,
+                "source_partition",
+                np.asarray(source_group["source_partition"].asstr()[:])[
+                    keep
+                ].tolist(),
+            )
+            return int(np.sum(keep))
+
+        with h5py.File(partial, "w", libver="latest") as target:
+            for name, value in source.attrs.items():
+                target.attrs[name] = value
+            target.attrs["embedding_source"] = str(cache_path)
+            target.attrs["embedding_source_sha256"] = cache_sha256
+            target.attrs["embedding_provenance"] = json.dumps(
+                model_provenance, sort_keys=True, separators=(",", ":")
+            )
+            target.attrs["derived_from_full_structure"] = str(source_path)
+            target.attrs["derived_from_full_structure_sha256"] = (
+                source_sha256
+            )
+            target.attrs["embedding_reconstruction"] = json.dumps(
+                {
+                    "policy": (
+                        "exact contextual residue recovery from overlapping "
+                        "WT hierarchy windows"
+                    ),
+                    "window_radius": radius,
+                    "single_mutant_proteins_only": True,
+                    "maximum_overlap_absolute_difference": (
+                        maximum_overlap_difference
+                    ),
+                    "maximum_global_mean_absolute_difference": (
+                        maximum_global_difference
+                    ),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            target_proteins = target.create_group("proteins")
+            for name in (
+                "protein_id",
+                "sequence",
+                "family_cluster",
+                "structure_chain",
+            ):
+                _string_dataset(
+                    target_proteins,
+                    name,
+                    np.asarray(proteins[name].asstr()[:])[selected].tolist(),
+                )
+            for name in (
+                "length",
+                "split",
+                "coordinates",
+                "sequence_tokens",
+                "sequence_mask",
+                "structure_mask",
+            ):
+                target_proteins.create_dataset(
+                    name,
+                    data=np.asarray(proteins[name])[selected],
+                    compression=(
+                        "lzf"
+                        if np.asarray(proteins[name])[selected].ndim > 1
+                        else None
+                    ),
+                )
+            target_proteins.create_dataset(
+                "esm_residue",
+                data=residue,
+                chunks=(1, maximum_length, dimension),
+                compression="lzf",
+            )
+            target_proteins.create_dataset(
+                "esm_global",
+                data=global_mean,
+                chunks=(1, dimension),
+                compression="lzf",
+            )
+            single_rows = write_mutations(
+                target.create_group("singles"), source["singles"]
+            )
+            double_rows = write_mutations(
+                target.create_group("doubles"), source["doubles"]
+            )
+            target.flush()
+    partial.replace(output)
+    return {
+        "schema": FULL_STRUCTURE_DATA_SCHEMA,
+        "path": str(output),
+        "sha256": file_sha256(output),
+        "source": str(source_path),
+        "source_sha256": source_sha256,
+        "hierarchy_cache": str(cache_path),
+        "hierarchy_cache_sha256": cache_sha256,
+        "embedding_provenance": model_provenance,
+        "proteins": int(len(selected)),
+        "single_rows": single_rows,
+        "double_rows": double_rows,
+        "embedding_dimension": dimension,
+        "minimum_windows_per_protein": int(minimum_windows or 0),
+        "maximum_overlap_absolute_difference": maximum_overlap_difference,
+        "maximum_global_mean_absolute_difference": maximum_global_difference,
     }

@@ -89,6 +89,8 @@ def load_portable_prior_arrays(
     data_path: Path,
     hierarchy_row_paths: Sequence[Path],
     masked_marginal_path: Path,
+    *,
+    allow_cross_scale_masked_prior: bool = False,
 ) -> tuple[FullStructureArrays, PortablePriorArrays]:
     """Align masked/site/ProteinMPNN features to the immutable mutation bank."""
 
@@ -231,13 +233,15 @@ def load_portable_prior_arrays(
     expected_checkpoint = data.provenance["embedding_provenance"][
         "checkpoint_sha256"
     ]
-    if (
-        masked_provenance["model_provenance"]["checkpoint_sha256"]
-        != expected_checkpoint
-    ):
+    masked_checkpoint = masked_provenance["model_provenance"][
+        "checkpoint_sha256"
+    ]
+    cross_scale_masked_prior = masked_checkpoint != expected_checkpoint
+    if cross_scale_masked_prior and not allow_cross_scale_masked_prior:
         raise RuntimeError(
             "masked evidence and full-sequence embeddings use different "
-            "ESM-C checkpoints"
+            "ESM-C checkpoints; explicitly enable the cross-scale prior "
+            "only for a provenance-recorded heterogeneous ensemble"
         )
     for provenance in row_provenance:
         if (
@@ -344,6 +348,9 @@ def load_portable_prior_arrays(
             ],
             "feature_dimension": int(features.shape[1]),
             "target_features": False,
+            "state_esmc_checkpoint_sha256": expected_checkpoint,
+            "masked_esmc_checkpoint_sha256": masked_checkpoint,
+            "cross_scale_masked_prior": cross_scale_masked_prior,
             "backbone_policy": (
                 "N/CA/C/O target-independent contact, distance, depth, "
                 "coverage, and sequence-position features"
@@ -388,6 +395,7 @@ def cross_validate_accuracy_ensemble(
     threshold: float = -0.5,
     protein_batch_size: int = 8,
     device: str = "cuda",
+    allow_cross_scale_masked_prior: bool = False,
 ) -> dict[str, object]:
     """Reproduce the five family-fold portable-prior confirmation."""
 
@@ -399,7 +407,10 @@ def cross_validate_accuracy_ensemble(
         )
     output.mkdir(parents=True, exist_ok=True)
     data, arrays = load_portable_prior_arrays(
-        data_path, hierarchy_row_paths, masked_marginal_path
+        data_path,
+        hierarchy_row_paths,
+        masked_marginal_path,
+        allow_cross_scale_masked_prior=allow_cross_scale_masked_prior,
     )
     state_cv = Path(state_cv_dir).resolve()
     proteinmpnn_repository = Path(proteinmpnn_repository).resolve()
@@ -807,6 +818,7 @@ def prospective_shadow_evaluation(
     seed: int = 20260724,
     threshold: float = -0.5,
     device: str = "cuda",
+    allow_cross_scale_masked_prior: bool = False,
 ) -> dict[str, object]:
     """Run a target-free hash resplit after freezing the ensemble design."""
 
@@ -822,7 +834,10 @@ def prospective_shadow_evaluation(
         )
     output.mkdir(parents=True, exist_ok=True)
     data, arrays = load_portable_prior_arrays(
-        data_path, hierarchy_row_paths, masked_marginal_path
+        data_path,
+        hierarchy_row_paths,
+        masked_marginal_path,
+        allow_cross_scale_masked_prior=allow_cross_scale_masked_prior,
     )
     proteinmpnn_repository = Path(proteinmpnn_repository).resolve()
     single_count = np.bincount(
@@ -899,6 +914,37 @@ def prospective_shadow_evaluation(
         threshold=threshold,
         seed=seed + 1,
     )
+    prediction_path = output / "shadow_predictions.csv"
+    with prediction_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "protein_id",
+                "family_cluster",
+                "position",
+                "wt",
+                "mutant",
+                "experimental_ddg",
+                "state_ddg",
+                "portable_prior_ddg",
+                "ensemble_ddg",
+            ]
+        )
+        for output_row, row in enumerate(shadow_rows):
+            protein = int(arrays.protein_index[row])
+            writer.writerow(
+                [
+                    data.protein_id[protein],
+                    data.family_cluster[protein],
+                    int(arrays.position[row]) + 1,
+                    AMINO_ACIDS[int(arrays.wt_amino_acid[row])],
+                    AMINO_ACIDS[int(arrays.mutant_amino_acid[row])],
+                    float(arrays.target[row]),
+                    float(state_prediction[output_row]),
+                    float(prior_prediction[output_row]),
+                    float(blend[output_row]),
+                ]
+            )
     checkpoint_path = output / "shadow_accuracy_ensemble.pt"
     _save_torch(
         checkpoint_path,
@@ -972,6 +1018,8 @@ def prospective_shadow_evaluation(
         },
         "checkpoint": str(checkpoint_path),
         "checkpoint_sha256": file_sha256(checkpoint_path),
+        "predictions": str(prediction_path),
+        "predictions_sha256": file_sha256(prediction_path),
         "elapsed_seconds": time.monotonic() - started,
     }
     report_path.write_text(
@@ -996,6 +1044,7 @@ def train_final_accuracy_ensemble(
     weight_decay: float = 1.0e-4,
     seed: int = 20260724,
     device: str = "cuda",
+    allow_cross_scale_masked_prior: bool = False,
 ) -> dict[str, object]:
     """Fit the promoted ensemble on all development families."""
 
@@ -1007,7 +1056,10 @@ def train_final_accuracy_ensemble(
         )
     output.mkdir(parents=True, exist_ok=True)
     data, arrays = load_portable_prior_arrays(
-        data_path, hierarchy_row_paths, masked_marginal_path
+        data_path,
+        hierarchy_row_paths,
+        masked_marginal_path,
+        allow_cross_scale_masked_prior=allow_cross_scale_masked_prior,
     )
     source = torch.load(
         Path(sequence_checkpoint_path).resolve(),
@@ -1127,6 +1179,7 @@ def evaluate_accuracy_outer(
     threshold: float = -0.5,
     protein_batch_size: int = 8,
     device: str = "cuda",
+    allow_cross_scale_masked_prior: bool = False,
 ) -> dict[str, object]:
     """Evaluate once on the already-consumed historical outer partition."""
 
@@ -1138,7 +1191,10 @@ def evaluate_accuracy_outer(
         )
     output.mkdir(parents=True, exist_ok=True)
     data, arrays = load_portable_prior_arrays(
-        data_path, hierarchy_row_paths, masked_marginal_path
+        data_path,
+        hierarchy_row_paths,
+        masked_marginal_path,
+        allow_cross_scale_masked_prior=allow_cross_scale_masked_prior,
     )
     checkpoint_path = Path(checkpoint_path).resolve()
     checkpoint = torch.load(

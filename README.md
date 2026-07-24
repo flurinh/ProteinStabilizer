@@ -1,10 +1,11 @@
 # ProteinStabilizer
 
 ProteinStabilizer ranks amino-acid substitutions for stability, with a
-GPCR-specific calibration layer. The promoted fast path uses frozen ESM-C 600M
+GPCR-specific calibration layer. The fast path uses frozen ESM-C 600M
 embeddings with mutation-direction, ordered local, whole-protein, membrane, and
-learned ProteinMPNN context. An optional full ESM-C 6B second pass supplies a
-stronger general-ddG estimate and conservatively reranks GPCR candidates.
+learned ProteinMPNN context. The best current expected-ddG route combines one
+strict-FP32 ESM-C 6B WT-state pass with cached 600M masked contexts and
+ProteinMPNN/backbone features.
 Permutation-invariant epistasis heads score double mutants and accept larger
 mutation sets as an explicit extrapolation.
 Saturation screening also reads the encoder's masked amino-acid probabilities
@@ -18,9 +19,10 @@ Solubility is deliberately not part of the current model.
 
 Open [`docs/model_dashboard.html`](docs/model_dashboard.html) for the current
 model roles, training losses, held-out performance, expected ddG error scale,
-the full 19,645-point predicted-versus-experimental kcal/mol scatter, GPCR
-screening evidence, and external-method context. It is generated directly from
-the checked-in metric and audit JSON files:
+the current predicted-versus-experimental kcal/mol scatter (metrics over all
+108,408 family-OOF mutations; 25,000 deterministically plotted points), GPCR
+screening evidence, and external-method context. It is generated directly
+from the checked-in metric and audit JSON files:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python scripts/build_model_dashboard.py
@@ -81,6 +83,24 @@ All five folds improve. A target-free 20% family-shadow resplit confirms MAE
 to `0.76228`. This is a real improvement, but it does not support the
 sub-`0.30` target.
 
+The same frozen logic was then scaled to strict-FP32 ESM-C 6B WT states while
+retaining the cheaper 600M masked prior. Five-fold OOF MAE improves from the
+6B state model's `0.50948` to `0.47175` kcal/mol, with Spearman `0.72776` to
+`0.76519`; all five folds improve. The frozen-design family-shadow result is
+MAE `0.51152` to `0.46486`, RMSE `0.70261` to `0.63985`, and Spearman
+`0.74240` to `0.77698`. This also improves over the same 600M hybrid by
+`0.01149` kcal/mol on the shadow split. Stabilizer ranking remains the exact
+6B state score because it retains higher average precision.
+
+A monotone affine magnitude calibration was fit on designated tuning fold 0
+only. On held-out confirmation folds 1–4 it improves MAE from `0.46538` to
+`0.46209` kcal/mol and on the frozen family-shadow split from `0.46486` to
+`0.45829` (95% protein-bootstrap CI `0.41408–0.51039`). RMSE and Spearman
+also improve on both evaluations, while state-ranked top-50 stabilizer hits
+are retained. The promoted calibration is
+`0.50336 × state + 0.59977 × portable_prior − 0.05107`. It is used only for
+expected ΔΔG magnitude; candidate order remains the 6B state score.
+
 Training and evaluation are reproducible with:
 
 ```bash
@@ -107,6 +127,36 @@ requires state/ensemble agreement by default. Quantitative ddG is trained on
 GPCR runs as out of domain and does not present them as GPCR-calibrated
 kcal/mol. Durable metrics and artifact hashes are recorded in
 [`docs/accuracy_optimization_audit.json`](docs/accuracy_optimization_audit.json).
+The strict-FP32 scale evidence, checkpoint/cache hashes, and application run
+are recorded in
+[`docs/esmc6b_accuracy_scale_audit.json`](docs/esmc6b_accuracy_scale_audit.json).
+The post-hoc selection protocol, component coefficients, promotion gates, and
+calibrated checkpoint hashes are recorded in
+[`docs/esmc6b_accuracy_calibration_audit.json`](docs/esmc6b_accuracy_calibration_audit.json).
+
+The 6B hybrid uses separate caches because the validated 600M and 6B
+dependency stacks conflict:
+
+```bash
+.venv/bin/protein-stabilizer cache-accuracy-target \
+  --fasta target.fasta --protected-mask protected_positions.txt \
+  --output artifacts/target_masked_600m.h5
+
+.venv-esmc6b/bin/protein-stabilizer cache-accuracy-state-6b \
+  --fasta target.fasta \
+  --output embeddings/application/esmc_6b_targets_fp32.h5
+
+.venv-esmc6b/bin/protein-stabilizer screen-accuracy-6b \
+  --fasta target.fasta --uniprot Q9UHM6 \
+  --protected-mask protected_positions.txt \
+  --masked-marginals-cache artifacts/target_masked_600m.h5 \
+  --embedding-cache embeddings/application/esmc_6b_targets_fp32.h5 \
+  --output artifacts/accuracy_6b_screen.csv
+```
+
+Once both caches exist, a rerun loads neither ESM-C encoder. The real masked
+melanopsin run scored 5,130 substitutions in 2.8 seconds from cache, with zero
+mutant-sequence passes.
 
 ### Promoted v2 hierarchy
 
@@ -354,6 +404,9 @@ The current deterministic run used seed `20260715`:
 
 | Evaluation | Spearman | Pearson | MAE | RMSE |
 | --- | ---: | ---: | ---: | ---: |
+| **Calibrated 6B state + 600M portable prior, target-free family-shadow** | **0.780** | **0.809** | **0.458** | **0.631** |
+| Calibrated 6B state + 600M portable prior, five family-fold OOF | 0.767 | 0.788 | 0.468 | 0.642 |
+| 6B full-WT state baseline, five family-fold OOF | 0.728 | 0.751 | 0.509 | 0.695 |
 | **600M portable accuracy ensemble, target-free family-shadow** | **0.762** | **0.791** | **0.476** | **0.660** |
 | 600M portable accuracy ensemble, five family-fold OOF | 0.746 | 0.772 | 0.485 | 0.663 |
 | 600M full-structure state baseline, five family-fold OOF | 0.699 | 0.731 | 0.531 | 0.721 |

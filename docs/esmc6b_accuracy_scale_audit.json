@@ -1,0 +1,249 @@
+{
+  "schema": "protein-stabilizer.esmc6b-accuracy-scale-audit.v1",
+  "created_date": "2026-07-24",
+  "objective": "Scale the selected full-WT state plus portable masked/structure accuracy logic from ESM-C 600M to strict-FP32 ESM-C 6B without weakening stabilizer retrieval or consuming the historical outer partition for selection.",
+  "model": {
+    "state": {
+      "encoder": "biohub/ESMC-6B",
+      "checkpoint_sha256": "6846456e20e6ee2c37461f7bfc21d316d69bdaf165b925691afcb39e583244da",
+      "input": "all final-layer WT residue states and their exact global mean",
+      "decoder": "20-state residue potential decoder with trainable masked ProteinMPNN structure fusion",
+      "numeric_policy": "native float32 inference and storage; math attention; TF32 disabled"
+    },
+    "portable_prior": {
+      "encoder": "ESM-C 600M masked WT contexts",
+      "checkpoint_sha256": "8ef856e1a237ee3f995442df997a962e70057faadecf38fc0c8561bd3c2f4324",
+      "features": 216,
+      "composition": "70 masked/mutation chemistry + 18 target-independent backbone geometry + 128 static ProteinMPNN residue state",
+      "regressor": "ExtraTreesRegressor, 600 trees, max_features 0.8, min_samples_leaf 10",
+      "runtime_version": "scikit-learn 1.8.0"
+    },
+    "base_expected_ddg": "0.60 * 6B state ddG + 0.40 * 600M portable-prior ddG",
+    "expected_ddg": "0.503355322407 * 6B state ddG + 0.599771958843 * 600M portable-prior ddG - 0.051066229546",
+    "stabilizer_ranking": "6B state ddG only",
+    "sign_convention": "negative general-model ddG means stabilizing"
+  },
+  "data": {
+    "dataset": "MegaScale",
+    "development_proteins": 110,
+    "development_single_mutations": 108408,
+    "sequence_length": {
+      "minimum": 30,
+      "median": 56.0,
+      "maximum": 72
+    },
+    "membrane_protein_labels": 0,
+    "feature_bank": {
+      "path": "artifacts/full_structure/megascale_6b_fp32.h5",
+      "sha256": "e3e448d7614bdde8471f69e9cc035bb1e5b12a68ee79368701abb5108c9d2657",
+      "proteins": 135,
+      "single_mutations": 136333,
+      "embedding_dimension": 2560,
+      "reconstruction": "exact contextual residues reconstructed from overlapping strict-FP32 hierarchy windows; maximum overlap difference 0; maximum global-mean difference 9.5367431640625e-06"
+    }
+  },
+  "selection_protocol": {
+    "row_random_split": false,
+    "family_clustered_folds": 5,
+    "tuning_fold": 0,
+    "confirmation_folds": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "outer_used": false,
+    "frozen_before_confirmation": [
+      "feature set",
+      "tree hyperparameters",
+      "state weight 0.60",
+      "portable-prior weight 0.40"
+    ],
+    "weight_diagnostic": {
+      "method": "convex state-weight grid chosen on fold 0 only",
+      "fold_0_best_state_weight": 0.5,
+      "fold_0_mae": 0.4955534888,
+      "confirmation_mae_at_0_5": 0.4652851725,
+      "confirmation_mae_at_frozen_0_6": 0.4653812038,
+      "decision": "retain 0.60 because the 0.00010 kcal/mol confirmation change is immaterial and 0.50 lowers stabilizer average precision"
+    }
+  },
+  "development_oof": {
+    "rows": 108408,
+    "state": {
+      "mae": 0.5094805175,
+      "rmse": 0.6945946498,
+      "pearson": 0.7513946261,
+      "spearman": 0.7277554420,
+      "direction_accuracy": 0.7934746513,
+      "average_precision": 0.2309045905,
+      "protein_cluster_bootstrap_mae_95_ci": [
+        0.4887745775,
+        0.5287286997
+      ]
+    },
+    "blend": {
+      "mae": 0.4717544002,
+      "rmse": 0.6460832899,
+      "pearson": 0.7861110029,
+      "spearman": 0.7651871339,
+      "direction_accuracy": 0.8002453693,
+      "average_precision": 0.2155743263,
+      "protein_cluster_bootstrap_mae_95_ci": [
+        0.4533184618,
+        0.4942804389
+      ]
+    },
+    "each_fold_mae_improved": true,
+    "confirmation_folds_1_to_4": {
+      "rows": 86854,
+      "state_mae": 0.5021244559,
+      "blend_mae": 0.4653812032,
+      "state_spearman": 0.7385976345,
+      "blend_spearman": 0.7722872920,
+      "blend_protein_cluster_bootstrap_mae_95_ci": [
+        0.4428872943,
+        0.4864264928
+      ]
+    }
+  },
+  "family_shadow": {
+    "protocol": "target-independent hash split; design frozen before resplit; outer excluded",
+    "train_proteins": 88,
+    "shadow_proteins": 22,
+    "shadow_rows": 20781,
+    "state": {
+      "mae": 0.5115158339,
+      "rmse": 0.7026079601,
+      "pearson": 0.7658697090,
+      "spearman": 0.7424018171,
+      "direction_accuracy": 0.8086232616,
+      "average_precision": 0.1819046329,
+      "protein_cluster_bootstrap_mae_95_ci": [
+        0.4568724565,
+        0.5633726865
+      ]
+    },
+    "blend": {
+      "mae": 0.4648602138,
+      "rmse": 0.6398520633,
+      "pearson": 0.8040956226,
+      "spearman": 0.7769812763,
+      "direction_accuracy": 0.8206053607,
+      "average_precision": 0.1620670359,
+      "protein_cluster_bootstrap_mae_95_ci": [
+        0.4197903834,
+        0.5114166453
+      ]
+    },
+    "limitation": "These families appeared in prior five-fold reports; this is a frozen-design training resplit confirmation, not a never-seen dataset."
+  },
+  "post_hoc_affine_calibration": {
+    "selection": "fit on family fold 0 only; confirmed on folds 1-4 and the frozen family-shadow split; historical outer excluded",
+    "coefficients": {
+      "state": 0.503355322407286,
+      "portable_prior": 0.5997719588431042,
+      "intercept": -0.05106622954573248
+    },
+    "confirmation_folds_1_to_4": {
+      "baseline_mae": 0.4653812032,
+      "calibrated_mae": 0.4620864912,
+      "baseline_rmse": 0.6348255227,
+      "calibrated_rmse": 0.6306629982,
+      "baseline_spearman": 0.7722872920,
+      "calibrated_spearman": 0.7732804487,
+      "state_ranked_top50_hits_retained": true
+    },
+    "family_shadow": {
+      "baseline_mae": 0.4648602130,
+      "calibrated_mae": 0.4582943196,
+      "calibrated_rmse": 0.6310331718,
+      "calibrated_spearman": 0.7796078883,
+      "calibrated_protein_cluster_bootstrap_mae_95_ci": [
+        0.4140779592,
+        0.5103866309
+      ],
+      "state_ranked_top50_hits_retained": true
+    },
+    "sub_0_3_supported": false,
+    "gpcr_quantitative_accuracy_established": false
+  },
+  "comparison_to_600m_same_logic": {
+    "development_blend_mae": {
+      "600m": 0.4850093070,
+      "6b": 0.4717544002,
+      "absolute_improvement": 0.0132549068,
+      "relative_improvement": 0.0273292
+    },
+    "development_blend_spearman": {
+      "600m": 0.7460180300,
+      "6b": 0.7651871339
+    },
+    "family_shadow_blend_mae": {
+      "600m": 0.4763490673,
+      "6b": 0.4648602138,
+      "absolute_improvement": 0.0114888535,
+      "relative_improvement": 0.0241186
+    },
+    "family_shadow_blend_spearman": {
+      "600m": 0.7622785497,
+      "6b": 0.7769812763
+    }
+  },
+  "final_training": {
+    "development_proteins": 110,
+    "development_rows": 108408,
+    "state_refinement_epochs": 22,
+    "final_training_loss": 0.0901111808,
+    "portable_prior_trees": 600,
+    "elapsed_seconds": 92.0442046190,
+    "selection_uses_outer": false
+  },
+  "melanopsin_application": {
+    "accession": "Q9UHM6",
+    "sequence_length": 478,
+    "mutable_positions": 270,
+    "substitutions_scored": 5130,
+    "suggestion_eligible_after_component_agreement": 295,
+    "repeated_run_embedding_cost": {
+      "6b_wt_forward_batches": 0,
+      "600m_masked_forward_batches": 0,
+      "mutant_sequence_passes": 0,
+      "6b_wt_cache_hits": 1,
+      "600m_masked_site_cache_hits": 270
+    },
+    "top_state_ranked_examples": [
+      "C292W",
+      "A314I",
+      "T90I",
+      "T90C",
+      "C292L"
+    ],
+    "warning": "The quantitative head was trained on 30-72-residue MegaScale proteins with no membrane labels. Melanopsin expected general ddG is a domain-shift extrapolation, not GPCR-calibrated kcal/mol."
+  },
+  "artifacts": {
+    "cv_report_sha256": "7f107c80c05893c4e3ecbb4e817fcd478b7cd9121ef7995b9d9652e7239441b4",
+    "cv_predictions_sha256": "ae11a373ad5f1243c6d782e4673f991981d1c50e773d9afa7a27dec8fcb708fa",
+    "cv_scatter_sha256": "75cc1bbf0ca419c0386e46fd9a54599323a87758660ee87e6b3f183e312d7d45",
+    "dashboard_scatter_sha256": "6843c43fe20ec67f60e0ffd29f37ca829ddbb277c955ea2ddfa0493c31d37018",
+    "shadow_report_sha256": "cdcce5c2a1aad91492df80f4ca7b4ae7a31c8d561e5f1e89acdfc83f617c20ce",
+    "shadow_checkpoint_sha256": "deace4ad33fcf0c37b9c083cb06d6631132f218b80b86d7d8d8a7d11d9d5b0a5",
+    "shadow_predictions_sha256": "fc5a71d631ff75cbbd72ee493bc9f0563d92b14588dba1efdad6b062cadd4bd1",
+    "base_promoted_checkpoint_sha256": "287b1b2c76e2951b1d26b04d55f18a9d6e7dfbe5a889b37281d53b370c954335",
+    "promoted_checkpoint_sha256": "cc293de9bc731ede202d34ac085fcf0597847a0c6d6e44619d92d1b8183106f1",
+    "calibration_audit_sha256": "455bd13678501c2d37c841485b6aecf8b1209dd823c97d7be34a8b72d92e1470",
+    "portable_prior_sha256": "a5f0b09f67c57abcb4f4ffa8918a8140b7b1e825e7899a60572e2441ccfd1929",
+    "training_report_sha256": "a327b6c05197727fdb6958ca7956ad5228b1949ca0b01bb1e99a659cf0ff19e5",
+    "melanopsin_screen_sha256": "9e19401313d47bef0e167ad3a8162597391793c6a4dba906f50789eed3bccce8",
+    "melanopsin_shortlist_sha256": "0903549700bc69f95fd48cd247006e0441d51c05bca76fbc324cdd8baa5c8e74",
+    "melanopsin_masked_cache_sha256": "54ae6d695bc2d85bc5401521cb6756b2c8e48fa337c7988bd97f82a1e1c0c695",
+    "melanopsin_6b_state_cache_sha256": "562da83552293b121302f2e8c6c1ce6d54315dce765bbe549133a569297269a8"
+  },
+  "decision": {
+    "promote_6b_general_ddg_estimator": true,
+    "retain_6b_state_ranking_route": true,
+    "sub_0_3_supported": false,
+    "gpcr_quantitative_accuracy_established": false,
+    "next_accuracy_bottleneck": "Acquire a prospective receptor-held-out quantitative GPCR mutation matrix and a new family/assay lockbox; MegaScale-only tuning cannot establish the requested GPCR accuracy."
+  }
+}
