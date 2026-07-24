@@ -24,6 +24,9 @@ PORTABLE_PRIOR_MODEL_SCHEMA = (
 AFFINE_DDG_CALIBRATION_SCHEMA = (
     "protein-stabilizer.affine-ddg-calibration.v1"
 )
+MULTISCALE_AFFINE_DDG_CALIBRATION_SCHEMA = (
+    "protein-stabilizer.multiscale-affine-ddg-calibration.v1"
+)
 MASKED_CHEMISTRY_DIMENSION = 70
 BACKBONE_GEOMETRY_DIMENSION = 18
 PROTEINMPNN_DIMENSION = 128
@@ -404,6 +407,63 @@ def apply_affine_ddg_calibration(
         result[mask] = 0.0
     if np.any(~np.isfinite(result)):
         raise RuntimeError("affine ddG calibration produced invalid values")
+    return result
+
+
+def apply_multiscale_affine_ddg_calibration(
+    primary_state_prediction: np.ndarray,
+    secondary_state_prediction: np.ndarray,
+    prior_prediction: np.ndarray,
+    calibration: dict[str, object],
+    *,
+    self_mask: np.ndarray | None = None,
+) -> np.ndarray:
+    """Apply the selected monotone 6B/600M/portable-prior calibration."""
+
+    if (
+        calibration.get("schema")
+        != MULTISCALE_AFFINE_DDG_CALIBRATION_SCHEMA
+    ):
+        raise RuntimeError("multiscale affine ddG calibration schema mismatch")
+    primary = np.asarray(primary_state_prediction, dtype=np.float32)
+    secondary = np.asarray(secondary_state_prediction, dtype=np.float32)
+    prior = np.asarray(prior_prediction, dtype=np.float32)
+    if primary.shape != secondary.shape or primary.shape != prior.shape:
+        raise ValueError(
+            "primary, secondary, and portable-prior predictions must align"
+        )
+    coefficient = calibration.get("coefficients")
+    if not isinstance(coefficient, dict):
+        raise RuntimeError(
+            "multiscale affine ddG calibration lacks coefficients"
+        )
+    primary_scale = float(coefficient["primary_state"])
+    secondary_scale = float(coefficient["secondary_state"])
+    prior_scale = float(coefficient["portable_prior"])
+    intercept = float(coefficient["intercept"])
+    values = np.asarray(
+        [primary_scale, secondary_scale, prior_scale, intercept],
+        dtype=np.float64,
+    )
+    if np.any(values[:3] < 0.0) or not np.isfinite(values).all():
+        raise RuntimeError(
+            "multiscale affine ddG calibration is not monotone/finite"
+        )
+    result = (
+        primary_scale * primary
+        + secondary_scale * secondary
+        + prior_scale * prior
+        + intercept
+    ).astype(np.float32)
+    if self_mask is not None:
+        mask = np.asarray(self_mask, dtype=bool)
+        if mask.shape != result.shape:
+            raise ValueError("self-mutation mask must align with predictions")
+        result[mask] = 0.0
+    if np.any(~np.isfinite(result)):
+        raise RuntimeError(
+            "multiscale affine ddG calibration produced invalid values"
+        )
     return result
 
 

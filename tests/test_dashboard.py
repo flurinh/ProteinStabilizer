@@ -19,21 +19,21 @@ def test_model_dashboard_is_generated_from_recorded_metrics(tmp_path) -> None:
     assert "__DASHBOARD_DATA__" not in html
     assert "ESM-C 6B hierarchy/state fusion · strict FP32" in html
     assert data["models"][0]["name"] == (
-        "ESM-C 6B/600M calibrated accuracy ensemble"
+        "ESM-C 6B+600M multiscale calibrated accuracy ensemble"
     )
-    assert data["models"][0]["spearman"] == 0.78
+    assert data["models"][0]["spearman"] == 0.788
     assert data["models"][0]["status"] == "limited"
-    assert "strict-FP32 6B state" in data["status"]["headline"]
+    assert "cached 6B + 600M WT-state" in data["status"]["headline"]
     assert data["expected_ddg"]["generic_mae"] == 0.467
     assert data["expected_ddg"]["generic_mae_ci95"] == [0.4267, 0.5092]
     assert data["expected_ddg"]["target_mae"] == 0.3
-    assert data["expected_ddg"]["development_oof_mae"] == 0.4681
-    assert data["expected_ddg"]["family_shadow_mae"] == 0.4583
+    assert data["expected_ddg"]["development_oof_mae"] == 0.4602
+    assert data["expected_ddg"]["family_shadow_mae"] == 0.4499
     assert data["expected_ddg"]["family_shadow_mae_ci95"] == [
-        0.4141,
-        0.5104,
+        0.4058,
+        0.5023,
     ]
-    assert data["expected_ddg"]["family_shadow_spearman"] == 0.7796
+    assert data["expected_ddg"]["family_shadow_spearman"] == 0.788
     assert data["training_scale"]["dataset_rows"] == 136333
     assert data["training_scale"]["train_rows"] == 104315
     assert data["training_scale"]["batch_size"] == 256
@@ -48,7 +48,7 @@ def test_model_dashboard_is_generated_from_recorded_metrics(tmp_path) -> None:
     assert data["ddg_scatter"]["units"] == "kcal/mol"
     assert data["ddg_scatter"]["axes"]["clipped"] is False
     assert data["ddg_scatter"]["metrics"]["mae"] == pytest.approx(
-        0.4680908
+        0.4602392
     )
     assert any(
         row["name"] == "ESM-C 6B fused double-mutant model"
@@ -128,7 +128,7 @@ def test_model_dashboard_is_generated_from_recorded_metrics(tmp_path) -> None:
         for row in data["optimization_audits"]
     )
     assert data["optimization_audits"][0]["candidate"] == (
-        "Monotone affine ΔΔG calibration"
+        "Cached 6B/600M WT-state multiscale calibration"
     )
     assert any(
         row["candidate"]
@@ -160,15 +160,16 @@ def test_model_dashboard_is_generated_from_recorded_metrics(tmp_path) -> None:
     assert data["structure_scale"]["official_candidate"] == -0.5
     assert data["structure_scale"]["c5ar_candidate_top50"] == 11
     assert "sub-0.30 and quantitative gpcr accuracy remain" in html.lower()
-    assert (
-        "monotone calibration transfers from tuning fold 0"
-        in html.lower()
-    )
+    assert "second cached wt state improves" in html.lower()
     assert "docs/accuracy_optimization_audit.json" in data["sources"]
     assert "docs/esmc6b_accuracy_scale_audit.json" in data["sources"]
     assert "docs/esmc6b_accuracy_scatter.json" in data["sources"]
     assert (
         "docs/esmc6b_accuracy_calibration_audit.json"
+        in data["sources"]
+    )
+    assert (
+        "docs/esmc6b_multiscale_accuracy_audit.json"
         in data["sources"]
     )
     assert (

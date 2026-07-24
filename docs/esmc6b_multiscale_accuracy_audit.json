@@ -1,0 +1,518 @@
+{
+  "artifacts": {
+    "checkpoint": "/data/fast/projects/ProteinStabilizer/checkpoints/esmc_6b_accuracy_fp32/promoted_multiscale_affine/accuracy_ensemble.pt",
+    "checkpoint_sha256": "684ba0aa8d8066a5389106d1fc20f404dcd6f8d86ed8c50e6b3b01dcd58790a2",
+    "inputs": {
+      "primary_checkpoint": {
+        "path": "/data/fast/projects/ProteinStabilizer/checkpoints/esmc_6b_accuracy_fp32/promoted_affine/accuracy_ensemble.pt",
+        "sha256": "cc293de9bc731ede202d34ac085fcf0597847a0c6d6e44619d92d1b8183106f1"
+      },
+      "primary_oof": {
+        "path": "/data/fast/projects/ProteinStabilizer/checkpoints/esmc_6b_accuracy_fp32/cv_hybrid/accuracy_oof_predictions.csv",
+        "sha256": "ae11a373ad5f1243c6d782e4673f991981d1c50e773d9afa7a27dec8fcb708fa"
+      },
+      "primary_shadow": {
+        "path": "/data/fast/projects/ProteinStabilizer/checkpoints/esmc_6b_accuracy_fp32/shadow_hybrid_components/shadow_predictions.csv",
+        "sha256": "fc5a71d631ff75cbbd72ee493bc9f0563d92b14588dba1efdad6b062cadd4bd1"
+      },
+      "secondary_final_checkpoint": {
+        "path": "/data/fast/projects/ProteinStabilizer/checkpoints/esmc_600m_accuracy_fp32/accuracy_ensemble.pt",
+        "sha256": "59758a0e44a7f68cc946b41eeef8ee0241c90c207446fa1bbe7879c47cb7bbd7"
+      },
+      "secondary_oof": {
+        "path": "/data/fast/projects/ProteinStabilizer/checkpoints/esmc_600m_accuracy_fp32/cv/accuracy_oof_predictions.csv",
+        "sha256": "ffcc3d9f1f9ed58e9973ff46051e178a243c6a8cbdbac556826b373811a78725"
+      },
+      "secondary_shadow_checkpoint": {
+        "path": "/data/fast/projects/ProteinStabilizer/checkpoints/esmc_600m_accuracy_fp32/shadow/shadow_accuracy_ensemble.pt",
+        "sha256": "e54634e632920dcb780d0e3b48877401c0dc105d79413a14ed89f4adaed14a8d"
+      }
+    },
+    "oof_predictions": "/data/fast/projects/ProteinStabilizer/checkpoints/esmc_6b_accuracy_fp32/promoted_multiscale_affine/multiscale_oof_predictions.csv",
+    "oof_predictions_sha256": "27c6cd9d8df40a389e16f257ece0b74e0acbba0750d3cd97636b572772202b41",
+    "shadow_predictions": "/data/fast/projects/ProteinStabilizer/checkpoints/esmc_6b_accuracy_fp32/promoted_multiscale_affine/multiscale_shadow_predictions.csv",
+    "shadow_predictions_sha256": "4fa6be417fb2addcb1cafe914c4abcbad167565b1c44bf7830965c70502070cd"
+  },
+  "calibration": {
+    "coefficients": {
+      "intercept": -0.057387080377825785,
+      "portable_prior": 0.46344559260755014,
+      "primary_state": 0.32486668547627706,
+      "secondary_state": 0.3193821228513318
+    },
+    "formula": "0.324866685476 * primary_state_ddg + 0.319382122851 * secondary_state_ddg + 0.463445592608 * portable_prior_ddg -0.057387080378",
+    "schema": "protein-stabilizer.multiscale-affine-ddg-calibration.v1",
+    "selection": {
+      "bounds": {
+        "component_scales": [
+          0.0,
+          2.0
+        ],
+        "intercept_kcal_mol": [
+          -1.0,
+          1.0
+        ]
+      },
+      "confirmation_folds": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "monotone_nonnegative_component_scales": true,
+      "objective": "micro MAE",
+      "outer_used": false,
+      "tuning_fold": 0
+    },
+    "self_mutation_policy": "force exactly zero at application time"
+  },
+  "decision": "promoted",
+  "elapsed_seconds": 4.0550694690000455,
+  "gates": {
+    "confirmation_average_precision_not_lower": true,
+    "confirmation_direction_not_lower": true,
+    "confirmation_mae_improves_by_0_001": true,
+    "confirmation_rmse_improves": true,
+    "confirmation_spearman_not_lower": true,
+    "confirmation_top50_hits_retained": true,
+    "outer_excluded": true,
+    "passed": true,
+    "shadow_average_precision_not_lower": true,
+    "shadow_direction_not_lower": true,
+    "shadow_mae_improves_by_0_001": true,
+    "shadow_rmse_improves": true,
+    "shadow_spearman_not_lower": true,
+    "shadow_top50_hits_retained": true
+  },
+  "limitations": [
+    "The family shadow was consulted during promotion and is not a new untouched benchmark.",
+    "MegaScale training proteins are 30-72 residues and have no membrane labels; GPCR kcal/mol accuracy remains unvalidated.",
+    "This calibration improves the current model but does not support a sub-0.30 kcal/mol claim."
+  ],
+  "metrics": {
+    "all_development_oof": {
+      "candidate": {
+        "macro_protein_mae": 0.45131197434488446,
+        "macro_protein_spearman": 0.7971021493231272,
+        "protein_cluster_bootstrap_mae_95_ci": [
+          0.44117213785648346,
+          0.4779724255204201
+        ],
+        "protein_count": 110,
+        "regression": {
+          "direction_accuracy": 0.8059737288760978,
+          "mae": 0.46023919482284054,
+          "n": 108408,
+          "pearson": 0.7945865397007422,
+          "rmse": 0.6325968846237574,
+          "spearman": 0.7751313193767382
+        },
+        "retrieval": {
+          "auroc": 0.8022563281927302,
+          "average_precision": 0.22506010951750993,
+          "enrichment_at_10_percent": 4.223741378791101,
+          "enrichment_at_20": 17.80829568788501,
+          "enrichment_at_50": 16.472673511293635,
+          "hits_at_10_percent": 2057,
+          "hits_at_20": 16,
+          "hits_at_50": 37,
+          "n": 108408,
+          "positives": 4870,
+          "precision_at_10_percent": 0.18974264366755833,
+          "precision_at_20": 0.8,
+          "precision_at_50": 0.74,
+          "prevalence": 0.0449228839200059,
+          "recall_at_10_percent": 0.4223819301848049,
+          "recall_at_20": 0.0032854209445585215,
+          "recall_at_50": 0.0075975359342915815,
+          "threshold": -0.5
+        }
+      },
+      "retained": {
+        "macro_protein_mae": 0.4594448064232921,
+        "macro_protein_spearman": 0.7901592069343307,
+        "protein_cluster_bootstrap_mae_95_ci": [
+          0.44830701798200606,
+          0.488115281611681
+        ],
+        "protein_count": 110,
+        "regression": {
+          "direction_accuracy": 0.8009003025606967,
+          "mae": 0.4680907865153599,
+          "n": 108408,
+          "pearson": 0.7879331419287614,
+          "rmse": 0.6416055476311269,
+          "spearman": 0.7671800766891275
+        },
+        "retrieval": {
+          "auroc": 0.7855147370626814,
+          "average_precision": 0.1953041316165556,
+          "enrichment_at_10_percent": 3.7986978856410007,
+          "enrichment_at_20": 21.14735112936345,
+          "enrichment_at_50": 15.582258726899383,
+          "hits_at_10_percent": 1850,
+          "hits_at_20": 19,
+          "hits_at_50": 35,
+          "n": 108408,
+          "positives": 4870,
+          "precision_at_10_percent": 0.17064846416382254,
+          "precision_at_20": 0.95,
+          "precision_at_50": 0.7,
+          "prevalence": 0.0449228839200059,
+          "recall_at_10_percent": 0.3798767967145791,
+          "recall_at_20": 0.0039014373716632442,
+          "recall_at_50": 0.007186858316221766,
+          "threshold": -0.5
+        }
+      }
+    },
+    "confirmation_folds_1_to_4": {
+      "candidate": {
+        "macro_protein_mae": 0.44635750386362666,
+        "macro_protein_spearman": 0.8033682091845847,
+        "protein_cluster_bootstrap_mae_95_ci": [
+          0.43225803002715113,
+          0.47730063945055007
+        ],
+        "protein_count": 88,
+        "regression": {
+          "direction_accuracy": 0.807700278628503,
+          "mae": 0.4552416298277915,
+          "n": 86854,
+          "pearson": 0.8030103871331822,
+          "rmse": 0.6234697839838298,
+          "spearman": 0.7801448525371502
+        },
+        "retrieval": {
+          "auroc": 0.8086751357586754,
+          "average_precision": 0.23342656576589266,
+          "enrichment_at_10_percent": 4.356804699754989,
+          "enrichment_at_20": 18.085163977095263,
+          "enrichment_at_50": 17.1809057782405,
+          "hits_at_10_percent": 1674,
+          "hits_at_20": 16,
+          "hits_at_50": 38,
+          "n": 86854,
+          "positives": 3842,
+          "precision_at_10_percent": 0.19272392355514623,
+          "precision_at_20": 0.8,
+          "precision_at_50": 0.76,
+          "prevalence": 0.04423515324567665,
+          "recall_at_10_percent": 0.43571056741280584,
+          "recall_at_20": 0.004164497657470068,
+          "recall_at_50": 0.00989068193649141,
+          "threshold": -0.5
+        }
+      },
+      "candidate_suggestions": {
+        "eligibility": "primary_state_ddg < 0 and expected_ddg < 0",
+        "eligible_rows": 9178,
+        "hits_at_100": 69,
+        "hits_at_20": 17,
+        "hits_at_50": 37,
+        "hits_at_500": 275,
+        "precision_at_100": 0.69,
+        "precision_at_20": 0.85,
+        "precision_at_50": 0.74,
+        "precision_at_500": 0.55,
+        "ranker": "primary_6b_state_ddg"
+      },
+      "retained": {
+        "macro_protein_mae": 0.45341278386810574,
+        "macro_protein_spearman": 0.7975048303573601,
+        "protein_cluster_bootstrap_mae_95_ci": [
+          0.4420610301196575,
+          0.483367108553648
+        ],
+        "protein_count": 88,
+        "regression": {
+          "direction_accuracy": 0.8025882515485758,
+          "mae": 0.46208649118101336,
+          "n": 86854,
+          "pearson": 0.7980230879272504,
+          "rmse": 0.6306629981528561,
+          "spearman": 0.7732804487483803
+        },
+        "retrieval": {
+          "auroc": 0.7929617223482777,
+          "average_precision": 0.20817769787294885,
+          "enrichment_at_10_percent": 3.9872310633361074,
+          "enrichment_at_20": 20.345809474232173,
+          "enrichment_at_50": 15.372389380530976,
+          "hits_at_10_percent": 1532,
+          "hits_at_20": 18,
+          "hits_at_50": 34,
+          "n": 86854,
+          "positives": 3842,
+          "precision_at_10_percent": 0.17637577711259497,
+          "precision_at_20": 0.9,
+          "precision_at_50": 0.68,
+          "prevalence": 0.04423515324567665,
+          "recall_at_10_percent": 0.398750650702759,
+          "recall_at_20": 0.004685059864653826,
+          "recall_at_50": 0.008849557522123894,
+          "threshold": -0.5
+        }
+      },
+      "retained_suggestions": {
+        "eligibility": "primary_state_ddg < 0 and expected_ddg < 0",
+        "eligible_rows": 9534,
+        "hits_at_100": 69,
+        "hits_at_20": 17,
+        "hits_at_50": 37,
+        "hits_at_500": 270,
+        "precision_at_100": 0.69,
+        "precision_at_20": 0.85,
+        "precision_at_50": 0.74,
+        "precision_at_500": 0.54,
+        "ranker": "primary_6b_state_ddg"
+      }
+    },
+    "family_shadow": {
+      "candidate": {
+        "macro_protein_mae": 0.43915191984844953,
+        "macro_protein_spearman": 0.8288122076901985,
+        "protein_cluster_bootstrap_mae_95_ci": [
+          0.40575913712382317,
+          0.5022778540849685
+        ],
+        "protein_count": 22,
+        "regression": {
+          "direction_accuracy": 0.8271979211779992,
+          "mae": 0.44994167968706783,
+          "n": 20781,
+          "pearson": 0.8140163974319985,
+          "rmse": 0.6233991319260355,
+          "spearman": 0.7879760536295122
+        },
+        "retrieval": {
+          "auroc": 0.7744646936562317,
+          "average_precision": 0.1561846477193189,
+          "enrichment_at_10_percent": 4.062486396285279,
+          "enrichment_at_20": 14.511871508379887,
+          "enrichment_at_50": 11.60949720670391,
+          "hits_at_10_percent": 291,
+          "hits_at_20": 10,
+          "hits_at_50": 20,
+          "n": 20781,
+          "positives": 716,
+          "precision_at_10_percent": 0.13997113997113997,
+          "precision_at_20": 0.5,
+          "precision_at_50": 0.4,
+          "prevalence": 0.03445454982917088,
+          "recall_at_10_percent": 0.4064245810055866,
+          "recall_at_20": 0.013966480446927373,
+          "recall_at_50": 0.027932960893854747,
+          "threshold": -0.5
+        }
+      },
+      "candidate_suggestions": {
+        "eligibility": "primary_state_ddg < 0 and expected_ddg < 0",
+        "eligible_rows": 2336,
+        "hits_at_100": 44,
+        "hits_at_20": 5,
+        "hits_at_50": 18,
+        "hits_at_500": 154,
+        "precision_at_100": 0.44,
+        "precision_at_20": 0.25,
+        "precision_at_50": 0.36,
+        "precision_at_500": 0.308,
+        "ranker": "primary_6b_state_ddg"
+      },
+      "retained": {
+        "macro_protein_mae": 0.44908515133509036,
+        "macro_protein_spearman": 0.8197469239271449,
+        "protein_cluster_bootstrap_mae_95_ci": [
+          0.41394539549946785,
+          0.5067728325724602
+        ],
+        "protein_count": 22,
+        "regression": {
+          "direction_accuracy": 0.819402338674751,
+          "mae": 0.4582943195591643,
+          "n": 20781,
+          "pearson": 0.8088835127640246,
+          "rmse": 0.6310331718164475,
+          "spearman": 0.7796078883063509
+        },
+        "retrieval": {
+          "auroc": 0.7601219221886412,
+          "average_precision": 0.14027497456824578,
+          "enrichment_at_10_percent": 3.6855546687948917,
+          "enrichment_at_20": 13.060684357541898,
+          "enrichment_at_50": 12.770446927374302,
+          "hits_at_10_percent": 264,
+          "hits_at_20": 9,
+          "hits_at_50": 22,
+          "n": 20781,
+          "positives": 716,
+          "precision_at_10_percent": 0.12698412698412698,
+          "precision_at_20": 0.45,
+          "precision_at_50": 0.44,
+          "prevalence": 0.03445454982917088,
+          "recall_at_10_percent": 0.3687150837988827,
+          "recall_at_20": 0.012569832402234637,
+          "recall_at_50": 0.030726256983240222,
+          "threshold": -0.5
+        }
+      },
+      "retained_suggestions": {
+        "eligibility": "primary_state_ddg < 0 and expected_ddg < 0",
+        "eligible_rows": 2381,
+        "hits_at_100": 40,
+        "hits_at_20": 6,
+        "hits_at_50": 18,
+        "hits_at_500": 148,
+        "precision_at_100": 0.4,
+        "precision_at_20": 0.3,
+        "precision_at_50": 0.36,
+        "precision_at_500": 0.296,
+        "ranker": "primary_6b_state_ddg"
+      }
+    },
+    "tuning_fold_0": {
+      "candidate": {
+        "macro_protein_mae": 0.4711298562699158,
+        "macro_protein_spearman": 0.7720379098772963,
+        "protein_cluster_bootstrap_mae_95_ci": [
+          0.43756321594119074,
+          0.5279122337698936
+        ],
+        "protein_count": 22,
+        "regression": {
+          "direction_accuracy": 0.7990164238656398,
+          "mae": 0.4803773830978707,
+          "n": 21554,
+          "pearson": 0.7607510298339444,
+          "rmse": 0.6681131255813989,
+          "spearman": 0.7581214220436201
+        },
+        "retrieval": {
+          "auroc": 0.7764803185937471,
+          "average_precision": 0.19435836638038154,
+          "enrichment_at_10_percent": 3.7246441024234236,
+          "enrichment_at_20": 14.676848249027236,
+          "enrichment_at_50": 13.418832684824903,
+          "hits_at_10_percent": 383,
+          "hits_at_20": 14,
+          "hits_at_50": 32,
+          "n": 21554,
+          "positives": 1028,
+          "precision_at_10_percent": 0.17764378478664192,
+          "precision_at_20": 0.7,
+          "precision_at_50": 0.64,
+          "prevalence": 0.04769416349633479,
+          "recall_at_10_percent": 0.372568093385214,
+          "recall_at_20": 0.013618677042801557,
+          "recall_at_50": 0.0311284046692607,
+          "threshold": -0.5
+        }
+      },
+      "retained": {
+        "macro_protein_mae": 0.48357289664403724,
+        "macro_protein_spearman": 0.760776713242213,
+        "protein_cluster_bootstrap_mae_95_ci": [
+          0.4460297651588917,
+          0.5420866250991822
+        ],
+        "protein_count": 22,
+        "regression": {
+          "direction_accuracy": 0.7940985431938388,
+          "mae": 0.4922856954403542,
+          "n": 21554,
+          "pearson": 0.7472991943041142,
+          "rmse": 0.6839277834192697,
+          "spearman": 0.7460427940720437
+        },
+        "retrieval": {
+          "auroc": 0.7552907416274927,
+          "average_precision": 0.14972886165051222,
+          "enrichment_at_10_percent": 3.0341748301726064,
+          "enrichment_at_20": 11.5318093385214,
+          "enrichment_at_50": 7.967431906614785,
+          "hits_at_10_percent": 312,
+          "hits_at_20": 11,
+          "hits_at_50": 19,
+          "n": 21554,
+          "positives": 1028,
+          "precision_at_10_percent": 0.14471243042671614,
+          "precision_at_20": 0.55,
+          "precision_at_50": 0.38,
+          "prevalence": 0.04769416349633479,
+          "recall_at_10_percent": 0.3035019455252918,
+          "recall_at_20": 0.010700389105058366,
+          "recall_at_50": 0.01848249027237354,
+          "threshold": -0.5
+        }
+      }
+    }
+  },
+  "objective": "improve expected general-domain ddG with complementary cached 6B and 600M WT state models without additional mutant encodings",
+  "protocol": {
+    "confirmation": "family folds 1-4",
+    "fit": "tuning fold 0 only",
+    "mutation_sequence_embeddings": 0,
+    "outer_used": false,
+    "primary_ranker_changed": false,
+    "secondary_shadow": {
+      "checkpoint": "/data/fast/projects/ProteinStabilizer/checkpoints/esmc_600m_accuracy_fp32/shadow/shadow_accuracy_ensemble.pt",
+      "checkpoint_sha256": "e54634e632920dcb780d0e3b48877401c0dc105d79413a14ed89f4adaed14a8d",
+      "data": {
+        "embedding_provenance": {
+          "checkpoint_path": "/data/fast/cache/huggingface/hub/models--EvolutionaryScale--esmc-600m-2024-12/blobs/8ef856e1a237ee3f995442df997a962e70057faadecf38fc0c8561bd3c2f4324",
+          "checkpoint_sha256": "8ef856e1a237ee3f995442df997a962e70057faadecf38fc0c8561bd3c2f4324",
+          "embedding_dimension": 1152,
+          "inference_dtype": "float32",
+          "model_name": "esmc_600m",
+          "package_version": "3.2.1",
+          "residue_policy": "final-layer-contextual-residue-bos-offset-v1",
+          "storage_dtype": "float32"
+        },
+        "embedding_source": "/data/fast/projects/ProteinStabilizer/embeddings/esmc_600m/full_structure_wt_fp32.h5",
+        "embedding_source_sha256": "0535cc7ce5f8fb9920c0d7437544bc9d0190c1a556af5cc6a9020cc2ac5d33c8",
+        "path": "/data/fast/projects/ProteinStabilizer/artifacts/full_structure/megascale_600m_fp32.h5",
+        "proteinmpnn_provenance": {
+          "checkpoint_path": "/data/fast/tmp/protein-stabilizer/upstreams/ProteinMPNN/vanilla_model_weights/v_48_020.pt",
+          "checkpoint_sha256": "c9cb4a671d79604111231f8dbfc7c590e06f1197453b7a6854ac6661a642f5bd",
+          "commit": "8907e6671bfbfc92303b5f79c4b5e6ce47cdef57",
+          "hidden_dimension": 128,
+          "model_name": "v_48_020",
+          "repository": "https://github.com/dauparas/ProteinMPNN",
+          "residue_policy": "trainable-nonautoregressive-full-sequence-decoder-states-v1",
+          "source_sha256": "74c8f9b7553422a7a0bbd705874844ee103c8926c2c96f154a87e0b824071e1b",
+          "storage_dtype": "float32"
+        },
+        "sha256": "d030ce2e7c3977f9cb75f37d3b9d529d226a8cd8866ec2bb744f7418b168584f",
+        "source_sha256": {
+          "/data/fast/projects/ProteinStabilizer/data/processed/thermompnn_d/Megascale/csv/Megascale-D-test.csv": "a0738d3e2039ff31f55a85543173c82235b28eb8848e6af75b0c3e72b16e0174",
+          "/data/fast/projects/ProteinStabilizer/data/processed/thermompnn_d/Megascale/csv/Megascale-D-train.csv": "83eb681d2e61e728620276984d0b9e1ab372be808295c12cff24dd74f9d25f3e",
+          "/data/fast/projects/ProteinStabilizer/data/processed/thermompnn_d/Megascale/csv/Megascale-D-val.csv": "05d84384a3bfaf1d17e48d8da1334c1c3babdeeaf24940e3a57c796740f82cc5",
+          "/data/fast/projects/ProteinStabilizer/data/processed/thermompnn_d/Megascale/csv/cdna1_test.csv": "0590913568b324fcf8f06928436390f8e4a64703750bdf3584827b779cf51259",
+          "/data/fast/projects/ProteinStabilizer/data/processed/thermompnn_d/Megascale/csv/cdna1_train.csv": "49b37c78998451d77cb3579a2f139e891d11406151c2965b4d4157a73c7ce847"
+        },
+        "split_policy": {
+          "assignment_uses_targets": false,
+          "clustering": {
+            "cluster_mode": 2,
+            "coverage": 0.8,
+            "coverage_mode": 0,
+            "minimum_sequence_identity": 0.25,
+            "program": "mmseqs",
+            "version": "15-6f452+ds-2"
+          },
+          "development_folds": 5,
+          "outer_fraction": 0.2,
+          "outer_value": -1,
+          "seed": 20260723
+        },
+        "structure_archive": "/data/fast/projects/ProteinStabilizer/data/raw/thermompnn_d/Megascale.tar.gz",
+        "structure_archive_sha256": "4adfc26c7fdda627e948c423da2159c212c0d580fdbf656f096e67a13b3c7fe9"
+      },
+      "device": "cpu",
+      "proteins": 22,
+      "rows": 20781
+    },
+    "shadow": "pre-existing target-free family shadow; consulted only after coefficients were frozen"
+  },
+  "schema": "protein-stabilizer.multiscale-accuracy-calibration-audit.v1"
+}

@@ -30,7 +30,7 @@ bash examples/human_melanopsin/run_accuracy_screen.sh
 
 This path uses one full WT ESM-C pass plus batched masked-site contexts; it
 never embeds mutant sequences. It reports two deliberately separate outputs:
-the 60/40 ensemble is the expected general-domain ddG, while the exact state
+the ensemble is the expected general-domain ddG, while the exact state
 component determines stabilizer rank. By default, the shortlist requires both
 components to predict negative ddG. On the supplied 270-site mask, 5,130
 substitutions are evaluated in one WT batch plus 16 masked batches.
@@ -43,13 +43,14 @@ bash examples/human_melanopsin/run_accuracy_6b.sh
 ```
 
 The script deliberately uses two environments. First, the 600M runtime writes
-a target-specific, provenance-checked masked-site cache. Then the 6B runtime
-loads the promoted 6B accuracy checkpoint, reuses a persistent WT embedding
-cache, and consumes the 600M cache without loading the 600M encoder. Expected
-ΔΔG uses the fold-0-selected, confirmation-gated monotone affine calibration;
-candidate order remains the exact 6B state score. Repeated runs with the same
-sequence, mask, and checkpoints require no masked-site passes and no 6B WT
-pass.
+target-specific, provenance-checked masked-site and WT-state caches in one
+loaded-encoder session. Then the 6B runtime loads the promoted multiscale
+accuracy checkpoint, reuses a persistent 6B WT embedding cache, and consumes
+both 600M caches without loading the 600M encoder. Expected ΔΔG uses the
+fold-0-selected, confirmation-gated monotone calibration over the 6B WT state,
+600M WT state, and portable masked/structure prior; candidate order remains
+the exact 6B state score. Repeated runs with the same sequence, mask, and
+checkpoints require no ESM-C forward passes.
 
 Melanopsin is 478 residues, whereas this quantitative head was trained on
 30–72-residue MegaScale proteins with no membrane labels. Its ddG field is

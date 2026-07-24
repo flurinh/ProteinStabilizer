@@ -12,8 +12,11 @@ import numpy as np
 import torch
 
 from .accuracy import (
+    AFFINE_DDG_CALIBRATION_SCHEMA,
+    MULTISCALE_AFFINE_DDG_CALIBRATION_SCHEMA,
     PortablePriorConfig,
     apply_affine_ddg_calibration,
+    apply_multiscale_affine_ddg_calibration,
     backbone_geometry_features,
     blend_state_and_prior,
     load_portable_prior,
@@ -47,6 +50,9 @@ from .v2_predictor import (
 
 
 ACCURACY_SCREEN_SCHEMA = "protein-stabilizer.accuracy-screen.v1"
+SECONDARY_ACCURACY_STATE_SCHEMA = (
+    "protein-stabilizer.secondary-accuracy-state.v1"
+)
 
 
 def _device(name: str) -> torch.device:
@@ -61,10 +67,12 @@ def _load_accuracy_checkpoint(
     device: torch.device,
 ) -> tuple[
     FullStructureStateModel,
+    FullStructureStateModel | None,
     object,
     PortablePriorConfig,
     dict[str, object],
     dict[str, object],
+    dict[str, object] | None,
 ]:
     path = Path(checkpoint_path).resolve()
     payload = torch.load(path, map_location="cpu", weights_only=False)
@@ -89,6 +97,42 @@ def _load_accuracy_checkpoint(
     state_model.load_state_dict(payload["state_model_state_dict"])
     state_model.eval()
 
+    secondary_model = None
+    secondary_dynamic_provenance = None
+    secondary = payload.get("secondary_state")
+    calibration = payload.get("ddg_calibration")
+    if (
+        isinstance(calibration, dict)
+        and calibration.get("schema")
+        == MULTISCALE_AFFINE_DDG_CALIBRATION_SCHEMA
+    ):
+        if (
+            not isinstance(secondary, dict)
+            or secondary.get("schema") != SECONDARY_ACCURACY_STATE_SCHEMA
+        ):
+            raise RuntimeError(
+                "multiscale calibration lacks its secondary state model"
+            )
+        secondary_config = secondary.get("state_config")
+        if not isinstance(secondary_config, FullStructureConfig):
+            secondary_config = FullStructureConfig(**secondary_config)
+        if not secondary_config.use_structure:
+            raise RuntimeError(
+                "secondary accuracy state requires its structure encoder"
+            )
+        secondary_proteinmpnn, secondary_module, secondary_provenance = (
+            load_trainable_proteinmpnn(proteinmpnn_repository)
+        )
+        secondary_model = FullStructureStateModel(
+            MaskedProteinMPNNEncoder(
+                secondary_proteinmpnn, secondary_module
+            ),
+            secondary_config,
+        ).to(device)
+        secondary_model.load_state_dict(secondary["state_model_state_dict"])
+        secondary_model.eval()
+        secondary_dynamic_provenance = asdict(secondary_provenance)
+
     prior_record = payload["portable_prior"]
     recorded_prior = Path(prior_record["model"])
     local_prior = path.parent / recorded_prior.name
@@ -98,11 +142,35 @@ def _load_accuracy_checkpoint(
         raise RuntimeError("accuracy checkpoint portable-prior hash mismatch")
     return (
         state_model,
+        secondary_model,
         prior,
         config,
         payload,
         asdict(dynamic_provenance),
+        secondary_dynamic_provenance,
     )
+
+
+def _validate_esmc_provenance(
+    label: str,
+    runtime: Mapping[str, object],
+    trained: Mapping[str, object],
+) -> None:
+    numeric_fields = (
+        "checkpoint_sha256",
+        "embedding_dimension",
+        "inference_dtype",
+        "storage_dtype",
+        "residue_policy",
+    )
+    mismatched = [
+        name for name in numeric_fields if runtime.get(name) != trained.get(name)
+    ]
+    if mismatched:
+        raise RuntimeError(
+            f"runtime {label} ESM-C provenance differs from training "
+            f"for {mismatched}"
+        )
 
 
 def _validate_runtime_provenance(
@@ -119,27 +187,11 @@ def _validate_runtime_provenance(
     masked_model = feature_provenance["masked_marginal"][
         "model_provenance"
     ]
-    numeric_fields = (
-        "checkpoint_sha256",
-        "embedding_dimension",
-        "inference_dtype",
-        "storage_dtype",
-        "residue_policy",
-    )
     for label, runtime, trained in (
         ("state", state_model_provenance, state_model),
         ("masked", masked_model_provenance, masked_model),
     ):
-        mismatched = [
-            name
-            for name in numeric_fields
-            if runtime.get(name) != trained.get(name)
-        ]
-        if mismatched:
-            raise RuntimeError(
-                f"runtime {label} ESM-C provenance differs from training "
-                f"for {mismatched}"
-            )
+        _validate_esmc_provenance(label, runtime, trained)
     row_provenance = feature_provenance["hierarchy_rows"][0][
         "structure_provenance"
     ]["proteinmpnn"]
@@ -183,6 +235,7 @@ def screen_accuracy_single_mutants(
     embedder: object | None = None,
     masked_marginal_path: Path | None = None,
     embedding_cache: Path | None = None,
+    secondary_state_embedding_cache: Path | None = None,
     state_cache_only: bool = False,
 ) -> dict[str, object]:
     """Screen all substitutions with separate ddG and retrieval outputs."""
@@ -244,12 +297,18 @@ def screen_accuracy_single_mutants(
             storage_dtype="float32",
         )
     )
-    state_model, prior, config, checkpoint, dynamic_provenance = (
-        _load_accuracy_checkpoint(
-            checkpoint_path,
-            proteinmpnn_repository,
-            torch_device,
-        )
+    (
+        state_model,
+        secondary_state_model,
+        prior,
+        config,
+        checkpoint,
+        dynamic_provenance,
+        secondary_dynamic_provenance,
+    ) = _load_accuracy_checkpoint(
+        checkpoint_path,
+        proteinmpnn_repository,
+        torch_device,
     )
     structure_embedder = ProteinMPNNBackboneEmbedder(
         proteinmpnn_repository,
@@ -300,6 +359,37 @@ def screen_accuracy_single_mutants(
                 "model_provenance": state_model_provenance,
             }
         )
+    secondary_esm_residue = None
+    secondary_cache_provenance = None
+    if secondary_state_model is not None:
+        if secondary_state_embedding_cache is None:
+            raise ValueError(
+                "multiscale accuracy inference requires a secondary "
+                "600M WT embedding cache"
+            )
+        secondary_esm_residue, secondary_cache_provenance = (
+            load_target_state_embeddings(
+                Path(secondary_state_embedding_cache),
+                wt_sequence,
+            )
+        )
+        secondary_record = checkpoint["secondary_state"]
+        _validate_esmc_provenance(
+            "secondary state",
+            secondary_cache_provenance["model_provenance"],
+            secondary_record["embedding_provenance"],
+        )
+        if (
+            secondary_dynamic_provenance is None
+            or secondary_dynamic_provenance["checkpoint_sha256"]
+            != secondary_record["proteinmpnn_provenance"][
+                "checkpoint_sha256"
+            ]
+        ):
+            raise RuntimeError(
+                "runtime secondary dynamic ProteinMPNN checkpoint differs "
+                "from training"
+            )
     if masked_marginal_path is None:
         if active_embedder is None:
             raise ValueError(
@@ -394,6 +484,45 @@ def screen_accuracy_single_mutants(
         ],
         dtype=np.float32,
     )
+    secondary_state_ddg = None
+    if secondary_state_model is not None:
+        assert secondary_esm_residue is not None
+        with torch.inference_mode():
+            secondary_potential, _ = secondary_state_model.all_potentials(
+                torch.from_numpy(secondary_esm_residue[None]).to(
+                    torch_device
+                ),
+                torch.from_numpy(
+                    secondary_esm_residue.mean(axis=0, keepdims=True)
+                ).to(torch_device),
+                torch.from_numpy(coordinates[None]).to(torch_device),
+                torch.from_numpy(sequence_tokens[None]).to(torch_device),
+                torch.ones(
+                    (1, len(wt_sequence)),
+                    dtype=torch.bool,
+                    device=torch_device,
+                ),
+                structure_mask=torch.from_numpy(
+                    active_structure_mask[None]
+                ).to(torch_device),
+            )
+        secondary_values = (
+            secondary_potential[0].float().cpu().numpy()
+        )
+        secondary_state_ddg = np.asarray(
+            [
+                secondary_values[
+                    mutation.position - 1,
+                    amino_acid_index[mutation.mutant],
+                ]
+                - secondary_values[
+                    mutation.position - 1,
+                    amino_acid_index[mutation.wt],
+                ]
+                for mutation in candidates
+            ],
+            dtype=np.float32,
+        )
 
     site_index = {position: index for index, position in enumerate(allowed)}
     masked_rows = np.stack(
@@ -427,16 +556,34 @@ def screen_accuracy_single_mutants(
     )
     prior_ddg = predict_portable_prior(prior, features, wt, mutant)
     ddg_calibration = checkpoint.get("ddg_calibration")
-    expected_ddg = (
-        blend_state_and_prior(state_ddg, prior_ddg, config=config)
-        if ddg_calibration is None
-        else apply_affine_ddg_calibration(
+    if ddg_calibration is None:
+        expected_ddg = blend_state_and_prior(
+            state_ddg, prior_ddg, config=config
+        )
+    elif (
+        ddg_calibration.get("schema")
+        == MULTISCALE_AFFINE_DDG_CALIBRATION_SCHEMA
+    ):
+        if secondary_state_ddg is None:
+            raise RuntimeError(
+                "multiscale calibration has no secondary state predictions"
+            )
+        expected_ddg = apply_multiscale_affine_ddg_calibration(
+            state_ddg,
+            secondary_state_ddg,
+            prior_ddg,
+            ddg_calibration,
+            self_mask=wt == mutant,
+        )
+    elif ddg_calibration.get("schema") == AFFINE_DDG_CALIBRATION_SCHEMA:
+        expected_ddg = apply_affine_ddg_calibration(
             state_ddg,
             prior_ddg,
             ddg_calibration,
             self_mask=wt == mutant,
         )
-    )
+    else:
+        raise RuntimeError("unsupported ddG calibration schema")
 
     stabilizer_order = np.argsort(state_ddg, kind="stable")
     ddg_order = np.argsort(expected_ddg, kind="stable")
@@ -467,6 +614,10 @@ def screen_accuracy_single_mutants(
             "component_agreement": bool(agreement[index]),
             "suggestion_eligible": bool(eligible[index]),
         })
+        if secondary_state_ddg is not None:
+            rows[-1]["secondary_state_ddg"] = float(
+                secondary_state_ddg[index]
+            )
     eligible_order = [
         int(index) for index in stabilizer_order if eligible[index]
     ]
@@ -573,6 +724,9 @@ def screen_accuracy_single_mutants(
             "mutant_sequence_passes": 0,
             "substitutions_scored_per_site": 19,
             "state_embedding_cache": state_cache_provenance,
+            "secondary_state_embedding_cache": (
+                secondary_cache_provenance
+            ),
             "masked_marginal_cache": masked_cache_provenance,
         },
         "protected_mask": {
@@ -601,6 +755,13 @@ def screen_accuracy_single_mutants(
         "model": {
             "state_model": state_model_provenance["model_name"],
             "masked_model": masked_model_provenance["model_name"],
+            "secondary_state_model": (
+                None
+                if secondary_cache_provenance is None
+                else secondary_cache_provenance["model_provenance"][
+                    "model_name"
+                ]
+            ),
             "checkpoint": str(Path(checkpoint_path).resolve()),
             "checkpoint_sha256": file_sha256(
                 Path(checkpoint_path).resolve()

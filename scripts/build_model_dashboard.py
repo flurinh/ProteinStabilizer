@@ -107,6 +107,9 @@ def dashboard_data() -> dict[str, object]:
     accuracy_calibration = _load_optional(
         "docs/esmc6b_accuracy_calibration_audit.json"
     )
+    accuracy_multiscale = _load_optional(
+        "docs/esmc6b_multiscale_accuracy_audit.json"
+    )
     accuracy_gpcr_transfer = _load_optional(
         "docs/esmc6b_accuracy_gpcr_transfer_audit.json"
     )
@@ -1966,6 +1969,137 @@ def dashboard_data() -> dict[str, object]:
         data["sources"].append(
             "docs/esmc6b_accuracy_calibration_audit.json"
         )
+    if accuracy_multiscale is not None:
+        multiscale_oof = accuracy_multiscale["metrics"][
+            "all_development_oof"
+        ]["candidate"]
+        multiscale_shadow = accuracy_multiscale["metrics"][
+            "family_shadow"
+        ]["candidate"]
+        multiscale_regression = multiscale_shadow["regression"]
+        multiscale_interval = multiscale_shadow[
+            "protein_cluster_bootstrap_mae_95_ci"
+        ]
+        retained_shadow = accuracy_multiscale["metrics"][
+            "family_shadow"
+        ]["retained"]
+        formula = accuracy_multiscale["calibration"]["formula"]
+        data["status"].update(
+            {
+                "headline": (
+                    "The promoted cached 6B + 600M WT-state estimator "
+                    f"reaches {_round(multiscale_regression['mae'], 3)} "
+                    "kcal/mol family-shadow MAE; the 6B state remains the "
+                    "stabilizer-ranking route"
+                ),
+                "best_ddg": (
+                    "Monotone 6B state + 600M state + masked/structure prior "
+                    "· frozen family-shadow magnitude estimate"
+                ),
+                "structure_audit": (
+                    "The second cached WT state improves every confirmation "
+                    "and family-shadow metric without mutant-sequence "
+                    "embeddings. Sub-0.30 and quantitative GPCR accuracy "
+                    "remain unproven."
+                ),
+            }
+        )
+        data["expected_ddg"].update(
+            {
+                "development_oof_mae": _round(
+                    multiscale_oof["regression"]["mae"], 4
+                ),
+                "family_shadow_mae": _round(
+                    multiscale_regression["mae"], 4
+                ),
+                "family_shadow_rmse": _round(
+                    multiscale_regression["rmse"], 4
+                ),
+                "family_shadow_mae_ci95": [
+                    _round(value, 4) for value in multiscale_interval
+                ],
+                "family_shadow_spearman": _round(
+                    multiscale_regression["spearman"], 4
+                ),
+                "family_shadow_blend_ap": _round(
+                    multiscale_shadow["retrieval"]["average_precision"], 4
+                ),
+                "calibration_formula": formula,
+                "interpretation": (
+                    "The selected monotone multiscale calibration reduces "
+                    f"family-shadow MAE from "
+                    f"{retained_shadow['regression']['mae']:.4f} to "
+                    f"{multiscale_regression['mae']:.4f} kcal/mol "
+                    f"(95% protein-bootstrap CI "
+                    f"{multiscale_interval[0]:.4f}–"
+                    f"{multiscale_interval[1]:.4f}). The families appeared "
+                    "in earlier cross-validation reports and MegaScale has "
+                    "no membrane labels; GPCR values remain out-of-domain "
+                    "screening evidence."
+                ),
+            }
+        )
+        current = data["models"][0]
+        if current["name"] == (
+            "ESM-C 6B/600M calibrated accuracy ensemble"
+        ):
+            current.update(
+                {
+                    "name": (
+                        "ESM-C 6B+600M multiscale calibrated accuracy "
+                        "ensemble"
+                    ),
+                    "role": (
+                        "Expected-ddG magnitude from complementary cached "
+                        "6B/600M WT states plus portable prior; 6B state "
+                        "used for stabilizer ranking"
+                    ),
+                    "target": (
+                        "ΔΔG, kcal/mol · direction accuracy "
+                        f"{_round(multiscale_regression['direction_accuracy'])}"
+                    ),
+                    "spearman": _round(
+                        multiscale_regression["spearman"]
+                    ),
+                    "pearson": _round(
+                        multiscale_regression["pearson"]
+                    ),
+                    "mae": _round(multiscale_regression["mae"]),
+                    "rmse": _round(multiscale_regression["rmse"]),
+                }
+            )
+        confirmation = accuracy_multiscale["metrics"][
+            "confirmation_folds_1_to_4"
+        ]
+        optimization_audits.insert(
+            0,
+            {
+                "candidate": (
+                    "Cached 6B/600M WT-state multiscale calibration"
+                ),
+                "validation": (
+                    "confirmation folds 1–4 MAE "
+                    f"{confirmation['retained']['regression']['mae']:.4f}→"
+                    f"{confirmation['candidate']['regression']['mae']:.4f}; "
+                    "all regression, direction, and retrieval gates passed"
+                ),
+                "frozen_test": (
+                    "family-shadow MAE "
+                    f"{retained_shadow['regression']['mae']:.4f}→"
+                    f"{multiscale_regression['mae']:.4f}; ρ "
+                    f"{retained_shadow['regression']['spearman']:.4f}→"
+                    f"{multiscale_regression['spearman']:.4f}"
+                ),
+                "decision": (
+                    "Promoted for expected-ΔΔG magnitude; exact 6B rank "
+                    "unchanged; outer partition excluded"
+                ),
+                "tone": "good",
+            },
+        )
+        data["sources"].append(
+            "docs/esmc6b_multiscale_accuracy_audit.json"
+        )
     if accuracy_gpcr_transfer is not None:
         zero_shot = accuracy_gpcr_transfer["zero_shot_results"][
             "calibrated_expected_ddg"
@@ -2387,7 +2521,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       <canvas class="scatter-canvas" id="ddg-scatter"></canvas>
       <div>
         <div class="scatter-stats" id="scatter-stats"></div>
-        <p class="foot">Every point is one mutation from the historical protein-held-out MegaScale test. Both axes use the same unclipped kcal/mol scale; the diagonal is perfect calibration. Negative values are stabilizing. This set has been consulted by prior promotion gates and is not an untouched lockbox.</p>
+        <p class="foot">Every point is one mutation from the five family-held-out MegaScale development folds; the historical outer partition is excluded. Both axes use the same unclipped kcal/mol scale; the diagonal is perfect calibration. Negative values are stabilizing. These folds have been consulted during model development and are not an untouched lockbox.</p>
       </div>
     </div>
   </section>

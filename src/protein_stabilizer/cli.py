@@ -157,7 +157,8 @@ DEFAULT_ACCURACY_CHECKPOINTS = (
 )
 DEFAULT_ACCURACY_FINAL = DEFAULT_ACCURACY_CHECKPOINTS / "promoted"
 DEFAULT_ESMC6B_ACCURACY_FINAL = (
-    ROOT / "checkpoints/esmc_6b_accuracy_fp32/promoted_affine"
+    ROOT
+    / "checkpoints/esmc_6b_accuracy_fp32/promoted_multiscale_affine"
 )
 DEFAULT_MASKED_MARGINALS = Path(
     "/data/fast/tmp/protein-stabilizer/study/"
@@ -1069,7 +1070,16 @@ def command_cache_accuracy_target(
         )
         if position not in protected
     )
-    return build_target_masked_marginal_cache(
+    embedder = (
+        None
+        if args.state_output is None
+        else ESMCEmbedder(
+            model_name=args.model,
+            device=args.device,
+            storage_dtype="float32",
+        )
+    )
+    report = build_target_masked_marginal_cache(
         sequence,
         positions,
         args.output,
@@ -1077,7 +1087,35 @@ def command_cache_accuracy_target(
         device=args.device,
         max_tokens=args.max_tokens,
         max_batch_size=args.max_batch_size,
+        embedder=embedder,
     )
+    if args.state_output is None:
+        return report
+    normalized = normalize_sequence(sequence)
+    request = EmbeddingRequest(
+        normalized, tuple(range(1, len(normalized) + 1))
+    )
+    assert embedder is not None
+    _, stats = _embed_requests_cached(
+        embedder,
+        [request],
+        window_radius=4,
+        max_tokens=args.max_tokens,
+        max_batch_size=args.max_batch_size,
+        cache_path=Path(args.state_output).resolve(),
+    )
+    _, cached = load_target_state_embeddings(
+        Path(args.state_output), normalized
+    )
+    report["state_cache"] = {
+        "schema": "protein-stabilizer.target-state-cache.v1",
+        "output": str(Path(args.state_output).resolve()),
+        "output_sha256": file_sha256(Path(args.state_output).resolve()),
+        "sequence_length": len(normalized),
+        **stats,
+        "model_provenance": cached["model_provenance"],
+    }
+    return report
 
 
 def command_cache_accuracy_state_6b(
@@ -1184,6 +1222,9 @@ def command_screen_accuracy_6b(
         require_component_agreement=args.require_component_agreement,
         masked_marginal_path=args.masked_marginals_cache,
         embedding_cache=args.embedding_cache,
+        secondary_state_embedding_cache=(
+            args.secondary_state_embedding_cache
+        ),
         state_cache_only=True,
     )
 
@@ -2527,6 +2568,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="persistent target-specific masked probability cache",
     )
     cache_accuracy_target.add_argument(
+        "--state-output",
+        type=Path,
+        help=(
+            "optional persistent 600M WT-state cache built with the same "
+            "loaded encoder for multiscale screening"
+        ),
+    )
+    cache_accuracy_target.add_argument(
         "--model", default="esmc_600m", choices=["esmc_600m"]
     )
     cache_accuracy_target.add_argument("--device", default="cuda")
@@ -2623,6 +2672,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_APPLICATION_6B_CACHE,
         help="persistent provenance-checked 6B WT state embedding cache",
+    )
+    screen_accuracy_6b.add_argument(
+        "--secondary-state-embedding-cache",
+        type=Path,
+        help=(
+            "persistent 600M WT state cache produced by "
+            "cache-accuracy-target --state-output"
+        ),
     )
     screen_v2_6b = subparsers.add_parser("screen-v2-6b")
     screen_v2_6b.add_argument("--sequence")

@@ -46,10 +46,16 @@ def export_accuracy(args: argparse.Namespace) -> dict[str, object]:
             f"accuracy prediction table lacks {sorted(missing)}"
         )
     target = frame["experimental_ddg"].to_numpy(dtype=np.float32)
-    prediction_column = (
-        "calibrated_ddg"
-        if "calibrated_ddg" in frame
-        else "ensemble_ddg"
+    prediction_column = next(
+        (
+            name
+            for name in (
+                "multiscale_calibrated_ddg",
+                "calibrated_ddg",
+                "ensemble_ddg",
+            )
+            if name in frame
+        )
     )
     prediction = frame[prediction_column].to_numpy(dtype=np.float32)
     if (
@@ -66,17 +72,30 @@ def export_accuracy(args: argparse.Namespace) -> dict[str, object]:
         scale_audit_path.read_text(encoding="utf-8")
     )
     calibration_audit_path = (
-        ROOT / "docs/esmc6b_accuracy_calibration_audit.json"
+        ROOT
+        / (
+            "docs/esmc6b_multiscale_accuracy_audit.json"
+            if prediction_column == "multiscale_calibrated_ddg"
+            else "docs/esmc6b_accuracy_calibration_audit.json"
+        )
     ).resolve()
-    if prediction_column == "calibrated_ddg":
+    if prediction_column in {
+        "calibrated_ddg",
+        "multiscale_calibrated_ddg",
+    }:
         if not calibration_audit_path.is_file():
             raise FileNotFoundError(calibration_audit_path)
         calibration_audit = json.loads(
             calibration_audit_path.read_text(encoding="utf-8")
         )
+        candidate_key = (
+            "candidate"
+            if prediction_column == "multiscale_calibrated_ddg"
+            else "calibrated"
+        )
         calibrated_metrics = calibration_audit["metrics"][
             "all_development_oof"
-        ]["calibrated"]
+        ][candidate_key]
         metrics["protein_cluster_bootstrap_mae_95_ci"] = (
             calibrated_metrics[
                 "protein_cluster_bootstrap_mae_95_ci"

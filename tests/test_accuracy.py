@@ -12,10 +12,12 @@ from protein_stabilizer.accuracy import (
     AFFINE_DDG_CALIBRATION_SCHEMA,
     BACKBONE_GEOMETRY_DIMENSION,
     MASKED_CHEMISTRY_DIMENSION,
+    MULTISCALE_AFFINE_DDG_CALIBRATION_SCHEMA,
     PORTABLE_PRIOR_DIMENSION,
     PROTEINMPNN_DIMENSION,
     PortablePriorConfig,
     apply_affine_ddg_calibration,
+    apply_multiscale_affine_ddg_calibration,
     backbone_geometry_features,
     blend_state_and_prior,
     fit_portable_prior,
@@ -206,6 +208,48 @@ def test_affine_ddg_calibration_is_monotone_and_self_zeroed() -> None:
         )
 
 
+def test_multiscale_affine_calibration_is_monotone_and_self_zeroed() -> None:
+    calibration = {
+        "schema": MULTISCALE_AFFINE_DDG_CALIBRATION_SCHEMA,
+        "coefficients": {
+            "primary_state": 0.4,
+            "secondary_state": 0.3,
+            "portable_prior": 0.2,
+            "intercept": -0.1,
+        },
+    }
+    prediction = apply_multiscale_affine_ddg_calibration(
+        np.array([-1.0, 0.5], dtype=np.float32),
+        np.array([-0.5, 0.25], dtype=np.float32),
+        np.array([-0.25, 0.1], dtype=np.float32),
+        calibration,
+        self_mask=np.array([False, True]),
+    )
+    np.testing.assert_allclose(prediction, [-0.7, 0.0], atol=1.0e-7)
+
+    invalid = {
+        **calibration,
+        "coefficients": {
+            **calibration["coefficients"],
+            "secondary_state": -0.1,
+        },
+    }
+    with pytest.raises(RuntimeError, match="not monotone"):
+        apply_multiscale_affine_ddg_calibration(
+            np.array([0.0], dtype=np.float32),
+            np.array([0.0], dtype=np.float32),
+            np.array([0.0], dtype=np.float32),
+            invalid,
+        )
+    with pytest.raises(ValueError, match="must align"):
+        apply_multiscale_affine_ddg_calibration(
+            np.array([0.0], dtype=np.float32),
+            np.array([0.0, 1.0], dtype=np.float32),
+            np.array([0.0], dtype=np.float32),
+            calibration,
+        )
+
+
 def test_masked_cache_is_resumable_and_noop_is_hash_stable(
     tmp_path, monkeypatch
 ) -> None:
@@ -366,9 +410,12 @@ def test_cross_scale_accuracy_cli_contract() -> None:
             "ACDE",
             "--output",
             "masked.h5",
+            "--state-output",
+            "state_600m.h5",
         ]
     )
     assert cache.command == "cache-accuracy-target"
+    assert cache.state_output.name == "state_600m.h5"
     state_cache = parser.parse_args(
         ["cache-accuracy-state-6b", "--sequence", "ACDE"]
     )
@@ -387,7 +434,10 @@ def test_cross_scale_accuracy_cli_contract() -> None:
     assert screen.model == "biohub/ESMC-6B"
     assert screen.max_batch_size == 1
     assert screen.accuracy_checkpoint.name == "accuracy_ensemble.pt"
-    assert screen.accuracy_checkpoint.parent.name == "promoted_affine"
+    assert (
+        screen.accuracy_checkpoint.parent.name
+        == "promoted_multiscale_affine"
+    )
 
 
 def test_target_state_cache_reconstructs_full_wt_residues(tmp_path) -> None:

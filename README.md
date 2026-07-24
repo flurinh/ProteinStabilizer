@@ -3,9 +3,9 @@
 ProteinStabilizer ranks amino-acid substitutions for stability, with a
 GPCR-specific calibration layer. The fast path uses frozen ESM-C 600M
 embeddings with mutation-direction, ordered local, whole-protein, membrane, and
-learned ProteinMPNN context. The best current expected-ddG route combines one
-strict-FP32 ESM-C 6B WT-state pass with cached 600M masked contexts and
-ProteinMPNN/backbone features.
+learned ProteinMPNN context. The best current expected-ddG route combines
+cached strict-FP32 ESM-C 6B and 600M WT-state passes with 600M masked contexts
+and ProteinMPNN/backbone features.
 Permutation-invariant epistasis heads score double mutants and accept larger
 mutation sets as an explicit extrapolation.
 Saturation screening also reads the encoder's masked amino-acid probabilities
@@ -92,14 +92,16 @@ MAE `0.51152` to `0.46486`, RMSE `0.70261` to `0.63985`, and Spearman
 `0.01149` kcal/mol on the shadow split. Stabilizer ranking remains the exact
 6B state score because it retains higher average precision.
 
-A monotone affine magnitude calibration was fit on designated tuning fold 0
-only. On held-out confirmation folds 1–4 it improves MAE from `0.46538` to
-`0.46209` kcal/mol and on the frozen family-shadow split from `0.46486` to
-`0.45829` (95% protein-bootstrap CI `0.41408–0.51039`). RMSE and Spearman
-also improve on both evaluations, while state-ranked top-50 stabilizer hits
-are retained. The promoted calibration is
-`0.50336 × state + 0.59977 × portable_prior − 0.05107`. It is used only for
-expected ΔΔG magnitude; candidate order remains the 6B state score.
+A second monotone calibration adds the complementary cached 600M WT state to
+the 6B state and portable prior. Its coefficients were fit on designated
+tuning fold 0 only. Against the retained affine estimator, held-out
+confirmation-fold MAE improves from `0.46209` to `0.45524` kcal/mol and the
+pre-existing family shadow improves from `0.45829` to `0.44994` (95%
+protein-bootstrap CI `0.40576–0.50228`). RMSE, Spearman, direction accuracy,
+average precision, and top-50 retention also pass on both evaluations. The
+promoted formula is `0.32487 × 6B_state + 0.31938 × 600M_state + 0.46345 ×
+portable_prior − 0.05739`. It is used only for expected ΔΔG magnitude;
+candidate order remains the exact 6B state score.
 
 This general-model gain does not solve GPCR transfer. On 97 quantitative ΔTm
 mutations across 11 receptors, calibrated expected ΔΔG reaches pooled
@@ -164,6 +166,7 @@ dependency stacks conflict:
 ```bash
 .venv/bin/protein-stabilizer cache-accuracy-target \
   --fasta target.fasta --protected-mask protected_positions.txt \
+  --state-output embeddings/application/target_esmc_600m_state_fp32.h5 \
   --output artifacts/target_masked_600m.h5
 
 .venv-esmc6b/bin/protein-stabilizer cache-accuracy-state-6b \
@@ -175,12 +178,14 @@ dependency stacks conflict:
   --protected-mask protected_positions.txt \
   --masked-marginals-cache artifacts/target_masked_600m.h5 \
   --embedding-cache embeddings/application/esmc_6b_targets_fp32.h5 \
+  --secondary-state-embedding-cache \
+    embeddings/application/target_esmc_600m_state_fp32.h5 \
   --output artifacts/accuracy_6b_screen.csv
 ```
 
-Once both caches exist, a rerun loads neither ESM-C encoder. The real masked
-melanopsin run scored 5,130 substitutions in 2.8 seconds from cache, with zero
-mutant-sequence passes.
+Once all three caches exist, a rerun requires no ESM-C forward passes. The
+600M cache command produces its masked-site and WT-state caches in one
+loaded-encoder session. Screening still uses zero mutant-sequence passes.
 
 ### Promoted v2 hierarchy
 
