@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "ESM-C embedding-delta models for mutation stability ranking"
 requires-python = ">=3.10"
 dependencies = [
+  "biopython>=1.83",
   "h5py>=3.10",
   "numpy>=1.26",
   "openpyxl>=3.1",
@@ -20,7 +21,9 @@ dependencies = [
 
 [project.optional-dependencies]
 esmc = ["esm==3.2.1.post1"]
-esmc6b = ["transformers==4.57.6"]
+esmc6b = [
+  "transformers @ git+https://github.com/Biohub/transformers.git@ef32577f55da19a4989cd7b22e004dc43a4998cb",
+]
 test = ["pytest>=8"]
 
 [project.scripts]

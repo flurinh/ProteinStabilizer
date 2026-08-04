@@ -44,6 +44,11 @@ class HierarchicalObjectiveConfig:
     ranking_pairs_per_batch: int = 192
     minimum_ranking_gap: float = 0.25
     maximum_bin_weight: float = 6.0
+    huber_delta: float = 1.0
+    mse_weight: float = 0.0
+    retrieval_source: str = "head"
+    selection_metric: str = "composite"
+    absolute_stability_weight: float = 0.0
 
 
 @dataclass
@@ -123,7 +128,15 @@ def _load_rows(
         split = np.asarray(handle["split"].asstr()[:])
     with HierarchyEmbeddingReader(cache_path) as cache:
         wt = cache.indexed_features(wt_site, wt_sequence)
-        mutant = cache.indexed_features(mutant_site, mutant_sequence)
+        if np.array_equal(wt_site, mutant_site) and np.array_equal(
+            wt_sequence, mutant_sequence
+        ):
+            # WT-conditioned state-potential pretraining does not consume a
+            # separately embedded mutant state. Reuse the same arrays instead
+            # of materializing a second multi-gigabyte copy.
+            mutant = wt
+        else:
+            mutant = cache.indexed_features(mutant_site, mutant_sequence)
     if not np.array_equal(wt["window_mask"], mutant["window_mask"]):
         raise RuntimeError("WT and mutant hierarchy window masks differ")
     return HierarchyArrays(
@@ -223,14 +236,25 @@ def _evaluation(
     }
 
 
-def _selection_score(metrics: dict[str, object]) -> float:
+def _selection_score(
+    metrics: dict[str, object],
+    *,
+    retrieval_key: str = "retrieval_head",
+    selection_metric: str = "composite",
+) -> float:
     regression = metrics["regression"]
-    retrieval = metrics["retrieval_head"]
+    if retrieval_key not in {"retrieval_head", "retrieval_from_ddg"}:
+        raise ValueError("unknown retrieval metric for model selection")
+    retrieval = metrics[retrieval_key]
     spearman = float(regression["spearman"])
     average_precision = float(retrieval["average_precision"])
     mae = float(regression["mae"])
     if not all(np.isfinite(value) for value in (spearman, average_precision, mae)):
         return -math.inf
+    if selection_metric == "mae":
+        return -mae
+    if selection_metric != "composite":
+        raise ValueError("selection metric must be 'composite' or 'mae'")
     return 0.65 * spearman + 0.25 * average_precision - 0.10 * mae
 
 
@@ -287,6 +311,19 @@ def _train_candidate(
 ) -> tuple[dict[str, object], list[dict[str, object]]]:
     if minimum_epochs < 1 or minimum_epochs > epochs:
         raise ValueError("minimum epochs must be within the training budget")
+    if objective.huber_delta <= 0.0:
+        raise ValueError("Huber delta must be positive")
+    if objective.mse_weight < 0.0:
+        raise ValueError("MSE weight must be non-negative")
+    if objective.retrieval_source not in {"head", "ddg"}:
+        raise ValueError("retrieval source must be 'head' or 'ddg'")
+    if objective.selection_metric not in {"composite", "mae"}:
+        raise ValueError("selection metric must be 'composite' or 'mae'")
+    retrieval_key = (
+        "retrieval_from_ddg"
+        if objective.retrieval_source == "ddg"
+        else "retrieval_head"
+    )
     train_indices = np.flatnonzero(train_data.split == "train")
     validation_indices = np.flatnonzero(train_data.split == "val")
     test_indices = np.arange(len(test_data.target), dtype=np.int64)
@@ -304,7 +341,10 @@ def _train_candidate(
         maximum_weight=objective.maximum_bin_weight,
     )
     weights *= train_data.sample_weight
-    huber = torch.nn.HuberLoss(delta=1.0, reduction="none")
+    huber = torch.nn.HuberLoss(
+        delta=objective.huber_delta,
+        reduction="none",
+    )
     binary = torch.nn.BCEWithLogitsLoss(reduction="none")
     members: list[dict[str, object]] = []
     validation_ddg: list[np.ndarray] = []
@@ -351,6 +391,7 @@ def _train_candidate(
             shuffled = rng.permutation(train_indices)
             totals = {
                 "regression": 0.0,
+                "mse": 0.0,
                 "retrieval": 0.0,
                 "ranking": 0.0,
                 "total": 0.0,
@@ -369,11 +410,19 @@ def _train_candidate(
                 label = (target < objective.stabilizer_threshold).float()
                 optimizer.zero_grad(set_to_none=True)
                 outputs = model.predict_heads(**tensors)
+                retrieval_logit = (
+                    -(outputs["ddg"] - objective.stabilizer_threshold)
+                    if objective.retrieval_source == "ddg"
+                    else outputs["retrieval"]
+                )
                 regression_loss = (
                     huber(outputs["ddg"], target) * weight
                 ).sum() / weight.sum()
+                mse_loss = (
+                    (outputs["ddg"] - target).square() * weight
+                ).sum() / weight.sum()
                 retrieval_loss = (
-                    binary(outputs["retrieval"], label) * weight
+                    binary(retrieval_logit, label) * weight
                 ).sum() / weight.sum()
                 stable, unstable = _ranking_pairs(
                     train_data.protein_id[indices],
@@ -387,14 +436,15 @@ def _train_candidate(
                     unstable_tensor = torch.from_numpy(unstable).to(device)
                     ranking_loss = torch.nn.functional.softplus(
                         -(
-                            outputs["retrieval"][stable_tensor]
-                            - outputs["retrieval"][unstable_tensor]
+                            retrieval_logit[stable_tensor]
+                            - retrieval_logit[unstable_tensor]
                         )
                     ).mean()
                 else:
                     ranking_loss = torch.zeros((), device=device)
                 loss = (
                     objective.regression_weight * regression_loss
+                    + objective.mse_weight * mse_loss
                     + objective.retrieval_weight * retrieval_loss
                     + objective.ranking_weight * ranking_loss
                 )
@@ -407,6 +457,7 @@ def _train_candidate(
                 examples_seen += len(indices)
                 count = len(indices)
                 totals["regression"] += float(regression_loss.detach()) * count
+                totals["mse"] += float(mse_loss.detach()) * count
                 totals["retrieval"] += float(retrieval_loss.detach()) * count
                 totals["ranking"] += float(ranking_loss.detach()) * count
                 totals["total"] += float(loss.detach()) * count
@@ -426,7 +477,11 @@ def _train_candidate(
                 validation_score,
                 threshold=objective.stabilizer_threshold,
             )
-            score = _selection_score(validation)
+            score = _selection_score(
+                validation,
+                retrieval_key=retrieval_key,
+                selection_metric=objective.selection_metric,
+            )
             losses = {key: value / seen for key, value in totals.items()}
             history.append(
                 {
@@ -445,7 +500,7 @@ def _train_candidate(
                 f"epoch={epoch:02d} train={losses['total']:.4f} "
                 f"val_rho={validation['regression']['spearman']:.4f} "
                 f"val_mae={validation['regression']['mae']:.4f} "
-                f"val_ap={validation['retrieval_head']['average_precision']:.4f}",
+                f"val_ap={validation[retrieval_key]['average_precision']:.4f}",
                 flush=True,
             )
             if score > best_score + 1e-5:
@@ -540,8 +595,13 @@ def _train_candidate(
         "elapsed_seconds": time.monotonic() - started,
         "objective": asdict(objective),
         "selection_rule": (
-            "protein-disjoint validation composite = "
-            "0.65 Spearman + 0.25 stabilizer AP - 0.10 MAE"
+            "protein-disjoint validation MAE"
+            if objective.selection_metric == "mae"
+            else (
+                "protein-disjoint validation composite = 0.65 Spearman + "
+                "0.25 stabilizer AP - 0.10 MAE; "
+                f"retrieval metric = {retrieval_key}"
+            )
         ),
         "train_rows": int(len(train_indices)),
         "validation_rows": int(len(validation_indices)),
@@ -558,7 +618,9 @@ def _train_candidate(
                 val_ddg,
                 val_retrieval,
                 threshold=objective.stabilizer_threshold,
-            )
+            ),
+            retrieval_key=retrieval_key,
+            selection_metric=objective.selection_metric,
         ),
         "test": _evaluation(
             test_data.target,
@@ -775,10 +837,10 @@ def train_hierarchical_single_ablation(
             device=torch_device,
         ),
     }
-    baseline_test = baseline["test"]
-    candidate_test = selected_metrics["test"]
+    baseline_validation = baseline["validation"]
+    candidate_validation = selected_metrics["validation"]
     selected_retrieval = (
-        candidate_test["retrieval_head"]
+        candidate_validation["retrieval_head"]
         if float(
             selected_metrics["validation"]["retrieval_head"]["average_precision"]
         )
@@ -787,23 +849,23 @@ def train_hierarchical_single_ablation(
                 "average_precision"
             ]
         )
-        else candidate_test["retrieval_from_ddg"]
+        else candidate_validation["retrieval_from_ddg"]
     )
-    baseline_retrieval = baseline_test["retrieval_from_ddg"]
+    baseline_retrieval = baseline_validation["retrieval_from_ddg"]
     gates = {
-        "test_spearman_improves": (
-            float(candidate_test["regression"]["spearman"])
-            > float(baseline_test["regression"]["spearman"])
+        "validation_spearman_improves": (
+            float(candidate_validation["regression"]["spearman"])
+            > float(baseline_validation["regression"]["spearman"])
         ),
-        "test_mae_not_worse": (
-            float(candidate_test["regression"]["mae"])
-            <= float(baseline_test["regression"]["mae"])
+        "validation_mae_not_worse": (
+            float(candidate_validation["regression"]["mae"])
+            <= float(baseline_validation["regression"]["mae"])
         ),
-        "test_stabilizer_ap_improves": (
+        "validation_stabilizer_ap_improves": (
             float(selected_retrieval["average_precision"])
             > float(baseline_retrieval["average_precision"])
         ),
-        "test_top50_not_worse": (
+        "validation_top50_not_worse": (
             int(selected_retrieval["hits_at_50"])
             >= int(baseline_retrieval["hits_at_50"])
         ),
@@ -835,6 +897,10 @@ def train_hierarchical_single_ablation(
         "promotion": {
             "promoted_to_transfer_and_6b": promoted,
             "gates": gates,
+            "policy": (
+                "validation metrics and exact algebra only; historical test "
+                "is reporting-only"
+            ),
         },
     }
     torch.save(selected_payload, checkpoint_dir / "hierarchy_selected_ensemble.pt")
@@ -874,9 +940,10 @@ def train_hierarchical_single_ablation(
             "promoted_to_transfer_and_6b": promoted,
             "gates": gates,
             "policy": (
-                "selected validation winner must improve frozen test Spearman "
-                "and stabilizer AP, not worsen MAE or top-50 recovery, and "
-                "satisfy exact directionality"
+                "selected winner must improve validation Spearman and "
+                "stabilizer AP, not worsen validation MAE or top-50 recovery, "
+                "and satisfy exact directionality; historical test metrics "
+                "are reporting-only"
             ),
         },
         "split_integrity": {
@@ -1018,8 +1085,8 @@ def train_promoted_hierarchical_single(
             device=torch_device,
         ),
     }
-    baseline_test = baseline["test"]
-    candidate_test = metrics["test"]
+    baseline_validation = baseline["validation"]
+    candidate_validation = metrics["validation"]
     retrieval_key = (
         "retrieval_head"
         if float(metrics["validation"]["retrieval_head"]["average_precision"])
@@ -1028,22 +1095,22 @@ def train_promoted_hierarchical_single(
         )
         else "retrieval_from_ddg"
     )
-    selected_retrieval = candidate_test[retrieval_key]
-    baseline_retrieval = baseline_test["retrieval_from_ddg"]
+    selected_retrieval = candidate_validation[retrieval_key]
+    baseline_retrieval = baseline_validation["retrieval_from_ddg"]
     gates = {
-        "test_spearman_improves": (
-            float(candidate_test["regression"]["spearman"])
-            > float(baseline_test["regression"]["spearman"])
+        "validation_spearman_improves": (
+            float(candidate_validation["regression"]["spearman"])
+            > float(baseline_validation["regression"]["spearman"])
         ),
-        "test_mae_not_worse": (
-            float(candidate_test["regression"]["mae"])
-            <= float(baseline_test["regression"]["mae"])
+        "validation_mae_not_worse": (
+            float(candidate_validation["regression"]["mae"])
+            <= float(baseline_validation["regression"]["mae"])
         ),
-        "test_stabilizer_ap_improves": (
+        "validation_stabilizer_ap_improves": (
             float(selected_retrieval["average_precision"])
             > float(baseline_retrieval["average_precision"])
         ),
-        "test_top50_not_worse": (
+        "validation_top50_not_worse": (
             int(selected_retrieval["hits_at_50"])
             >= int(baseline_retrieval["hits_at_50"])
         ),
@@ -1073,6 +1140,10 @@ def train_promoted_hierarchical_single(
         "baseline": baseline,
         "promotion_gates": gates,
         "production_eligible": all(gates.values()),
+        "promotion_policy": (
+            "validation metrics and exact algebra only; historical test is "
+            "reporting-only"
+        ),
         "cache": {
             "path": str(cache_path),
             "sha256": cache_sha256,
@@ -1098,6 +1169,10 @@ def train_promoted_hierarchical_single(
             "promotion": {
                 "production_eligible": all(gates.values()),
                 "gates": gates,
+                "policy": (
+                    "validation metrics and exact algebra only; historical "
+                    "test is reporting-only"
+                ),
             },
         },
         checkpoint_dir / "hierarchy_selected_ensemble.pt",

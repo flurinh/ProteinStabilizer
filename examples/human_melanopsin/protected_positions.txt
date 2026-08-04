@@ -1,0 +1,8 @@
+# Human melanopsin Q9UHM6; one-based canonical UniProt FASTA coordinates.
+# This is a conservative runnable starting mask, not a complete functional map.
+1-72	Outside the UniProt-annotated seven-helix core before TM1
+354-478	Outside the UniProt-annotated seven-helix core after TM7
+143,221	UniProt-annotated C143-C221 disulfide bond
+167-169	Sequence-localized DRY activation motif
+340	UniProt-annotated retinal Schiff-base lysine K340
+346-350	Sequence-localized NPIIY activation motif

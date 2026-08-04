@@ -176,8 +176,18 @@ class ProteinMPNNBackboneEmbedder:
             storage_dtype=storage_dtype,
         )
 
-    def encode(self, pdb_path: Path, target_sequence: str) -> np.ndarray:
-        """Return one structure-only vector for every target-sequence residue."""
+    def encode(
+        self,
+        pdb_path: Path,
+        target_sequence: str,
+        *,
+        residue_mask: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Return one structure-only vector for every target-sequence residue.
+
+        ``residue_mask`` removes unreliable target residues from the
+        ProteinMPNN encoder graph and zeros their returned vectors.
+        """
 
         records = self.module.parse_PDB(str(pdb_path), ca_only=False)
         if len(records) != 1:
@@ -229,6 +239,25 @@ class ProteinMPNNBackboneEmbedder:
             _,
             _,
         ) = values
+        length = len(target_sequence)
+        if not torch.all(mask[0, :length] > 0):
+            missing = torch.nonzero(mask[0, :length] <= 0).flatten().tolist()
+            raise ValueError(
+                f"{pdb_path.name} has missing target coordinates at {missing}"
+            )
+        active_mask: np.ndarray | None = None
+        if residue_mask is not None:
+            active_mask = np.asarray(residue_mask, dtype=bool)
+            if active_mask.shape != (length,):
+                raise ValueError(
+                    "ProteinMPNN residue mask must have one value per "
+                    "target-sequence residue"
+                )
+            mask = mask.clone()
+            mask[0, :length] *= torch.from_numpy(active_mask).to(
+                device=mask.device,
+                dtype=mask.dtype,
+            )
         with torch.inference_mode():
             edges, edge_index = self.model.features(
                 coordinates, mask, residue_index, chain_encoding
@@ -246,11 +275,66 @@ class ProteinMPNNBackboneEmbedder:
                 residue, edge = layer(
                     residue, edge, edge_index, mask, attend
                 )
-        length = len(target_sequence)
-        if not torch.all(mask[0, :length] > 0):
-            missing = torch.nonzero(mask[0, :length] <= 0).flatten().tolist()
-            raise ValueError(f"{pdb_path.name} has missing target coordinates at {missing}")
-        return residue[0, :length].float().cpu().numpy()
+        result = residue[0, :length].float().cpu().numpy()
+        if active_mask is not None:
+            result[~active_mask] = 0.0
+        return result
+
+    def backbone_coordinates(
+        self,
+        pdb_path: Path,
+        target_sequence: str,
+    ) -> tuple[np.ndarray, np.ndarray, str]:
+        """Return exact-chain N/CA/C/O coordinates in sequence order."""
+
+        records = self.module.parse_PDB(str(pdb_path), ca_only=False)
+        if len(records) != 1:
+            raise ValueError(f"expected one parsed structure in {pdb_path}")
+        record = records[0]
+        chains = {
+            key.removeprefix("seq_chain_"): str(value)
+            for key, value in record.items()
+            if key.startswith("seq_chain_")
+        }
+        matching = [
+            chain
+            for chain, sequence in chains.items()
+            if sequence == target_sequence
+        ]
+        if len(matching) != 1:
+            raise ValueError(
+                f"{Path(pdb_path).name} has {len(matching)} exact chains "
+                "for target sequence"
+            )
+        chain = matching[0]
+        coordinate_record = record[f"coords_chain_{chain}"]
+        coordinates = np.stack(
+            [
+                np.asarray(
+                    coordinate_record[f"{atom}_chain_{chain}"],
+                    dtype=np.float32,
+                )
+                for atom in ("N", "CA", "C", "O")
+            ],
+            axis=1,
+        )
+        expected = (len(target_sequence), 4, 3)
+        if coordinates.shape != expected:
+            raise RuntimeError(
+                f"{Path(pdb_path).name} backbone shape is "
+                f"{coordinates.shape}, expected {expected}"
+            )
+        mask = np.isfinite(coordinates).all(axis=(1, 2))
+        return (
+            np.nan_to_num(
+                coordinates,
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
+            ),
+            mask,
+            chain,
+        )
 
     def encode_aligned(
         self,

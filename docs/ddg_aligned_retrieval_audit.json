@@ -1,0 +1,190 @@
+{
+  "candidates": {
+    "auxiliary_retrieval_head": {
+      "directional_constraints": {
+        "evaluated_rows": 512,
+        "maximum_absolute_forward_plus_reverse": 0.0,
+        "maximum_absolute_self_ddg": 0.0
+      },
+      "members": [
+        {
+          "best_epoch": 5,
+          "examples_seen": 938835,
+          "optimizer_steps": 3672,
+          "seed": 20260722
+        },
+        {
+          "best_epoch": 6,
+          "examples_seen": 1043150,
+          "optimizer_steps": 4080,
+          "seed": 20260723
+        },
+        {
+          "best_epoch": 11,
+          "examples_seen": 1564725,
+          "optimizer_steps": 6120,
+          "seed": 20260724
+        }
+      ],
+      "objective": {
+        "huber_delta": 1.0,
+        "maximum_bin_weight": 6.0,
+        "minimum_ranking_gap": 0.25,
+        "mse_weight": 0.0,
+        "neutral_upper_threshold": 0.5,
+        "ranking_pairs_per_batch": 192,
+        "ranking_weight": 0.1,
+        "regression_weight": 1.0,
+        "retrieval_source": "head",
+        "retrieval_weight": 0.2,
+        "stabilizer_threshold": -0.5
+      },
+      "validation": {
+        "auxiliary_head_average_precision": 0.19748196595980663,
+        "direction_accuracy": 0.7880061424068536,
+        "mae": 0.42306064972890084,
+        "pearson": 0.7936383739369728,
+        "rmse": 0.5856414347311412,
+        "selection_score": 0.5016389461334946,
+        "spearman": 0.7508877213628635,
+        "stabilizer_average_precision": 0.22347196888209378,
+        "stabilizers_in_top_50": 18
+      }
+    },
+    "ddg_aligned_retrieval": {
+      "directional_constraints": {
+        "evaluated_rows": 512,
+        "maximum_absolute_forward_plus_reverse": 0.0,
+        "maximum_absolute_self_ddg": 0.0
+      },
+      "members": [
+        {
+          "best_epoch": 5,
+          "examples_seen": 938835,
+          "optimizer_steps": 3672,
+          "seed": 20260722
+        },
+        {
+          "best_epoch": 5,
+          "examples_seen": 938835,
+          "optimizer_steps": 3672,
+          "seed": 20260723
+        },
+        {
+          "best_epoch": 12,
+          "examples_seen": 1669040,
+          "optimizer_steps": 6528,
+          "seed": 20260724
+        }
+      ],
+      "objective": {
+        "huber_delta": 1.0,
+        "maximum_bin_weight": 6.0,
+        "minimum_ranking_gap": 0.25,
+        "mse_weight": 0.0,
+        "neutral_upper_threshold": 0.5,
+        "ranking_pairs_per_batch": 192,
+        "ranking_weight": 0.1,
+        "regression_weight": 1.0,
+        "retrieval_source": "ddg",
+        "retrieval_weight": 0.2,
+        "stabilizer_threshold": -0.5
+      },
+      "validation": {
+        "auxiliary_head_average_precision": 0.035800725806828616,
+        "direction_accuracy": 0.7903499555483715,
+        "mae": 0.4160166366887566,
+        "pearson": 0.8026951703342146,
+        "rmse": 0.5736796608115277,
+        "selection_score": 0.5101536073828267,
+        "spearman": 0.7575452474842024,
+        "stabilizer_average_precision": 0.23740344074788278,
+        "stabilizers_in_top_50": 21
+      }
+    }
+  },
+  "decision": {
+    "frozen_selection": "auxiliary_retrieval_head",
+    "frozen_test_gates": {
+      "mae_not_worse": false,
+      "rmse_not_worse": false,
+      "spearman_improves": false,
+      "stabilizer_ap_improves": true,
+      "top_50_not_worse": true
+    },
+    "policy": "Select the loss/early-stopping signal on protein-disjoint validation using the same -ddG ranking consumed by screening; then require frozen-test gains in rank and AP without worse MAE, RMSE, or top-50 recovery.",
+    "promoted_to_full_training": false,
+    "validation_gates": {
+      "composite_improves_by_0.002": true,
+      "mae_not_materially_worse": true,
+      "rmse_not_materially_worse": true,
+      "spearman_not_materially_worse": true,
+      "stabilizer_ap_not_materially_worse": true
+    },
+    "validation_selected": true
+  },
+  "frozen_test": {
+    "auxiliary_retrieval_head": {
+      "auxiliary_head_average_precision": 0.30281661429991125,
+      "direction_accuracy": 0.8407228302367015,
+      "mae": 0.51234949545409,
+      "pearson": 0.8183941589546967,
+      "rmse": 0.7017749038686532,
+      "selection_score": 0.5679033789455208,
+      "spearman": 0.8166291213426164,
+      "stabilizer_average_precision": 0.353317598472916,
+      "stabilizers_in_top_50": 29
+    },
+    "ddg_aligned_retrieval": {
+      "auxiliary_head_average_precision": 0.04993799304160425,
+      "direction_accuracy": 0.8367014507508271,
+      "mae": 0.5187182891179587,
+      "pearson": 0.8141452992147138,
+      "rmse": 0.7034353241617846,
+      "selection_score": 0.5689271922221022,
+      "spearman": 0.8145433607963457,
+      "stabilizer_average_precision": 0.36538334646509346,
+      "stabilizers_in_top_50": 33
+    }
+  },
+  "provenance": {
+    "cache": "/data/fast/projects/ProteinStabilizer/embeddings/esmc_600m/hierarchy_cache_fp32.h5",
+    "cache_sha256": "4d538b8d3c51d157d2634a8f0034088a9d8eb2609f33535c1eaf9e17242d6bde",
+    "embedding": {
+      "checkpoint_path": "/data/fast/cache/huggingface/hub/models--EvolutionaryScale--esmc-600m-2024-12/blobs/8ef856e1a237ee3f995442df997a962e70057faadecf38fc0c8561bd3c2f4324",
+      "checkpoint_sha256": "8ef856e1a237ee3f995442df997a962e70057faadecf38fc0c8561bd3c2f4324",
+      "embedding_dimension": 1152,
+      "inference_dtype": "float32",
+      "model_name": "esmc_600m",
+      "package_version": "3.2.1",
+      "residue_policy": "final-layer-contextual-residue-bos-offset-v1",
+      "storage_dtype": "float32"
+    },
+    "feature_dir": "/data/fast/projects/ProteinStabilizer/artifacts/features_v2_600m_fp32",
+    "single_test_sha256": "29bc50a32be0dfd35f27b757ea88d95133d795d5410748d45a1a66cc88596c7d",
+    "single_train_sha256": "677d62d92ab7783ffff7527ff3a425b7aba7b90414d7d7914d3faefe9af4ee59"
+  },
+  "schema": "protein-stabilizer.ddg-aligned-retrieval-ablation.v1",
+  "split_integrity": {
+    "protein_overlap": 0,
+    "test_proteins": 19,
+    "test_rows": 19645,
+    "train_proteins": 104,
+    "train_rows": 104315,
+    "validation_proteins": 12,
+    "validation_rows": 12373
+  },
+  "training": {
+    "batch_size": 256,
+    "device": "cuda",
+    "elapsed_seconds": 213.34596611899906,
+    "ensemble_size": 3,
+    "epochs": 20,
+    "learning_rate": 0.00075,
+    "minimum_epochs": 8,
+    "patience": 4,
+    "precision": "strict float32; TF32 disabled",
+    "seed": 20260722,
+    "weight_decay": 0.0001
+  }
+}

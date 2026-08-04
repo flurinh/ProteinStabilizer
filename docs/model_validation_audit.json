@@ -1,0 +1,62 @@
+{
+  "schema": "protein-stabilizer.model-validation-audit.v1",
+  "objective": "genuine sequence-family-held-out single-mutant MAE below 0.30 kcal/mol, with a membrane-protein/GPCR application",
+  "current_historical_estimate": {
+    "model": "strict-FP32 ESM-C 6B hierarchy/state-potential fusion",
+    "rows": 19645,
+    "proteins": 19,
+    "mae_kcal_per_mol": 0.4670035464,
+    "protein_cluster_bootstrap_mae_ci95": [
+      0.4267,
+      0.5092
+    ],
+    "proteins_below_0_30_mae": 1,
+    "relative_mae_reduction_needed": 0.3576,
+    "interpretation": "Operational baseline only. This test was used by prior promotion gates and is no longer an untouched lockbox."
+  },
+  "split_integrity": {
+    "test_exact_sequence_or_row_overlap": 0,
+    "maximum_test_to_train_sequence_identity": 0.4722,
+    "validation_train_homolog_identities": [
+      0.9688,
+      0.8958,
+      0.7727
+    ],
+    "validation_rows_in_these_homolog_groups_fraction": 0.2147,
+    "required_change": "Use sequence-family clusters for development folds and freeze a new prospective family- and assay-held-out outer set."
+  },
+  "measurement_and_oracle_checks": {
+    "source_replicate_rows_available": false,
+    "source_uncertainty_fields_available_in_legacy_csv": false,
+    "matched_target_version_mae": 0.0488,
+    "oracle_per_protein_correction_mae": 0.437,
+    "invalid_same_site_label_oracle_mae": 0.2919,
+    "interpretation": "Calibration, seed averaging, or protein offsets cannot credibly close the gap; only a label-leaking same-site oracle crosses 0.30."
+  },
+  "gpcr_domain_shift": {
+    "megascale_length_range": [
+      30,
+      72
+    ],
+    "local_gpcr_length_range": [
+      412,
+      483
+    ],
+    "nearest_sequence_identity_range": [
+      0.10,
+      0.12
+    ],
+    "receptors_present_in_all_workbook_splits": 3,
+    "interpretation": "Generic kcal/mol accuracy does not establish GPCR accuracy; receptor-held-out quantitative measurements are required."
+  },
+  "evidence": {
+    "worker_report_original_path": "/data/fast/tmp/proteinstabilizer-noise-audit/REPORT.md",
+    "worker_report_sha256": "7a7d8fa8e4667d252c35a82078f339ed2997fb9e34d51b8179d6c1e70b19ca9f",
+    "machine_evidence_original_directory": "/data/fast/tmp/proteinstabilizer-noise-audit"
+  },
+  "remediation": {
+    "core_training_code": "Future single, state-potential, and multi-mutant production eligibility now uses validation metrics plus exact algebra only; historical test metrics are reporting-only.",
+    "remaining": "Rebuild development folds by sequence family and freeze a new prospective family- and assay-held-out outer set before another SOTA claim."
+  },
+  "decision": "Do not claim SOTA or sub-0.30 performance from the historical test. Require a new sealed lockbox plus protein-cluster confidence intervals."
+}

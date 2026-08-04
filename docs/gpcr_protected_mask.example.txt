@@ -1,0 +1,9 @@
+# One-based FASTA positions. A protected residue is excluded before candidates
+# or embeddings are generated. Put an optional human-readable reason after a tab.
+1-30	construct boundary / signal peptide
+130-132	conserved activation motif
+203	ligand contact
+265-272	intracellular partner interface
+
+# Comma-separated positions are also accepted.
+289,292,296	functional pocket contacts

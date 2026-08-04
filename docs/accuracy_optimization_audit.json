@@ -1,0 +1,208 @@
+{
+  "schema": "protein-stabilizer.accuracy-optimization-audit.v1",
+  "created_date": "2026-07-23",
+  "objective": "Improve family-held-out single-mutant ddG accuracy without weakening the stabilizer-screening route or consuming the historical outer partition for selection.",
+  "model": {
+    "name": "portable accuracy ensemble",
+    "state_component": "full WT ESM-C 600M residue/global context plus trainable masked ProteinMPNN structure fusion and exact 20-state potentials",
+    "portable_prior": {
+      "features": 216,
+      "masked_esmc_and_mutation_chemistry": 70,
+      "target_independent_backbone_geometry": 18,
+      "static_proteinmpnn_residue_vector": 128,
+      "regressor": "ExtraTreesRegressor",
+      "trees": 600,
+      "maximum_features_fraction": 0.8,
+      "minimum_samples_per_leaf": 10
+    },
+    "ddg_blend": {
+      "state_weight": 0.6,
+      "portable_prior_weight": 0.4
+    },
+    "numeric_policy": "native float32; TF32 disabled; no autocast",
+    "sign_convention": "negative general-model ddG means stabilizing"
+  },
+  "selection_protocol": {
+    "row_random_split": false,
+    "family_clustered_folds": 5,
+    "tuning_fold": 0,
+    "confirmation_folds": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "outer_used_for_selection": false,
+    "target_free_family_shadow": {
+      "salt": "protein-stabilizer-accuracy-shadow-v1",
+      "fraction": 0.2,
+      "train_proteins": 88,
+      "shadow_proteins": 22,
+      "shadow_rows": 20781,
+      "limitation": "These families appeared in earlier five-fold reports; this is a frozen-design training resplit confirmation, not a never-seen dataset."
+    }
+  },
+  "development_oof": {
+    "rows": 108408,
+    "state": {
+      "mae": 0.5308138039,
+      "rmse": 0.7213849133,
+      "pearson": 0.7306952615,
+      "spearman": 0.6993692732,
+      "direction_accuracy": 0.7844624013,
+      "average_precision": 0.2040965197,
+      "protein_cluster_bootstrap_mae_95_ci": [
+        0.5098489881,
+        0.5505846426
+      ]
+    },
+    "blend": {
+      "mae": 0.485009307,
+      "rmse": 0.6629891929,
+      "pearson": 0.7721751075,
+      "spearman": 0.74601803,
+      "direction_accuracy": 0.7947383957,
+      "average_precision": 0.1958133196,
+      "protein_cluster_bootstrap_mae_95_ci": [
+        0.4663450994,
+        0.5080256492
+      ]
+    },
+    "mae_improvement": 0.0458044969,
+    "relative_mae_improvement": 0.08629,
+    "each_fold_improved": true,
+    "fold_mae": [
+      {
+        "fold": 0,
+        "state": 0.5367583661,
+        "blend": 0.4982220495
+      },
+      {
+        "fold": 1,
+        "state": 0.534958713,
+        "blend": 0.4851734389
+      },
+      {
+        "fold": 2,
+        "state": 0.5468285036,
+        "blend": 0.4950172069
+      },
+      {
+        "fold": 3,
+        "state": 0.4919049983,
+        "blend": 0.4482627158
+      },
+      {
+        "fold": 4,
+        "state": 0.5390464318,
+        "blend": 0.4945346785
+      }
+    ],
+    "confirmation_folds_1_to_4": {
+      "state_mae": 0.5293385801,
+      "blend_mae": 0.4817303855,
+      "state_spearman": 0.7020585139,
+      "blend_spearman": 0.7490420576
+    }
+  },
+  "training": {
+    "state_refinement_epochs": 22,
+    "final_train_objective": 0.102109106,
+    "portable_prior_trees": 600,
+    "portable_prior_training_rows": 108408,
+    "encoder_frozen": true,
+    "native_float32": true,
+    "tf32_enabled": false
+  },
+  "family_shadow": {
+    "state": {
+      "mae": 0.5249848618,
+      "rmse": 0.7263561039,
+      "pearson": 0.7464653825,
+      "spearman": 0.7217428689,
+      "direction_accuracy": 0.8040998989,
+      "average_precision": 0.1483786278,
+      "protein_cluster_bootstrap_mae_95_ci": [
+        0.4707110062,
+        0.5763883904
+      ]
+    },
+    "blend": {
+      "mae": 0.4763490673,
+      "rmse": 0.6595575249,
+      "pearson": 0.7907439388,
+      "spearman": 0.7622785497,
+      "direction_accuracy": 0.8171406573,
+      "average_precision": 0.1324698114,
+      "protein_cluster_bootstrap_mae_95_ci": [
+        0.4317100823,
+        0.5227413967
+      ]
+    },
+    "mae_improvement": 0.0486357945
+  },
+  "historical_outer_continuity_only": {
+    "status": "Already consumed by earlier architecture work; not used for selection or a new untouched-test claim.",
+    "rows": 27925,
+    "state": {
+      "mae": 0.6002225863,
+      "rmse": 0.7987728227,
+      "spearman": 0.7246521246,
+      "average_precision": 0.2372676759
+    },
+    "blend": {
+      "mae": 0.5435635198,
+      "rmse": 0.7272861487,
+      "spearman": 0.7617827513,
+      "average_precision": 0.2313415676
+    },
+    "mae_improvement": 0.0566590665
+  },
+  "production_routing": {
+    "expected_general_ddg": "Use the 60/40 blend because it improves absolute error, correlation, and direction accuracy.",
+    "stabilizer_ranking": "Use the exact state score because it retains higher average precision on both development OOF and the family-shadow resplit.",
+    "self_mutation": "Both routes return zero.",
+    "directionality": "The state component has exact reverse/cycle algebra. The empirical prior is a forward WT-conditioned correction and is not reverse- or cycle-exact.",
+    "suggestion_policy": "Application shortlists require both the state and blended general-ddG components to predict stabilization by default."
+  },
+  "melanopsin_application": {
+    "accession": "Q9UHM6",
+    "sequence_length": 478,
+    "mutable_positions": 270,
+    "substitutions_scored": 5130,
+    "suggestion_eligible_after_component_agreement": 363,
+    "embedding_cost": {
+      "full_wt_forward_batches": 1,
+      "masked_site_contexts": 270,
+      "masked_forward_batches": 16,
+      "mutant_sequence_passes": 0
+    },
+    "warning": "The quantitative head was trained on 30-72-residue MegaScale proteins with no membrane labels. Melanopsin expected general ddG is therefore out-of-domain evidence, not GPCR-calibrated kcal/mol."
+  },
+  "artifacts": {
+    "cv_report_sha256": "515601dca4e4c4607a6bbc56bd7d4cda0c5db52bf615baec6d670526a6999e8c",
+    "cv_predictions_sha256": "ffcc3d9f1f9ed58e9973ff46051e178a243c6a8cbdbac556826b373811a78725",
+    "cv_scatter_sha256": "43100a1e0f61fa401bf63ab667ab58857e19cec7c953404b064239e718b3e121",
+    "shadow_report_sha256": "41b3e84cd057fc62ea30722e3b65211db3bb9fc006a7f619a4783c3d950980d9",
+    "promoted_checkpoint_sha256": "605f4c09e2f715564dc7628293af58ec9a79e72cfaa9ced6e29e54c61b77c334",
+    "portable_prior_sha256": "a5f0b09f67c57abcb4f4ffa8918a8140b7b1e825e7899a60572e2441ccfd1929",
+    "training_report_sha256": "07051c322b630198ad2330d82463576eab8a6c485c4daed8e83ed3dd47949a5b",
+    "outer_report_sha256": "3d4243800b4f5b2d4f9e54119cfe7d2612c8a201140e20627097eb8777970f87",
+    "outer_predictions_sha256": "d2c474176404cc79e0863315b0ad6692e9f48b21ca178264f743a03ff04b98bc",
+    "outer_scatter_sha256": "32b428e3eac1a708a9cc032ed48a8abac53ab5262c660c90e5980d333977b945",
+    "melanopsin_screen_sha256": "5de5967457f9438913136a04dc76017973b381cbeadcff5d61b41589a1212546",
+    "melanopsin_shortlist_sha256": "9eabe6e16220f86e0713ed140cdfe33fa7f712e481c783eac1fd2c120a174ea0"
+  },
+  "decision": {
+    "promote_600m_general_ddg_estimator": true,
+    "retain_state_ranking_route": true,
+    "sub_0_3_supported": false,
+    "scale_logic_to_6b": "pending strict-FP32 feature generation",
+    "6b_attempt": {
+      "outcome": "CUDA out of memory during strict-FP32 model placement",
+      "model_memory_at_failure_gib": 21.59,
+      "unrelated_active_gpu_memory_gib": 7.43,
+      "precision_downgrade_used": false
+    }
+  }
+}

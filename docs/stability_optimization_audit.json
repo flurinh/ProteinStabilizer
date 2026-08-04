@@ -1,0 +1,168 @@
+{
+  "schema": "protein-stabilizer.stability-optimization-audit.v1",
+  "objective": "improve genuine family-held-out single-mutant ddG MAE toward 0.30 kcal/mol while preserving stabilizer retrieval and a clean ESM-C 600M-to-6B scale gate",
+  "precision": "native FP32; TF32 disabled",
+  "current_baseline": {
+    "model": "ESM-C 6B hierarchy/state-potential fusion",
+    "historical_test_mae": 0.4670035464,
+    "historical_test_rmse": 0.640184,
+    "historical_test_spearman": 0.855545,
+    "historical_test_stabilizer_average_precision": 0.442,
+    "protein_bootstrap_mae_ci95": [
+      0.4267,
+      0.5092
+    ],
+    "status": "operational baseline; not an untouched SOTA estimate"
+  },
+  "training_scale": {
+    "batch_size": 256,
+    "surface_state_members": 3,
+    "surface_state_epochs_per_member": 50,
+    "surface_state_optimizer_steps": 61200,
+    "surface_state_row_exposures": 15647250,
+    "pretraining_rows": 222059,
+    "pretraining_train_rows": 177571,
+    "pretraining_epochs": 20,
+    "pretraining_optimizer_steps": 13880,
+    "pretraining_row_exposures": 3551420,
+    "fine_tuning_runs": 2,
+    "fine_tuning_epochs": 50,
+    "fine_tuning_optimizer_steps": 40800,
+    "fine_tuning_row_exposures": 10431500,
+    "core_optimizer_steps": 115880,
+    "core_row_exposures": 29630170,
+    "measured_pretraining_and_paired_finetuning_seconds": 668.0245,
+    "note": "Core totals include the three-seed surface run and family-filtered pretraining plus paired fine-tunes; smaller discovery/calibration fits are additional."
+  },
+  "experiments": [
+    {
+      "candidate": "600M loss and tail-balance objective sweep",
+      "protocol": "three full 104,315-row neural trainings; strict FP32",
+      "metrics": {
+        "huber1_validation_mae": 0.4285282,
+        "huber1_historical_test_mae": 0.5198494,
+        "huber2_mse025_validation_mae": 0.4197189,
+        "huber2_mse025_historical_test_mae": 0.5247987,
+        "light_balance_validation_mae": 0.4193951,
+        "light_balance_historical_test_mae": 0.5298405
+      },
+      "decision": "rejected",
+      "reason": "development gains did not transfer and all candidates remained materially behind the current fusion",
+      "dashboard": {
+        "candidate": "600M objective/tail sweep · real training",
+        "validation": "best MAE 0.4194 (Huber1 0.4285)",
+        "frozen_test": "historical MAE 0.5198–0.5298",
+        "decision": "Rejected; no transferable kcal/mol gain",
+        "tone": "bad"
+      }
+    },
+    {
+      "candidate": "ProteinMPNN plus target-independent surface context",
+      "protocol": "13 burial/contact/SASA/DSSP features; one hierarchy seed followed by a three-seed 50-epoch state-potential ensemble",
+      "metrics": {
+        "single_seed_hierarchy_validation_mae_before": 0.4427767,
+        "single_seed_hierarchy_validation_mae_after": 0.4346929,
+        "single_seed_hierarchy_historical_test_mae_before": 0.5612286,
+        "single_seed_hierarchy_historical_test_mae_after": 0.5491933,
+        "three_seed_blend_weight": 0.6,
+        "three_seed_blend_validation_mae": 0.3840448,
+        "three_seed_blend_validation_spearman": 0.7998139,
+        "three_seed_blend_historical_test_mae": 0.4860154,
+        "three_seed_blend_historical_test_spearman": 0.8377397
+      },
+      "decision": "rejected",
+      "reason": "surface context is informative but the ensemble regressed against the retained state fusion on continuity metrics and does not approach 0.30",
+      "dashboard": {
+        "candidate": "Surface-aware state potential · 3×50 epochs",
+        "validation": "blend MAE 0.3840 · rho 0.7998",
+        "frozen_test": "historical MAE 0.4860 · rho 0.8377",
+        "decision": "Rejected; small signal, no scale-worthy gain",
+        "tone": "bad"
+      }
+    },
+    {
+      "candidate": "ESM-C 600M masked amino-acid marginals",
+      "protocol": "all 136,333 rows / 7,591 sites cached in FP32; model family and blend weight selected by validation MAE",
+      "metrics": {
+        "raw_validation_spearman_with_ddg": -0.4668215,
+        "raw_historical_test_spearman_with_ddg": -0.5084979,
+        "selected_energy_weight": 0.24,
+        "validation_mae_before": 0.3708758,
+        "validation_mae_after": 0.3573339,
+        "historical_test_mae_before": 0.4670035,
+        "historical_test_mae_after": 0.4735825
+      },
+      "decision": "rejected",
+      "reason": "the evolutionary signal is real, but its validation calibration failed to transfer",
+      "dashboard": {
+        "candidate": "ESM-C masked-marginal energy",
+        "validation": "MAE 0.3709→0.3573 at weight 0.24",
+        "frozen_test": "historical MAE 0.4670→0.4736",
+        "decision": "Rejected; validation-only gain did not transfer",
+        "tone": "bad"
+      }
+    },
+    {
+      "candidate": "family-filtered absolute-stability pretraining",
+      "protocol": "222,059 rows / 251 proteins / 152 MMseqs families after removing every current validation/test family; joint ddG + 0.3 WT dG + 0.3 mutant dG pretraining, then paired 50-epoch fine-tunes",
+      "metrics": {
+        "pretraining_epoch_budget": 30,
+        "pretraining_epochs_executed": 20,
+        "pretraining_best_epoch": 7,
+        "paired_random_state_validation_mae": 0.4351523,
+        "pretrained_state_validation_mae": 0.4588689,
+        "paired_random_blend_weight": 0.35,
+        "pretrained_blend_weight": 0.25,
+        "paired_random_blend_validation_mae": 0.3769432,
+        "pretrained_blend_validation_mae": 0.3869856,
+        "paired_random_blend_validation_spearman": 0.7945974,
+        "pretrained_blend_validation_spearman": 0.7774124,
+        "paired_random_blend_historical_test_mae": 0.4891377,
+        "pretrained_blend_historical_test_mae": 0.4888492,
+        "paired_random_blend_historical_test_spearman": 0.8359047,
+        "pretrained_blend_historical_test_spearman": 0.8359214
+      },
+      "decision": "rejected before 6B scale",
+      "reason": "pretraining worsened validation blend MAE by 0.0100 and validation Spearman by 0.0172; the 0.0003 historical MAE difference is not promotion evidence",
+      "dashboard": {
+        "candidate": "Absolute ΔG pretraining + paired 50-epoch fine-tune",
+        "validation": "random/pretrained blend MAE 0.3769/0.3870 · rho 0.7946/0.7774",
+        "frozen_test": "historical MAE 0.4891/0.4888 (continuity only)",
+        "decision": "Rejected at 600M; 6B scale not justified",
+        "tone": "bad"
+      }
+    }
+  ],
+  "scale_gate": {
+    "required": "at least 0.02 kcal/mol aggregate family-validation MAE improvement with no Spearman or stabilizer-AP regression",
+    "passed": false,
+    "six_b_training_run": false,
+    "decision": "retain the existing 6B fusion; next experiment should change representation learning, not only loss/calibration"
+  },
+  "next_architecture": {
+    "name": "SPURS-style ESM-C/ProteinMPNN cross-attention state decoder",
+    "requirements": [
+      "trainable masked ProteinMPNN path rather than a static center vector",
+      "ESM-C local/global sequence queries with structure keys and values",
+      "one-pass 20-amino-acid potential",
+      "exact reverse/sign checks and Janus-style cycle consistency",
+      "unordered additive plus epistasis decoder for multiple mutations",
+      "family-clustered cross-validation and a newly sealed outer lockbox"
+    ]
+  },
+  "provenance": {
+    "objective_sweep_report_sha256": "de20e7521245c8471d7398ca0ffb2d8277aaa513922a9b72284fd2f98b5fb644",
+    "surface_ablation_report_sha256": "69bddba45d5b59777a61db9fb844a134b5e6291e94d4194ee972e8ad1d2cfbe6",
+    "surface_state_report_sha256": "71654c6bb300fac6238fb78ee2c84029ec88ced31b93401039ad96606fa745ff",
+    "masked_marginal_report_sha256": "1075ff8fd9d655c34baa69b8b5953d47b374c86607dc83f44b2b26946a8a8bab",
+    "masked_marginal_cache_sha256": "3b0ade8e9fc9bd1170ec691bdb327aa6d1a4f39b13c190d0baeb32711f9a8270",
+    "full_pretraining_manifest_sha256": "e13fc5992e02ff4bd41c435d8340cca3f8a41a71d09d111619fe1334021ecbb9",
+    "full_pretraining_rows_sha256": "46469e50231f2568da0837dda58c29617df698465b9e09760e0efe0cc5bb4c57",
+    "full_pretraining_cache_sha256": "f6c110dcbb9bceade2d826c05000419c530aae83a2e24fb79bf05e9c85efe15c",
+    "full_pretraining_report_sha256": "9bccccd54495576f4ceb64ea7be77be34dbc699a1c9fd5c13d8c633ebdbe3d19",
+    "full_pretraining_checkpoint_sha256": "2c1fd8e5617866938618a4508f3bc024d9d68aca9d1f0ccabbebd98c2d580703",
+    "official_quality_table_sha256": "688c3d24ce759e7c74429f4f438aedd010d935c7a343dbf9990abd692ae93cf6",
+    "surface_source_sha256": "79ff1e8676c50e9cdfefd1976a0bdcbbefdd42cc4c7f354fd5d146165f5a04aa"
+  },
+  "decision": "No new candidate is promoted. The existing strict-FP32 6B fusion remains the operational model, and sub-0.30/SOTA remains unproven pending a family-clean development redesign and sealed evaluation."
+}

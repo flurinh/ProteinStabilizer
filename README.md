@@ -1,10 +1,13 @@
 # ProteinStabilizer
 
 ProteinStabilizer ranks amino-acid substitutions for stability, with a
-GPCR-specific calibration layer. The promoted fast path uses frozen ESM-C 600M
+GPCR-specific calibration layer. The fast path uses frozen ESM-C 600M
 embeddings with mutation-direction, ordered local, whole-protein, membrane, and
-learned ProteinMPNN context. An optional full ESM-C 6B second pass supplies a
-stronger general-ddG estimate and conservatively reranks GPCR candidates.
+learned ProteinMPNN context. The best current expected-ddG route combines
+cached strict-FP32 ESM-C 6B and 600M WT-state passes with 600M masked contexts
+and ProteinMPNN/backbone features. A frozen ProteinMPNN leave-one-residue-out
+pass supplies a direct 20-state structural compatibility potential without
+adding any ESM-C calls.
 Permutation-invariant epistasis heads score double mutants and accept larger
 mutation sets as an explicit extrapolation.
 Saturation screening also reads the encoder's masked amino-acid probabilities
@@ -18,9 +21,10 @@ Solubility is deliberately not part of the current model.
 
 Open [`docs/model_dashboard.html`](docs/model_dashboard.html) for the current
 model roles, training losses, held-out performance, expected ddG error scale,
-the full 19,645-point predicted-versus-experimental kcal/mol scatter, GPCR
-screening evidence, and external-method context. It is generated directly from
-the checked-in metric and audit JSON files:
+the current predicted-versus-experimental kcal/mol scatter (metrics over all
+108,408 family-OOF mutations; 25,000 deterministically plotted points), GPCR
+screening evidence, and external-method context. It is generated directly
+from the checked-in metric and audit JSON files:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python scripts/build_model_dashboard.py
@@ -30,6 +34,176 @@ The exact v2 splits, training counts, promotion gates, and transfer caveats are
 recorded in [`docs/v2_training_report.md`](docs/v2_training_report.md).
 
 ## Model
+
+### Full-protein structure experiment
+
+The repository now includes a reproducible SPURS-inspired training path that
+embeds each unique WT once, combines full ESM-C residue/global states with a
+trainable masked ProteinMPNN encoder through cross-attention, and decodes all
+20 amino-acid potentials in one pass. Multiple substitutions use an unordered
+additive-plus-epistasis decoder and always expose both components.
+
+The real 600M run used 136,333 single and 114,109 double mutants across 173
+proteins, five MMseqs-family folds, and a newly sealed family outer partition.
+Warm-started structure fusion improved development OOF MAE only from `0.53131`
+to `0.53081` kcal/mol, below the predeclared `0.02` scale gate, so it was not
+promoted or scaled to 6B. The selected sequence state-potential model reached
+outer-family MAE `0.59824` kcal/mol (95% protein-bootstrap CI
+`0.55861–0.64466`) and Spearman `0.72580`. Learned double epistasis also failed
+its development gate, so additive prediction is selected while the residual
+is retained as a diagnostic.
+
+The durable result and artifact hashes are in
+[`docs/full_structure_training_audit.json`](docs/full_structure_training_audit.json).
+The generated embedding bank, feature tensors, checkpoints, prediction CSVs,
+and real-scale scatterplots remain git-ignored.
+
+```bash
+protein-stabilizer embed-full-structure
+protein-stabilizer features-full-structure
+protein-stabilizer train-full-structure
+protein-stabilizer evaluate-full-structure-outer
+```
+
+The outer command is intentionally one-shot per output directory and refuses
+to overwrite an existing report. Negative ddG means stabilizing.
+
+### Promoted portable accuracy ensemble
+
+The follow-up accuracy path keeps the full-protein state model and adds a
+portable 216-feature expert: masked ESM-C amino-acid probabilities, mutation
+direction, raw backbone geometry, and the pinned static ProteinMPNN residue
+vector. A frozen 60/40 state/expert blend predicts expected ddG. Stabilizer
+screening continues to rank by the exact state score because it retained
+higher average precision.
+
+On five family-held-out development folds, the blend improves MAE from
+`0.53081` to `0.48501` kcal/mol, RMSE from `0.72138` to `0.66299`, Spearman
+from `0.69937` to `0.74602`, and direction accuracy from `78.45%` to `79.47%`.
+All five folds improve. A target-free 20% family-shadow resplit confirms MAE
+`0.52498` to `0.47635`, RMSE `0.72636` to `0.65956`, and Spearman `0.72174`
+to `0.76228`. This is a real improvement, but it does not support the
+sub-`0.30` target.
+
+The same frozen logic was then scaled to strict-FP32 ESM-C 6B WT states while
+retaining the cheaper 600M masked prior. Five-fold OOF MAE improves from the
+6B state model's `0.50948` to `0.47175` kcal/mol, with Spearman `0.72776` to
+`0.76519`; all five folds improve. The frozen-design family-shadow result is
+MAE `0.51152` to `0.46486`, RMSE `0.70261` to `0.63985`, and Spearman
+`0.74240` to `0.77698`. This also improves over the same 600M hybrid by
+`0.01149` kcal/mol on the shadow split. Stabilizer ranking remains the exact
+6B state score because it retains higher average precision.
+
+A second monotone calibration adds the complementary cached 600M WT state to
+the 6B state and portable prior. Its coefficients were fit on designated
+tuning fold 0 only. Against the retained affine estimator, held-out
+confirmation-fold MAE improves from `0.46209` to `0.45524` kcal/mol and the
+pre-existing family shadow improves from `0.45829` to `0.44994` (95%
+protein-bootstrap CI `0.40576–0.50228`). RMSE, Spearman, direction accuracy,
+average precision, and top-50 retention also pass on both evaluations. The
+promoted formula is `0.32487 × 6B_state + 0.31938 × 600M_state + 0.46345 ×
+portable_prior − 0.05739`. It is used only for expected ΔΔG magnitude;
+candidate order remains the exact 6B state score.
+
+A final low-cost calibration exposes the pretrained ProteinMPNN decoder
+directly: every residue sees the full WT sequence except its own identity, and
+all 20 amino-acid compatibilities are produced in one structure pass. A
+conservative 50% blend with the retained estimator improves confirmation-fold
+MAE from `0.45524` to `0.44666` kcal/mol, Spearman from `0.78014` to `0.79339`,
+direction accuracy from `80.77%` to `81.36%`, and top-50 stabilizer hits from
+`37` to `42`. On the already-consumed family shadow, MAE improves from
+`0.44994` to `0.44668`, Spearman from `0.78798` to `0.79532`, and top-50 hits
+from `18` to `26`. The shadow was consulted for shrinkage and promotion, so it
+is validation evidence rather than an untouched benchmark. The augmented
+expected-ddG score now drives the early candidate order; the exact 6B state
+must still agree on a stabilizing sign. The formula and hashes are recorded in
+[`docs/esmc6b_proteinmpnn_accuracy_audit.json`](docs/esmc6b_proteinmpnn_accuracy_audit.json).
+
+This general-model gain does not solve GPCR transfer. On 97 quantitative ΔTm
+mutations across 11 receptors, calibrated expected ΔΔG reaches pooled
+Spearman `0.029` and macro within-receptor Spearman `0.244`. A comparator
+retrained in every fold after excluding the held-out receptor from upstream
+MPTherm data reaches `0.264` macro Spearman; nested fusions with the new state
+or prior reach at most `0.219`. No GPCR adapter is promoted from this audit.
+
+Training and evaluation are reproducible with:
+
+```bash
+protein-stabilizer cache-masked-marginals
+protein-stabilizer cross-validate-accuracy
+protein-stabilizer evaluate-accuracy-shadow
+protein-stabilizer train-accuracy
+protein-stabilizer evaluate-accuracy-outer
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python \
+  scripts/calibrate_proteinmpnn_accuracy.py
+```
+
+Application screening needs a PDB or UniProt accession:
+
+```bash
+protein-stabilizer screen-accuracy \
+  --fasta target.fasta --uniprot Q9UHM6 \
+  --protected-mask protected_positions.txt \
+  --output artifacts/accuracy_screen.csv
+```
+
+This uses one WT embedding, one masked context per allowed site (batched), one
+structure encoding, and zero mutant-sequence embeddings. The shortlist
+requires state/ensemble agreement by default. Quantitative ddG is trained on
+30–72-residue MegaScale proteins without membrane labels, so the command marks
+GPCR runs as out of domain and does not present them as GPCR-calibrated
+kcal/mol. Durable metrics and artifact hashes are recorded in
+[`docs/accuracy_optimization_audit.json`](docs/accuracy_optimization_audit.json).
+The strict-FP32 scale evidence, checkpoint/cache hashes, and application run
+are recorded in
+[`docs/esmc6b_accuracy_scale_audit.json`](docs/esmc6b_accuracy_scale_audit.json).
+The post-hoc selection protocol, component coefficients, promotion gates, and
+calibrated checkpoint hashes are recorded in
+[`docs/esmc6b_accuracy_calibration_audit.json`](docs/esmc6b_accuracy_calibration_audit.json).
+The 11-receptor quantitative transfer audit is recorded in
+[`docs/esmc6b_accuracy_gpcr_transfer_audit.json`](docs/esmc6b_accuracy_gpcr_transfer_audit.json).
+
+A second transfer check was frozen before inference from the Klenk et al.
+quantitative GPCR multi-mutant source data. The only new receptor, PTH1R,
+passed favorable direction for all three experimentally destabilizing
+variants and ranked them at Spearman `0.500`. The prior-seen NTR1 diagnostic
+ranked five stabilizing variants at `0.600`, but predicted the wrong direction
+for all five. This small, one-direction-per-receptor check does not validate
+additive 3–8-mutation prediction: use the model for bounded single-mutant
+screening, retain functional masks, and test combinations experimentally.
+The run needs only two 6B WT encodings, 24 masked 600M site contexts, and zero
+mutant-sequence embeddings; persisted caches make repeats encoder-free.
+Protocol and results are in
+[`docs/klenk2023_gpcr_multimutant_protocol.md`](docs/klenk2023_gpcr_multimutant_protocol.md)
+and
+[`docs/klenk2023_gpcr_multimutant_audit.json`](docs/klenk2023_gpcr_multimutant_audit.json).
+
+The 6B hybrid uses separate caches because the validated 600M and 6B
+dependency stacks conflict:
+
+```bash
+.venv/bin/protein-stabilizer cache-accuracy-target \
+  --fasta target.fasta --protected-mask protected_positions.txt \
+  --state-output embeddings/application/target_esmc_600m_state_fp32.h5 \
+  --output artifacts/target_masked_600m.h5
+
+.venv-esmc6b/bin/protein-stabilizer cache-accuracy-state-6b \
+  --fasta target.fasta \
+  --output embeddings/application/esmc_6b_targets_fp32.h5
+
+.venv-esmc6b/bin/protein-stabilizer screen-accuracy-6b \
+  --fasta target.fasta --uniprot Q9UHM6 \
+  --protected-mask protected_positions.txt \
+  --masked-marginals-cache artifacts/target_masked_600m.h5 \
+  --embedding-cache embeddings/application/esmc_6b_targets_fp32.h5 \
+  --secondary-state-embedding-cache \
+    embeddings/application/target_esmc_600m_state_fp32.h5 \
+  --output artifacts/accuracy_6b_screen.csv
+```
+
+Once all three caches exist, a rerun requires no ESM-C forward passes. The
+600M cache command produces its masked-site and WT-state caches in one
+loaded-encoder session. Screening still uses zero mutant-sequence passes.
 
 ### Promoted v2 hierarchy
 
@@ -55,10 +229,12 @@ retrieval; endpoints with different units are never pooled.
 Architecture discovery was bounded to the sequence hierarchy versus the same
 hierarchy with learned ProteinMPNN fusion. The selected fusion model was then
 trained as a five-member ensemble with batch size 256, a 50-epoch floor, and
-protein-held-out validation. Its frozen 19,645-row generic test reaches
+protein-held-out validation. Its historical 19,645-row generic test reaches
 Spearman `0.818`, MAE `0.513` kcal/mol, stabilizer average precision `0.386`,
 and 33 stabilizers in the top 50. It passed every prespecified promotion gate
-against the retained 600M baseline.
+against the retained 600M baseline at the time. Because that test was then
+reused for later decisions, it is now a historical continuity set rather than
+an untouched estimate.
 
 For double mutants, the v2 head sums the two frozen constituent ddG predictions
 and learns a DeepSets-style epistasis correction from constituent and complete
@@ -181,12 +357,12 @@ export HF_HOME=/data/fast/cache/huggingface
 `requirements-esmc6b-lock.txt` records the 6B training environment. The looser
 `pyproject.toml` bounds are for development.
 
-ESM-C 6B uses `transformers==4.57.6`, which conflicts with the validated 600M
-environment. Install it separately:
+ESM-C 6B uses Biohub's ESM-C-enabled Transformers `4.57.6` fork pinned to
+commit `ef32577f55da19a4989cd7b22e004dc43a4998cb`. It conflicts with the
+validated 600M environment, so install it separately:
 
 ```bash
-python3.12 -m venv .venv-esmc6b
-.venv-esmc6b/bin/pip install -e '.[esmc6b]'
+bash scripts/setup_esmc6b_env.sh
 ```
 
 The 6B checkpoint is downloaded from `biohub/ESMC-6B` on first use unless
@@ -208,6 +384,61 @@ The `run` command:
 5. selects the GPCR calibration on the mutation-site-held-out validation split; and
 6. evaluates each held-out test split after model selection.
 
+### Docker GPU runtimes
+
+The project has two CUDA 12.8 image targets because the validated ESM-C 600M
+and 6B dependency stacks conflict. Build the image that matches the backbone;
+neither image contains model weights, datasets, embeddings, or trained heads.
+Those generated assets remain on the host and are mounted by Compose.
+
+```bash
+cp .env.docker.example .env.docker
+sed -i "s/^HOST_UID=.*/HOST_UID=$(id -u)/; s/^HOST_GID=.*/HOST_GID=$(id -g)/" \
+  .env.docker
+
+docker compose --env-file .env.docker build protein-stabilizer-600m
+docker compose --env-file .env.docker build protein-stabilizer-6b
+```
+
+Run the human melanopsin two-stage screen with the 6B image:
+
+```bash
+docker compose --env-file .env.docker run --rm protein-stabilizer-6b \
+  screen-v2-6b \
+  --fasta examples/human_melanopsin/Q9UHM6.fasta \
+  --protected-mask examples/human_melanopsin/protected_positions.txt \
+  --scan-mode two-stage \
+  --rerank-top 128 \
+  --max-per-site 2 \
+  --top 50 \
+  --topology alpha_helical_gpcr \
+  --output artifacts/examples/human_melanopsin/6b_screen.csv
+```
+
+Use service `protein-stabilizer-600m` with command `screen-v2` for the 600M
+path. Compose gives the container GPU access and mounts `artifacts/`,
+`checkpoints/`, `data/`, and `embeddings/` at their normal project paths. It
+also reuses the host Hugging Face cache, so already downloaded ESM-C weights
+are not copied into the image or downloaded again. For another machine, edit
+the three cache/temp host paths in `.env.docker`; they should point to its
+large-volume filesystem.
+
+The equivalent direct builds are:
+
+```bash
+docker build --target runtime-600m --build-arg APP_UID="$(id -u)" \
+  --build-arg APP_GID="$(id -g)" -t protein-stabilizer:600m .
+docker build --file Dockerfile.6b --target runtime-6b \
+  --build-arg APP_UID="$(id -u)" \
+  --build-arg APP_GID="$(id -g)" -t protein-stabilizer:6b .
+```
+
+The host needs an NVIDIA driver, Docker's NVIDIA runtime, and enough GPU memory
+for the selected backbone. The strict-FP32 6B screen is intended for the
+32 GB-class GPU used by this project. If a PDB is supplied, additionally mount
+ProteinMPNN read-only and pass its container path with
+`--proteinmpnn-repository`.
+
 Generated embeddings and features stay under `embeddings/` and `artifacts/`.
 The compact trained heads and their metric records are in
 `checkpoints/esmc_600m/`. `single_ensemble.pt` is the production scorer;
@@ -220,6 +451,12 @@ The current deterministic run used seed `20260715`:
 
 | Evaluation | Spearman | Pearson | MAE | RMSE |
 | --- | ---: | ---: | ---: | ---: |
+| **Calibrated 6B state + 600M portable prior, target-free family-shadow** | **0.780** | **0.809** | **0.458** | **0.631** |
+| Calibrated 6B state + 600M portable prior, five family-fold OOF | 0.767 | 0.788 | 0.468 | 0.642 |
+| 6B full-WT state baseline, five family-fold OOF | 0.728 | 0.751 | 0.509 | 0.695 |
+| **600M portable accuracy ensemble, target-free family-shadow** | **0.762** | **0.791** | **0.476** | **0.660** |
+| 600M portable accuracy ensemble, five family-fold OOF | 0.746 | 0.772 | 0.485 | 0.663 |
+| 600M full-structure state baseline, five family-fold OOF | 0.699 | 0.731 | 0.531 | 0.721 |
 | **ESM-C 6B strict-FP32 hierarchy/state fusion, single-mutant protein holdout** | **0.856** | **0.849** | **0.467** | **0.640** |
 | **ESM-C 6B strict-FP32 fused double-mutant estimate** | **0.749** | **0.747** | **0.585** | **0.782** |
 | ESM-C 6B v2 native-FP32 hierarchy before state fusion | 0.837 | 0.827 | 0.504 | 0.692 |
@@ -284,10 +521,15 @@ fusion:
   --generic-numbering 72=2.50x50,73=2.51x51
 ```
 
-Add `--pdb receptor.pdb` to enable the learned ProteinMPNN context. The PDB
+Add `--pdb receptor.pdb` to enable the learned ProteinMPNN context from a local
+structure. For a canonical UniProt entry, `--uniprot Q9UHM6` instead resolves
+the current PDB URL through the AlphaFold DB API and caches the structure plus
+source hashes under `artifacts/structures/alphafold/`. In both cases, the PDB
 must contain exactly one chain matching the FASTA sequence; otherwise the
-command fails instead of silently misaligning residues. Without a PDB,
-structure is explicitly missing-masked.
+command fails instead of silently misaligning residues. AlphaFold residues
+below `--alphafold-min-plddt 70` are removed from the ProteinMPNN neighborhood
+graph and marked structure-missing at those mutation sites. Without either
+structure source, structure is explicitly missing-masked.
 
 For the highest-accuracy prediction, run the strict-FP32 6B fusion in the
 separate environment. The defaults load the validation-selected state
@@ -301,11 +543,21 @@ head:
   --topology alpha_helical_gpcr
 ```
 
+Both `predict-v2` commands use persistent, provenance-checked target caches by
+default (`embeddings/application/esmc_600m_targets.h5` and
+`embeddings/application/esmc_6b_targets_fp32.h5`). The JSON response reports
+requested, computed, and cache-hit sequence embeddings. A double mutant needs
+four unique full-sequence representations on a cold cache—WT, two constituent
+singles, and the joint mutant—but an identical or mutation-order-reversed
+repeat is encoder-free. Override the location with `--embedding-cache` when
+targets need separate caches.
+
 The strict 6B path also supports a site-bounded scan:
 
 ```bash
 .venv-esmc6b/bin/protein-stabilizer screen-v2-6b \
   --fasta target_gpcr.fasta \
+  --uniprot Q9UHM6 \
   --positions 72,73,100-110 \
   --topology alpha_helical_gpcr \
   --output artifacts/target_gpcr_v2_6b.csv
@@ -316,6 +568,77 @@ The strict 6B path also supports a site-bounded scan:
 and scores all 20 amino-acid states per site in one head pass. State-only
 scores are explicitly labeled and should be followed by exact rescoring of the
 shortlist.
+
+For a receptor-wide experimental suggestion set, use the bounded two-stage
+mode and a hard functional mask:
+
+```bash
+.venv-esmc6b/bin/protein-stabilizer screen-v2-6b \
+  --fasta target_gpcr.fasta \
+  --protected-mask target_gpcr.protected.txt \
+  --scan-mode two-stage \
+  --rerank-top 128 \
+  --max-per-site 2 \
+  --topology alpha_helical_gpcr \
+  --output artifacts/target_gpcr_suggestions.csv
+```
+
+The mask is one-based in FASTA coordinates. Each non-comment line contains a
+position, range, or comma-separated expression followed optionally by a tab
+and its reason; see
+[`docs/gpcr_protected_mask.example.txt`](docs/gpcr_protected_mask.example.txt).
+`--protected-positions 45,72-76` can add inline exclusions. The two sources are
+merged, checked against sequence length, and removed before mutation candidates
+or embeddings are generated. The model does not infer that a residue is safe:
+include known ligand contacts, activation microswitches, conserved motifs,
+disulfides, glycosylation sites, construct boundaries, and partner interfaces
+in the target-specific mask.
+
+Two-stage mode performs one WT embedding to score every allowed amino-acid
+state, then embeds at most `--rerank-top` mutant sequences for the full promoted
+fusion. For a 400-residue unmasked receptor this requests 128 mutant embeddings
+instead of 7,600. `--max-per-site` is enforced both when choosing the exact
+rerank set and when assembling the final experimental shortlist. The full CSV
+retains all allowed state-potential candidates with their scoring stage; the
+adjacent `*.shortlist.csv` contains only exact-reranked suggestions. The
+provenance-checked application embedding cache under `embeddings/application/`
+is reused on identical reruns. The JSON summary reports computed embeddings,
+cache hits, avoided mutant embeddings, and the applied protected positions.
+The WT backbone is likewise encoded by ProteinMPNN once per command and reused
+for all substitutions. MegaScale training already follows the same scalable
+pattern: one ProteinMPNN encoding per source protein is cached and indexed by
+mutation site, rather than recomputing a structure representation per row.
+A pinned, directly runnable human melanopsin example is under
+[`examples/human_melanopsin/`](examples/human_melanopsin/README.md).
+
+Convert an exact single-mutant shortlist into a bounded double-mutant design
+set without repeatedly embedding the same constituent mutants:
+
+```bash
+.venv-esmc6b/bin/protein-stabilizer screen-v2-pairs-6b \
+  --fasta target_gpcr.fasta \
+  --single-screen artifacts/target_gpcr_suggestions.shortlist.csv \
+  --protected-mask target_gpcr.protected.txt \
+  --single-limit 20 \
+  --single-ddg-ceiling 0 \
+  --pair-rerank-top 64 \
+  --max-pairs-per-site 4 \
+  --topology alpha_helical_gpcr \
+  --output artifacts/target_gpcr_pairs.csv
+```
+
+Pair generation accepts only suggestion-eligible `exact` or `exact-reranked`
+single rows, requires both hierarchy and state-potential components to agree
+on the stabilizing direction by default, and reapplies the hard protected
+mask. Use `--no-require-component-agreement` only when consuming an exact
+screen without both component columns. It prescreens all valid unordered pairs
+by the sum of their input single ddGs, then computes fresh constituent
+predictions and one joint-sequence embedding for only the bounded rerank set.
+The full pair CSV separates input additive prescreen, exact
+constituent ddGs, additive ddG, learned epistasis, and corrected total ddG.
+The adjacent shortlist is ranked by corrected total and bounds reuse of any
+one residue site. The epistasis head was trained only on double mutants; this
+command deliberately does not extrapolate it to triples.
 
 Native-FP32 6B inference is deliberately expensive. Use 600M to explore a
 broad receptor-wide search and 6B to rescore a bounded set of sites when
@@ -485,23 +808,29 @@ Full selection and bootstrap evidence are in
   only `0.171`; high-accuracy GPCR ddG prediction has not been demonstrated.
 - GPCR assays can disagree for the same mutation and ligand state.
 - More than two mutations are supported architecturally but extrapolate beyond
-  epistasis training.
+  epistasis training. In the frozen Klenk multi-mutant check, additive
+  constituent predictions passed direction for 3/3 new-receptor PTH1R
+  destabilizers but failed direction for 0/5 prior-seen NTR1 stabilizers;
+  additive sums over 3–8 mutations are therefore not an application claim.
 - Predictions are candidates for experimental screening, not evidence that a
   receptor will express, remain functional, or crystallize.
 
 ## ESM-C 6B status
 
-The definitive ESM-C 6B v2 run is complete in native FP32. The hierarchy cache
+The current ESM-C 6B v2 run is complete in native FP32. The hierarchy cache
 contains 259,830 unique sequences and 384,271 local windows. The promoted
-hierarchy/state-potential fusion reaches held-out Spearman `0.856`, MAE
+hierarchy/state-potential fusion reaches historical protein-held-out Spearman `0.856`, MAE
 `0.467` kcal/mol, stabilizer average precision `0.442`, and 41 stabilizers in
-the top 50. The fused native-FP32 double-mutant model reaches Spearman `0.749`,
+the top 50. The 19-protein test was consulted by prior promotion gates and is
+therefore a continuity benchmark, not an untouched SOTA estimate; its
+protein-bootstrap MAE 95% interval is `0.427–0.509`. The fused native-FP32
+double-mutant model reaches Spearman `0.749`,
 MAE `0.585`, and exact permutation invariance. Application checkpoints are
 under `checkpoints/esmc_6b_state_potential_fp32/`.
 
 The ProTherm transfer diagnostic improves to Spearman `0.452`, but the
 receptor-disjoint GPCR delta-Tm and membrane transfers remain weak. The 6B
-generic ddG model is therefore the quality ceiling for stability prediction,
+generic ddG model is therefore the current operational baseline for stability prediction,
 while GPCR-specific experimental ordering uses the promoted family consensus
 plus experimental judgment—not a claimed calibrated GPCR ddG model. The 600M
 and 6B caches remain strictly separate. The earlier masked-only/DDGemb
@@ -513,6 +842,8 @@ A separate full-6B re-audit of the reconstructed four-receptor Muk et al.
 thermostability matrix remained at chance under nested receptor holdout and is
 recorded in
 [`docs/esmc6b_muk_thermostability_audit.json`](docs/esmc6b_muk_thermostability_audit.json).
+The current error-floor, split, competitor, and optimization assessment is in
+[`docs/stability_optimization_study.md`](docs/stability_optimization_study.md).
 
 ## Sources
 

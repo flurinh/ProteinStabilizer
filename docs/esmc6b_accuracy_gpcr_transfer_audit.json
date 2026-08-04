@@ -1,0 +1,119 @@
+{
+  "schema": "protein-stabilizer.esmc6b-accuracy-gpcr-transfer-audit.v1",
+  "created_date": "2026-07-24",
+  "objective": "Test whether the promoted MegaScale-calibrated expected-ddG model improves mutation ranking on quantitative GPCR delta-Tm measurements without treating unlike units as interchangeable.",
+  "data": {
+    "source": "data/curated/gpcr_tm_dtm.csv",
+    "source_sha256": "3c158828162136c8a61c0e894c99f9651f85333a1d8aa132cb46ac1373d0a4db",
+    "rows": 97,
+    "receptors": 11,
+    "unique_mutation_sites": 83,
+    "target": "delta-Tm",
+    "target_units": "degrees Celsius",
+    "favorable_direction": "positive",
+    "macro_metric_policy": "mean within-receptor Spearman over the 8 receptors with at least 3 measurements",
+    "official_test_rows_included": 12,
+    "lockbox_status": "consumed by prior project stages and this audit; not an untouched benchmark"
+  },
+  "model": {
+    "checkpoint": "checkpoints/esmc_6b_accuracy_fp32/promoted_affine/accuracy_ensemble.pt",
+    "checkpoint_sha256": "cc293de9bc731ede202d34ac085fcf0597847a0c6d6e44619d92d1b8183106f1",
+    "state_encoder": "biohub/ESMC-6B",
+    "masked_encoder": "esmc_600m",
+    "structure": "sequence-matched AlphaFold DB v6 backbone plus ProteinMPNN",
+    "expected_ddg_formula": "0.503355322407 * state_ddg + 0.599771958843 * portable_prior_ddg - 0.051066229546",
+    "gpcr_labels_used_for_model_training": false,
+    "sign_mapping_for_rank_audit": "GPCR stability score = negative predicted ddG"
+  },
+  "embedding_cost": {
+    "six_b_full_wt_sequences": 11,
+    "six_b_mutant_sequence_passes": 0,
+    "six_hundred_m_masked_site_contexts": 83,
+    "substitutions_extracted": 97,
+    "repeat_cost": "zero ESM-C forward passes from the persisted caches"
+  },
+  "zero_shot_results": {
+    "six_b_state": {
+      "pooled_spearman": 0.0827385320,
+      "pooled_pearson": 0.0896268681,
+      "macro_within_receptor_spearman": 0.2403864489,
+      "by_receptor_spearman": {
+        "O14842": 0.1002280505,
+        "P21554": 0.5,
+        "P24530": 0.0,
+        "P25024": -0.4,
+        "P28335": 0.0719921455,
+        "P29274": 0.1720835162,
+        "P48039": 0.4787878788,
+        "P49286": 1.0
+      }
+    },
+    "portable_prior": {
+      "pooled_spearman": 0.0034586718,
+      "pooled_pearson": 0.0311606608,
+      "macro_within_receptor_spearman": 0.2132727132
+    },
+    "calibrated_expected_ddg": {
+      "pooled_spearman": 0.0290567888,
+      "pooled_pearson": 0.0642269890,
+      "macro_within_receptor_spearman": 0.2444892454,
+      "by_receptor_spearman": {
+        "O14842": -0.1275629733,
+        "P21554": 0.5,
+        "P24530": 0.8,
+        "P25024": 0.2,
+        "P28335": -0.2169626302,
+        "P29274": 0.0065001726,
+        "P48039": 0.3939393939,
+        "P49286": 0.4
+      }
+    }
+  },
+  "receptor_clean_comparator": {
+    "model": "600M MPTherm delta-Tm head",
+    "protocol": "For each outer GPCR, retrain the upstream MPTherm head after quarantining every row from the held-out UniProt accession, then predict only that receptor.",
+    "upstream_rows_quarantined_by_receptor": {
+      "O14842": 12,
+      "P08172": 1,
+      "P21554": 3,
+      "P24530": 5,
+      "P25024": 4,
+      "P28335": 9,
+      "P29274": 26,
+      "P35408": 2,
+      "P48039": 12,
+      "P49286": 6,
+      "P51677": 0
+    },
+    "pooled_spearman": 0.1145306962,
+    "pooled_pearson": 0.0582616138,
+    "macro_within_receptor_spearman": 0.2635946718
+  },
+  "nested_receptor_heldout_fusion": {
+    "protocol": "Within each outer receptor fold, select a percentile-blend weight from 0.00 to 1.00 in 0.05 increments using only receptor-clean predictions and labels from the other receptors.",
+    "mptherm_plus_six_b_state_macro_spearman": 0.1976594749,
+    "mptherm_plus_portable_prior_macro_spearman": 0.1878703018,
+    "mptherm_plus_expected_ddg_macro_spearman": 0.2188027362,
+    "comparator_macro_spearman": 0.2635946718,
+    "all_candidates_improve": false
+  },
+  "decision": {
+    "promote_gpcr_accuracy_adapter": false,
+    "use_general_expected_ddg_as_gpcr_delta_tm": false,
+    "use_six_b_state_in_primary_gpcr_rank": false,
+    "retain_existing_gpcr_ranking_route": true,
+    "reason": "The expected-ddG model is weak on both pooled and within-receptor GPCR delta-Tm ranking, and every nested receptor-held-out fusion underperforms the receptor-clean MPTherm comparator.",
+    "next_required_evidence": "A new prospective receptor-held-out quantitative mutation matrix with negatives, assay metadata, replicates, and uncertainty."
+  },
+  "provenance": {
+    "six_b_state_cache": "/data/fast/tmp/protein-stabilizer/gpcr_accuracy/esmc_6b_wt_fp32.h5",
+    "six_b_state_cache_sha256": "61cac7649a628d01b43d6a41cc3d25690aca26f7e3bc4071f67783128354464f",
+    "masked_cache_manifest_sha256": "4963191a4ff67f1a0dc42e0b8faa5c0a126f8a7962f671510605ddc1a0efd500",
+    "screen_manifest_sha256": "99350bd103e1231cdd2a9295259d41203e53d9f909134587108a3fa468b76ee7",
+    "alphafold_structure_manifest_sha256": "b102df78a13169edd1da047e25541b8e62e730f97892995af37a40c5d0f3a57f",
+    "mptherm_feature_bank_sha256": "98c3c51cd53a0ed717448b1765935a4f23c36d8fb200f3a0bbca404718301323",
+    "gpcr_feature_bank_sha256": "a4ac5aeb27986c90821b9a9fba247ef415287ec9773a8a9bf929f0d0292051ff",
+    "mptherm_base_checkpoint_sha256": "24f1629eb4e08811a7951a8aad0091e7d3a7224730c1bdae3c95fee7cda51a94",
+    "receptor_heldout_prediction_sha256": "b482d924fd557d72081c3bcd2832655dd22416a22063ad70c81547b0d4190128"
+  }
+}

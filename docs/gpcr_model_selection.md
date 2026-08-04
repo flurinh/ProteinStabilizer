@@ -81,6 +81,31 @@ ddG values as separate diagnostics. Exact metrics, cache manifests, checkpoint
 hashes, and limitations are in
 [`esmc6b_full_transfer_audit.json`](esmc6b_full_transfer_audit.json).
 
+### MegaScale-calibrated 6B accuracy model on quantitative GPCR ΔTm
+
+The promoted 6B/600M expected-ΔΔG model was also run on all 97 published
+GPCR-tm substitutions across 11 receptors. It required 11 WT 6B passes, 83
+unique masked 600M site contexts, and zero mutant-sequence embeddings.
+Expected ΔΔG is not converted to degrees Celsius; only its stabilizing rank
+direction is compared with experimental ΔTm.
+
+Transfer is weak. The calibrated expected-ΔΔG score reaches pooled Spearman
+`0.029` and macro within-receptor Spearman `0.244` over the eight receptors
+with at least three measurements. The 6B state component alone reaches
+`0.083` pooled and `0.240` macro Spearman. A receptor-clean MPTherm comparator,
+retrained in every fold after quarantining all upstream rows from the held-out
+UniProt accession, reaches macro Spearman `0.264`. Nested receptor-held-out
+fusions with the state, portable prior, or expected ΔΔG reach only `0.198`,
+`0.188`, and `0.219`, respectively.
+
+No new GPCR adapter or blend is promoted. The calibrated expected ΔΔG remains
+an explicitly out-of-domain diagnostic for GPCR screens, and the existing
+GPCR ranking route remains primary. The 97-row dataset is no longer an
+untouched benchmark; the next meaningful accuracy gate requires a new
+prospective receptor-held-out quantitative matrix. Exact metrics and cache,
+structure, feature, and checkpoint hashes are in
+[`esmc6b_accuracy_gpcr_transfer_audit.json`](esmc6b_accuracy_gpcr_transfer_audit.json).
+
 ### ProteinMPNN structure logic scaled to 6B
 
 The sequence-conditioned ProteinMPNN likelihood was first selected with the
@@ -112,6 +137,27 @@ and `1.142` for the 6B additive baseline and `0.545` and `0.851` for the
 existing 600M learned estimate. This supports using the 6B model to prioritize
 combinations after singles are selected, but it is not direct evidence for
 GPCR double mutants; larger combinations are also outside its training domain.
+
+The fixed Klenk GPCR panel was subsequently used for a post-consumption
+exact-set diagnostic. Unlike the low-cost additive check, this path embeds the
+complete mutant sequence and applies the learned permutation-invariant
+epistasis head. Cold cache construction required 35 unique full-sequence
+encodings across the two receptors, 33 of them mutants; reordered or repeated
+predictions then reuse the same hierarchy cache.
+
+The result does not justify promotion. At 600M, exact context improved NTR1
+favorable-direction accuracy from `0.40` to `0.60`, but reduced PTH1R Spearman
+from `1.00` to `0.50`. At 6B, it improved PTH1R direction from `0/3` to `1/3`
+while reducing NTR1 direction from `1/5` to `0/5`. All variants contain three
+to eight substitutions, outside a head trained only on doubles, and this
+benchmark has already been consumed. Exact-set scoring therefore remains a
+cacheable diagnostic for proposed combinations, not the production GPCR
+reranker. A new receptor-held-out quantitative multi-mutant panel is required
+before changing that policy. Exact components, checkpoint hashes, and cache
+costs are in
+[`klenk2023_gpcr_exact_set_600m_audit.json`](klenk2023_gpcr_exact_set_600m_audit.json)
+and
+[`klenk2023_gpcr_exact_set_6b_audit.json`](klenk2023_gpcr_exact_set_6b_audit.json).
 
 ## Rejected candidates
 

@@ -49,6 +49,8 @@ class StatePotentialArrays:
     hierarchy: HierarchyArrays
     wt_amino_acid: np.ndarray
     mutant_amino_acid: np.ndarray
+    wt_absolute_stability: np.ndarray | None = None
+    mutant_absolute_stability: np.ndarray | None = None
 
 
 def _load_state_rows(
@@ -69,6 +71,18 @@ def _load_state_rows(
         mutations = [
             Mutation.parse(value) for value in handle["mutation"].asstr()[:]
         ]
+        wt_absolute_stability = (
+            np.asarray(handle["wt_absolute_stability"], dtype=np.float32)
+            if "wt_absolute_stability" in handle
+            else None
+        )
+        mutant_absolute_stability = (
+            np.asarray(handle["mutant_absolute_stability"], dtype=np.float32)
+            if "mutant_absolute_stability" in handle
+            else None
+        )
+    if (wt_absolute_stability is None) != (mutant_absolute_stability is None):
+        raise RuntimeError("absolute-stability supervision must include both states")
     if len(mutations) != len(hierarchy.target):
         raise RuntimeError("state-potential mutation metadata count mismatch")
     return StatePotentialArrays(
@@ -81,6 +95,8 @@ def _load_state_rows(
             [amino_acid_index[value.mutant] for value in mutations],
             dtype=np.int64,
         ),
+        wt_absolute_stability=wt_absolute_stability,
+        mutant_absolute_stability=mutant_absolute_stability,
     )
 
 
@@ -174,7 +190,30 @@ def _train_member(
     weight_decay: float,
     device: torch.device,
     objective: HierarchicalObjectiveConfig,
+    initial_state_dict: dict[str, torch.Tensor] | None = None,
+    enable_absolute_stability: bool = False,
 ) -> tuple[dict[str, object], np.ndarray]:
+    started = time.monotonic()
+    if objective.huber_delta <= 0.0:
+        raise ValueError("Huber delta must be positive")
+    if objective.mse_weight < 0.0:
+        raise ValueError("MSE weight must be non-negative")
+    if objective.selection_metric not in {"composite", "mae"}:
+        raise ValueError("selection metric must be 'composite' or 'mae'")
+    if objective.absolute_stability_weight < 0.0:
+        raise ValueError("absolute-stability weight must be non-negative")
+    if objective.absolute_stability_weight > 0.0:
+        if not enable_absolute_stability:
+            raise ValueError(
+                "absolute-stability supervision requires the absolute head"
+            )
+        if (
+            data.wt_absolute_stability is None
+            or data.mutant_absolute_stability is None
+        ):
+            raise ValueError(
+                "absolute-stability supervision requires WT and mutant targets"
+            )
     hierarchy = data.hierarchy
     train_indices = np.flatnonzero(hierarchy.split == "train")
     validation_indices = np.flatnonzero(hierarchy.split == "val")
@@ -183,6 +222,7 @@ def _train_member(
         window_size=hierarchy.wt_window.shape[1],
         structure_dim=hierarchy.structure.shape[1],
         membrane_dim=hierarchy.membrane.shape[1],
+        absolute_stability_head=enable_absolute_stability,
     )
     weights = np.ones(len(hierarchy.target), dtype=np.float32)
     weights[train_indices] = balanced_stability_weights(
@@ -195,6 +235,8 @@ def _train_member(
     set_reproducible_seed(seed)
     rng = np.random.default_rng(seed)
     model = StatePotentialMutationHead(config).to(device)
+    if initial_state_dict is not None:
+        model.load_state_dict(initial_state_dict)
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=learning_rate,
@@ -218,7 +260,10 @@ def _train_member(
         ],
         milestones=[warmup],
     )
-    huber = torch.nn.HuberLoss(delta=1.0, reduction="none")
+    huber = torch.nn.HuberLoss(
+        delta=objective.huber_delta,
+        reduction="none",
+    )
     binary = torch.nn.BCEWithLogitsLoss(reduction="none")
     best_state: dict[str, torch.Tensor] | None = None
     best_score = -math.inf
@@ -232,6 +277,9 @@ def _train_member(
         shuffled = rng.permutation(train_indices)
         totals = {
             "regression": 0.0,
+            "mse": 0.0,
+            "absolute_wt": 0.0,
+            "absolute_mutant": 0.0,
             "retrieval": 0.0,
             "ranking": 0.0,
             "total": 0.0,
@@ -243,20 +291,56 @@ def _train_member(
             weight = torch.from_numpy(weights[indices]).to(device)
             label = (target < objective.stabilizer_threshold).float()
             optimizer.zero_grad(set_to_none=True)
-            prediction = model(
-                **_state_tensors(
-                    data,
-                    indices,
-                    device,
-                    use_structure=use_structure,
-                )
+            state_tensors = _state_tensors(
+                data,
+                indices,
+                device,
+                use_structure=use_structure,
             )
+            if enable_absolute_stability:
+                thermodynamic = model.predict_thermodynamic_state(**state_tensors)
+                prediction = thermodynamic["ddg"]
+            else:
+                thermodynamic = None
+                prediction = model(**state_tensors)
             retrieval_logit = -(
                 prediction - objective.stabilizer_threshold
             )
             regression_loss = (
                 huber(prediction, target) * weight
             ).sum() / weight.sum()
+            mse_loss = (
+                (prediction - target).square() * weight
+            ).sum() / weight.sum()
+            if (
+                thermodynamic is not None
+                and data.wt_absolute_stability is not None
+                and data.mutant_absolute_stability is not None
+                and objective.absolute_stability_weight > 0.0
+            ):
+                wt_absolute_target = torch.from_numpy(
+                    data.wt_absolute_stability[indices]
+                ).to(device)
+                mutant_absolute_target = torch.from_numpy(
+                    data.mutant_absolute_stability[indices]
+                ).to(device)
+                wt_absolute_loss = (
+                    huber(
+                        thermodynamic["wt_absolute_stability"],
+                        wt_absolute_target,
+                    )
+                    * weight
+                ).sum() / weight.sum()
+                mutant_absolute_loss = (
+                    huber(
+                        thermodynamic["mutant_absolute_stability"],
+                        mutant_absolute_target,
+                    )
+                    * weight
+                ).sum() / weight.sum()
+            else:
+                wt_absolute_loss = torch.zeros((), device=device)
+                mutant_absolute_loss = torch.zeros((), device=device)
             retrieval_loss = (
                 binary(retrieval_logit, label) * weight
             ).sum() / weight.sum()
@@ -283,6 +367,9 @@ def _train_member(
                 ranking_loss = torch.zeros((), device=device)
             loss = (
                 objective.regression_weight * regression_loss
+                + objective.mse_weight * mse_loss
+                + objective.absolute_stability_weight
+                * (wt_absolute_loss + mutant_absolute_loss)
                 + objective.retrieval_weight * retrieval_loss
                 + objective.ranking_weight * ranking_loss
             )
@@ -295,6 +382,11 @@ def _train_member(
             examples_seen += len(indices)
             count = len(indices)
             totals["regression"] += float(regression_loss.detach()) * count
+            totals["mse"] += float(mse_loss.detach()) * count
+            totals["absolute_wt"] += float(wt_absolute_loss.detach()) * count
+            totals["absolute_mutant"] += (
+                float(mutant_absolute_loss.detach()) * count
+            )
             totals["retrieval"] += float(retrieval_loss.detach()) * count
             totals["ranking"] += float(ranking_loss.detach()) * count
             totals["total"] += float(loss.detach()) * count
@@ -313,7 +405,10 @@ def _train_member(
             validation_prediction,
             threshold=objective.stabilizer_threshold,
         )
-        score = _selection_score(validation)
+        score = _selection_score(
+            validation,
+            selection_metric=objective.selection_metric,
+        )
         losses = {key: value / seen for key, value in totals.items()}
         history.append(
             {
@@ -360,8 +455,24 @@ def _train_member(
         "state_dict": copy.deepcopy(model.cpu().state_dict()),
         "seed": seed,
         "best_epoch": best_epoch,
+        "selection_rule": (
+            "protein-disjoint validation MAE"
+            if objective.selection_metric == "mae"
+            else (
+                "protein-disjoint validation composite = 0.65 Spearman + "
+                "0.25 stabilizer AP - 0.10 MAE"
+            )
+        ),
         "optimizer_steps": optimizer_steps,
         "examples_seen": examples_seen,
+        "initialized_from_state_dict": initial_state_dict is not None,
+        "absolute_stability_head": enable_absolute_stability,
+        "absolute_supervision_rows": (
+            int(len(hierarchy.target))
+            if data.wt_absolute_stability is not None
+            else 0
+        ),
+        "elapsed_seconds": time.monotonic() - started,
         "history": history,
         "validation": _ddg_evaluation(
             hierarchy.target[validation_indices],
@@ -378,6 +489,7 @@ def _blend_search(
     state_potential: np.ndarray,
     *,
     threshold: float,
+    selection_metric: str = "composite",
 ) -> tuple[float, list[dict[str, object]]]:
     records: list[dict[str, object]] = []
     for state_weight in np.linspace(0.0, 1.0, 21):
@@ -393,7 +505,10 @@ def _blend_search(
         records.append(
             {
                 "state_potential_weight": float(state_weight),
-                "selection_score": _selection_score(metrics),
+                "selection_score": _selection_score(
+                    metrics,
+                    selection_metric=selection_metric,
+                ),
                 "metrics": metrics,
             }
         )
@@ -597,6 +712,7 @@ def train_state_potential_candidate(
         baseline_validation,
         state_validation,
         threshold=objective.stabilizer_threshold,
+        selection_metric=objective.selection_metric,
     )
     blended_validation = (
         (1.0 - state_weight) * baseline_validation
@@ -641,32 +757,32 @@ def train_state_potential_candidate(
             threshold=objective.stabilizer_threshold,
         ),
     }
-    baseline_test_metrics = baseline_metrics["test"]
-    blended_test_metrics = blended_metrics["test"]
-    baseline_retrieval = baseline_test_metrics["retrieval_from_ddg"]
-    blended_retrieval = blended_test_metrics["retrieval_from_ddg"]
+    baseline_validation_metrics = baseline_metrics["validation"]
+    blended_validation_metrics = blended_metrics["validation"]
+    baseline_retrieval = baseline_validation_metrics["retrieval_from_ddg"]
+    blended_retrieval = blended_validation_metrics["retrieval_from_ddg"]
     gates = {
         "validation_selects_nonzero_state_weight": state_weight > 0.0,
-        "test_spearman_improves": (
-            float(blended_test_metrics["regression"]["spearman"])
-            > float(baseline_test_metrics["regression"]["spearman"])
+        "validation_spearman_improves": (
+            float(blended_validation_metrics["regression"]["spearman"])
+            > float(baseline_validation_metrics["regression"]["spearman"])
         ),
-        "test_mae_not_worse": (
-            float(blended_test_metrics["regression"]["mae"])
-            <= float(baseline_test_metrics["regression"]["mae"])
+        "validation_mae_not_worse": (
+            float(blended_validation_metrics["regression"]["mae"])
+            <= float(baseline_validation_metrics["regression"]["mae"])
         ),
-        "test_stabilizer_ap_improves": (
+        "validation_stabilizer_ap_improves": (
             float(blended_retrieval["average_precision"])
             > float(baseline_retrieval["average_precision"])
         ),
-        "test_top50_not_worse": (
+        "validation_top50_not_worse": (
             int(blended_retrieval["hits_at_50"])
             >= int(baseline_retrieval["hits_at_50"])
         ),
     }
     checks = _directional_checks(
         ensemble,
-        test_data,
+        train_data,
         use_structure=use_structure,
         device=torch_device,
     )
@@ -699,6 +815,10 @@ def train_state_potential_candidate(
         "promotion": {
             "production_eligible": production_eligible,
             "gates": gates,
+            "policy": (
+                "validation metrics and exact state algebra only; historical "
+                "test is reporting-only"
+            ),
         },
     }
     checkpoint_path = checkpoint_dir / "state_potential_ensemble.pt"
@@ -720,7 +840,7 @@ def train_state_potential_candidate(
         },
         "architecture": {
             "conditioning": (
-                "WT ESM-C center + ordered local window + global mean + "
+                "WT ESM-C center + local window + global mean + "
                 "ProteinMPNN/static membrane context"
             ),
             "mutation_score": "phi(context, mutant) - phi(context, WT)",
@@ -747,6 +867,10 @@ def train_state_potential_candidate(
         "promotion": {
             "production_eligible": production_eligible,
             "gates": gates,
+            "policy": (
+                "validation metrics and exact state algebra only; historical "
+                "test is reporting-only"
+            ),
         },
         "members": [
             {

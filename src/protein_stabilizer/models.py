@@ -484,6 +484,7 @@ class StatePotentialConfig:
     amino_acid_dim: int = 64
     hidden_dim: int = 256
     latent_dim: int = 128
+    absolute_stability_head: bool = False
 
 
 def _amino_acid_descriptors() -> torch.Tensor:
@@ -648,6 +649,15 @@ class StatePotentialMutationHead(nn.Module):
             nn.LayerNorm(config.latent_dim),
         )
         self.potential_output = nn.Linear(config.latent_dim, 1, bias=False)
+        if config.absolute_stability_head:
+            self.absolute_baseline = nn.Sequential(
+                nn.LayerNorm(config.embedding_dim),
+                nn.Linear(config.embedding_dim, config.state_dim),
+                nn.GELU(),
+                nn.Linear(config.state_dim, 1),
+            )
+        else:
+            self.absolute_baseline = None
 
     def _validate_state(
         self,
@@ -844,6 +854,45 @@ class StatePotentialMutationHead(nn.Module):
             potential, wt_amino_acid
         )
 
+    def predict_thermodynamic_state(
+        self,
+        wt_window: torch.Tensor,
+        window_mask: torch.Tensor,
+        wt_global: torch.Tensor,
+        wt_amino_acid: torch.Tensor,
+        mutant_amino_acid: torch.Tensor,
+        *,
+        structure: torch.Tensor | None = None,
+        structure_mask: torch.Tensor | None = None,
+        membrane: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        """Predict a thermodynamically consistent WT/mutant state triple.
+
+        Project ΔΔG is defined as ``ΔG_wt - ΔG_mutant`` so negative values
+        indicate stabilization. The absolute predictions therefore satisfy
+        ``mutant_dG - wt_dG == -ddG`` by construction.
+        """
+
+        if self.absolute_baseline is None:
+            raise RuntimeError("absolute-stability head is not enabled")
+        potential = self.all_potentials(
+            wt_window,
+            window_mask,
+            wt_global,
+            structure=structure,
+            structure_mask=structure_mask,
+            membrane=membrane,
+        )
+        wt_potential = self._gather(potential, wt_amino_acid)
+        mutant_potential = self._gather(potential, mutant_amino_acid)
+        ddg = mutant_potential - wt_potential
+        baseline = self.absolute_baseline(wt_global).squeeze(-1)
+        return {
+            "ddg": ddg,
+            "wt_absolute_stability": baseline,
+            "mutant_absolute_stability": baseline - ddg,
+        }
+
     def predict_heads(self, *args: torch.Tensor, **kwargs: torch.Tensor) -> dict[str, torch.Tensor]:
         ddg = self.forward(*args, **kwargs)
         return {"ddg": ddg, "retrieval": -ddg}
@@ -879,6 +928,22 @@ class StatePotentialEnsemble(nn.Module):
         return torch.stack(
             [member(*args, **kwargs) for member in self.members]
         ).mean(dim=0)
+
+    def predict_thermodynamic_state(
+        self, *args: torch.Tensor, **kwargs: torch.Tensor
+    ) -> dict[str, torch.Tensor]:
+        outputs = [
+            member.predict_thermodynamic_state(*args, **kwargs)
+            for member in self.members
+        ]
+        return {
+            key: torch.stack([output[key] for output in outputs]).mean(dim=0)
+            for key in (
+                "ddg",
+                "wt_absolute_stability",
+                "mutant_absolute_stability",
+            )
+        }
 
     def predict_heads(self, *args: torch.Tensor, **kwargs: torch.Tensor) -> dict[str, torch.Tensor]:
         ddg = self.forward(*args, **kwargs)

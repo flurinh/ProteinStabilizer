@@ -216,6 +216,17 @@ reranker (`0.696`, `0.317`, and 15/50). The production policy therefore uses
 the fusion for signed generic ddG and keeps GPCR reranking separate and
 unitless.
 
+On the consumed Klenk GPCR combination panel, exact mutant-set inference was
+also run with the retained 600M and 6B unordered-set heads. The 35 unique
+full-sequence cache requests included 33 mutant sequences; repeat and
+mutation-order-equivalent calls are cache hits. Exact context produced
+inconsistent receptor effects: the 600M head improved NTR1 direction but
+reduced PTH1R rank, while the 6B head improved PTH1R direction by one of three
+and made NTR1 direction worse. Because every tested variant has 3–8 mutations
+but training covers doubles, this path is not promoted. The application keeps
+the exact additive and epistasis components visible for bounded experimental
+combination review.
+
 ## GPCR family-consensus promotion
 
 The application GPCR rank now combines three deliberately separate signals:
